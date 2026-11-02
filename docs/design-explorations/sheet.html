@@ -1,0 +1,97 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Plyback — logos & palettes</title>
+<style>
+@font-face{font-family:Fraunces;src:url(fraunces.woff2) format('woff2');font-weight:100 900}
+@font-face{font-family:Plex;src:url(plex400.woff2);font-weight:400}@font-face{font-family:Plex;src:url(plex600.woff2);font-weight:600}
+*{box-sizing:border-box}body{margin:0;background:#e9e7e2;color:#1b1a18;font-family:Plex,sans-serif;font-size:13px}
+.wrap{max-width:980px;margin:0 auto;padding:28px 20px 60px}
+h1{font-family:Fraunces;font-weight:600;font-size:30px;margin:0 0 4px}h2{font-family:Fraunces;font-weight:600;font-size:22px;margin:40px 0 4px}
+.lead{color:#5d5a53;margin:0 0 18px;max-width:640px;line-height:1.5}
+.logo{background:#fff;border:1px solid #d9d5cc;border-radius:14px;padding:22px;margin-bottom:16px;display:grid;grid-template-columns:200px 1fr;gap:26px}
+.logo h3{margin:0;font-family:Fraunces;font-size:19px}.logo p{margin:4px 0 14px;color:#5d5a53;line-height:1.45}
+.hero{display:flex;align-items:center;justify-content:center;background:#f4f2ee;border-radius:12px;height:200px}
+.grid{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.chip{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:10px}
+.word{font-family:Fraunces;font-weight:600;font-size:24px;letter-spacing:-.02em}
+.tab{display:flex;align-items:center;gap:7px;background:#dedbd4;border-radius:8px 8px 0 0;padding:7px 12px;font-size:12px;width:170px}
+.phone{width:84px;height:84px;border-radius:20px;overflow:hidden;box-shadow:0 6px 16px rgba(0,0,0,.18)}
+.small{display:flex;gap:10px;align-items:end}
+.pal{background:#fff;border:1px solid #d9d5cc;border-radius:14px;padding:20px;margin-bottom:16px}
+.pal h3{margin:0;font-family:Fraunces;font-size:19px}.pal p{margin:4px 0 14px;color:#5d5a53;line-height:1.45;max-width:700px}
+.sw{display:flex;gap:0;border-radius:9px;overflow:hidden;margin-bottom:14px;border:1px solid #d9d5cc}.sw div{flex:1;height:46px;padding:5px 7px;font-size:10px;display:flex;align-items:flex-end}
+.modes{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.mini{border-radius:11px;padding:16px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+.mini .eb{font-size:10px;letter-spacing:.09em;text-transform:uppercase;font-weight:600;color:var(--ink3)}
+.mini .h{font-family:Fraunces;font-weight:600;font-size:20px;margin:2px 0 10px}
+.mini .card{background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:11px 13px;display:flex;justify-content:space-between;gap:10px;align-items:center}
+.mini .v{font-size:22px;font-weight:600}.mini .d{color:var(--ink2);font-size:11.5px}
+.mini .btn{display:inline-block;padding:6px 11px;border-radius:7px;font-weight:600;font-size:12px;background:var(--acc);color:var(--accInk)}
+.mini .btn2{display:inline-block;padding:6px 11px;border-radius:7px;font-weight:600;font-size:12px;border:1px solid var(--line);color:var(--ink);background:var(--surface)}
+.mini .link{color:var(--accText);font-weight:600}
+.mini .sq{display:grid;grid-template-columns:repeat(8,1fr);width:120px;border-radius:3px;overflow:hidden}.mini .sq i{aspect-ratio:1;display:block}
+.mini .nav{display:flex;gap:4px;margin-bottom:12px}.mini .nav span{padding:4px 9px;border-radius:6px;color:var(--ink2);font-size:12px}.mini .nav .on{background:var(--raised);color:var(--ink);font-weight:600}
+</style></head><body><div class="wrap">
+<h1>Plyback — logo marks</h1>
+<p class="lead">Shown in black and white only, so color doesn't influence the choice. Each mark appears large, as an app icon, as a browser-tab favicon, at small sizes and next to the wordmark.</p>
+<div id="logos"></div>
+<h2>Palettes from physical chess materials</h2>
+<p class="lead">Warm, muted neutrals and low-saturation accents, each taken from a real object rather than a UI kit. Light and dark versions side by side. The move-classification colors (blunder red, best green…) stay the same in every palette.</p>
+<div id="pals"></div>
+</div>
+<script>
+const M={
+ knight:(f,g)=>`<rect x="17" y="13" width="13" height="13" rx="2.5" fill="${f}"/><rect x="17" y="28" width="13" height="13" rx="2.5" fill="${f}" opacity=".5"/><rect x="17" y="43" width="13" height="13" rx="2.5" fill="${f}" opacity=".25"/><rect x="34" y="13" width="13" height="13" rx="2.5" fill="${f}"/>`,
+ half:(f,g)=>`<circle cx="32" cy="32" r="17" fill="none" stroke="${f}" stroke-width="5"/><path d="M44.02 19.98A17 17 0 0 1 19.98 44.02Z" fill="${f}"/>`,
+ pawn:(f,g)=>`<circle cx="36" cy="25" r="10.5" fill="none" stroke="${f}" stroke-width="6"/><path d="M22.5 15v37" stroke="${f}" stroke-width="6" stroke-linecap="round"/><circle cx="36" cy="25" r="3.6" fill="${f}"/>`,
+ chev:(f,g)=>`<path d="M21 16 37 32 21 48" fill="none" stroke="${f}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity=".4"/><path d="M31 16 47 32 31 48" fill="none" stroke="${f}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>`,
+};
+const svg=(k,size,bg,fg,tile=true)=>`<svg viewBox="0 0 64 64" width="${size}" height="${size}">${tile?`<rect width="64" height="64" rx="15" fill="${bg}"/>`:''}${M[k](fg)}</svg>`;
+const info={knight:["Knight's-move squares","Three squares in an L — the path of a knight — with the landing square solid. Reads as a board fragment and as a single move."],
+ half:["Half-filled disc","A ring with one half filled. A ply is a half-move; also reads as a clock face or a progress dial."],
+ pawn:["Pawn 'p'","A lowercase p whose round bowl doubles as a pawn's head, with a dot at its centre."],
+ chev:["Two chevrons","Two forward chevrons, one faded: two plies, or playback moving forward."]};
+for(const k of Object.keys(M)){
+ document.getElementById('logos').insertAdjacentHTML('beforeend',`<div class="logo">
+ <div class="hero">${svg(k,150,'#1b1a18','#f4f2ee')}</div>
+ <div><h3>${info[k][0]}</h3><p>${info[k][1]}</p>
+ <div class="grid">
+  <div class="phone">${svg(k,84,'#1b1a18','#f4f2ee')}</div>
+  <div class="phone">${svg(k,84,'#f4f2ee','#1b1a18')}</div>
+  <div class="small">${[48,32,24,16].map(s=>svg(k,s,'#1b1a18','#f4f2ee')).join('')}</div>
+  <div><div class="tab">${svg(k,16,'#1b1a18','#f4f2ee')}<span>Plyback — Overview</span></div></div>
+ </div>
+ <div class="grid" style="margin-top:14px">
+  <div class="chip" style="background:#f4f2ee">${svg(k,34,'#1b1a18','#f4f2ee')}<span class="word">plyback</span></div>
+  <div class="chip" style="background:#1b1a18;color:#f4f2ee">${svg(k,34,'#f4f2ee','#1b1a18')}<span class="word">plyback</span></div>
+  <div class="chip" style="background:#f4f2ee">${svg(k,30,'','#1b1a18',false)}<span class="word">plyback</span></div>
+ </div></div></div>`);
+}
+const P=[
+ {name:'Scoresheet',ref:'A tournament scoresheet: off-white paper, carbon-copy ink, a red correction pencil and faint blue ruling.',
+  sw:[['Paper','#f3efe6'],['Carbon ink','#22201c'],['Graphite','#6b675f'],['Pencil red','#a8402e'],['Ruling blue','#3e6189']],
+  light:{bg:'#f3efe6',surface:'#fbf9f4',raised:'#ebe6db',line:'#ddd6c8',ink:'#22201c',ink2:'#5e594f',ink3:'#8c867a',acc:'#22201c',accInk:'#f3efe6',accText:'#a8402e',sql:'#ece6d8',sqd:'#a99f8c'},
+  dark:{bg:'#1b1a18',surface:'#232220',raised:'#2c2a27',line:'#36342f',ink:'#ece6d9',ink2:'#a39d90',ink3:'#767166',acc:'#ece6d9',accInk:'#1b1a18',accText:'#d27a63',sql:'#e6dfcf',sqd:'#9b917e'}},
+ {name:'Staunton',ref:'A classic Staunton set: boxwood and ebony pieces, a walnut board and the green baize of the box lining.',
+  sw:[['Boxwood','#efe6d2'],['Ebony','#241c15'],['Walnut','#7a4e2d'],['Baize','#3f5e4c'],['Brass hinge','#a88443']],
+  light:{bg:'#efe6d2',surface:'#f8f3e8',raised:'#e6dbc4',line:'#d9ccb1',ink:'#241c15',ink2:'#61523f',ink3:'#8f7f68',acc:'#3f5e4c',accInk:'#f8f3e8',accText:'#7a4e2d',sql:'#efe2c6',sqd:'#9b6f4c'},
+  dark:{bg:'#17130f',surface:'#201a15',raised:'#2a221b',line:'#352b21',ink:'#ede3d0',ink2:'#a99a83',ink3:'#7b6d5a',acc:'#c9a26e',accInk:'#17130f',accText:'#d6b07c',sql:'#e8d9b9',sqd:'#8e6545'}},
+ {name:'Informant',ref:'Chess Informant yearbooks: bright white pages, dense black figurine notation and a single cobalt-blue cover.',
+  sw:[['Page','#f6f6f4'],['Type','#15171a'],['Cover blue','#244b84'],['Grey','#6a6f78'],['Diagram','#c9ced6']],
+  light:{bg:'#f6f6f4',surface:'#ffffff',raised:'#eeeeeb',line:'#e1e1dd',ink:'#15171a',ink2:'#585d66',ink3:'#8a8f98',acc:'#244b84',accInk:'#ffffff',accText:'#244b84',sql:'#e9ecf0',sqd:'#9aa6b8'},
+  dark:{bg:'#121417',surface:'#191c20',raised:'#20242a',line:'#2a2f36',ink:'#e8eaed',ink2:'#9da3ad',ink3:'#6c727c',acc:'#86a6d6',accInk:'#121417',accText:'#93b0dc',sql:'#dde2ea',sqd:'#8395b0'}},
+ {name:'Newsprint',ref:'A newspaper chess column: grey-cream newsprint, black ink, and a single ochre highlight for emphasis.',
+  sw:[['Newsprint','#eceae4'],['Ink','#161616'],['Halftone','#76746e'],['Ochre','#b8862b'],['Rule','#cfccc4']],
+  light:{bg:'#eceae4',surface:'#f6f5f1',raised:'#e3e0d8',line:'#d3d0c7',ink:'#161616',ink2:'#57554f',ink3:'#86837b',acc:'#161616',accInk:'#f6f5f1',accText:'#94690f',sql:'#e8e5dc',sqd:'#a19d93'},
+  dark:{bg:'#161615',surface:'#1e1e1c',raised:'#272725',line:'#31312e',ink:'#e8e6e1',ink2:'#9e9b94',ink3:'#6f6d67',acc:'#e8e6e1',accInk:'#161615',accText:'#d4a54a',sql:'#dedbd2',sqd:'#93908a'}},
+];
+const mini=(t,label)=>{const v=Object.entries(t).map(([k,x])=>`--${k}:${x}`).join(';');
+ const sq=Array.from({length:16},(_,i)=>{const r=Math.floor(i/8),c=i%8;return `<i style="background:${(r+c)%2?t.sqd:t.sql}"></i>`}).join('');
+ return `<div class="mini" style="${v}"><div class="nav"><span class="on">Overview</span><span>Games</span><span>Insights</span></div>
+ <div class="eb">${label} · klemen_r</div><div class="h">Where to improve first</div>
+ <div class="card"><div><div class="d">Accuracy, last 30 days</div><div class="v">78.4%</div><div class="d">opponents 74.1% · <span class="link">see examples</span></div></div><div class="sq">${sq}</div></div>
+ <div style="margin-top:12px;display:flex;gap:8px"><span class="btn">Run full analysis</span><span class="btn2">Compare</span></div></div>`};
+for(const p of P){
+ document.getElementById('pals').insertAdjacentHTML('beforeend',`<div class="pal"><h3>${p.name}</h3><p>${p.ref}</p>
+ <div class="sw">${p.sw.map(([n,c])=>`<div style="background:${c};color:${['#22201c','#241c15','#15171a','#161616','#7a4e2d','#3f5e4c','#244b84','#6b675f','#76746e','#6a6f78','#a8402e','#3e6189'].includes(c)?'#fff':'#222'}">${n}<br>${c}</div>`).join('')}</div>
+ <div class="modes">${mini(p.light,'Light')}${mini(p.dark,'Dark')}</div></div>`);
+}
+</script></body></html>

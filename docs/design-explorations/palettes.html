@@ -1,0 +1,95 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Plyback palettes</title>
+<link rel="stylesheet" href="pieces.css">
+<style>
+@font-face{font-family:Fraunces;src:url(fraunces.woff2) format('woff2');font-weight:100 900}
+@font-face{font-family:Plex;src:url(plex400.woff2);font-weight:400}@font-face{font-family:Plex;src:url(plex600.woff2);font-weight:600}
+@font-face{font-family:PlexMono;src:url(mono.woff2);font-weight:500}
+*{box-sizing:border-box}
+body{margin:0;font-family:Plex,sans-serif;font-size:13px;background:var(--canvas);color:var(--ink);transition:background .2s}
+[data-p=A][data-m=dark]{--canvas:#0d0d0e;--surface:#161617;--raised:#1f1f21;--line:#29292c;--ink:#f2f1ee;--ink2:#a3a3a8;--ink3:#6f6f75;--acc:#ff5a36;--accInk:#fff;--accText:#ff7a5c;--you:#ff5a36;--opp:#8a8a90;--sql:#e9e5dc;--sqd:#7d7a74}
+[data-p=A][data-m=light]{--canvas:#f4f4f3;--surface:#ffffff;--raised:#eeeeec;--line:#e1e1de;--ink:#111112;--ink2:#5f5f64;--ink3:#8d8d92;--acc:#e8442a;--accInk:#fff;--accText:#c9361f;--you:#e8442a;--opp:#8a8a90;--sql:#ecebe7;--sqd:#8b8883}
+[data-p=B][data-m=light]{--canvas:#f6f5f1;--surface:#ffffff;--raised:#efede7;--line:#e3e1da;--ink:#121316;--ink2:#5d5f66;--ink3:#8c8e95;--acc:#2b4dff;--accInk:#fff;--accText:#2443e0;--you:#2b4dff;--opp:#9aa0ad;--sql:#e8ebf2;--sqd:#8a9bbd}
+[data-p=B][data-m=dark]{--canvas:#0e1014;--surface:#151820;--raised:#1c2029;--line:#272c37;--ink:#eef0f5;--ink2:#a2a9b8;--ink3:#6c7384;--acc:#6e86ff;--accInk:#0b0d14;--accText:#8fa0ff;--you:#7c92ff;--opp:#7d8494;--sql:#dfe4ee;--sqd:#7889ad}
+[data-p=C][data-m=dark]{--canvas:#0f1714;--surface:#15201c;--raised:#1c2924;--line:#25352f;--ink:#efeadf;--ink2:#a3ada3;--ink3:#6f7b72;--acc:#d9c89b;--accInk:#14201b;--accText:#e2d3aa;--you:#d9c89b;--opp:#6f8f7f;--sql:#eae3cf;--sqd:#5f8a72}
+[data-p=C][data-m=light]{--canvas:#f3f1e8;--surface:#fbfaf5;--raised:#ece9dc;--line:#dedbcd;--ink:#16211c;--ink2:#56625a;--ink3:#86908a;--acc:#2f6b52;--accInk:#fff;--accText:#2a6049;--you:#2f6b52;--opp:#a3a08f;--sql:#ece6d2;--sqd:#6f9a80}
+[data-p=D][data-m=dark]{--canvas:#0a0a0a;--surface:#131313;--raised:#1b1b1b;--line:#262626;--ink:#ededed;--ink2:#a1a1a1;--ink3:#6b6b6b;--acc:#ededed;--accInk:#0a0a0a;--accText:#ffffff;--you:#ededed;--opp:#6b6b6b;--sql:#d9d9d9;--sqd:#8c8c8c}
+[data-p=D][data-m=light]{--canvas:#fafafa;--surface:#ffffff;--raised:#f2f2f2;--line:#e5e5e5;--ink:#0a0a0a;--ink2:#5c5c5c;--ink3:#8f8f8f;--acc:#0a0a0a;--accInk:#fff;--accText:#0a0a0a;--you:#0a0a0a;--opp:#a3a3a3;--sql:#ebebeb;--sqd:#9a9a9a}
+.bar{position:sticky;top:0;z-index:5;display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 16px;background:#202020;color:#eee;font-size:12.5px}
+.bar button{font:inherit;padding:6px 11px;border-radius:7px;border:1px solid #444;background:#2b2b2b;color:#eee;cursor:pointer}.bar button.on{background:#eee;color:#111;border-color:#eee}
+.app{display:grid;grid-template-columns:190px 1fr;min-height:calc(100vh - 46px)}
+.side{background:var(--surface);border-right:1px solid var(--line);padding:18px 12px;display:flex;flex-direction:column;gap:3px}
+.wm{font-family:Fraunces;font-weight:600;font-size:20px;letter-spacing:-.02em;padding:0 8px 14px}
+.grp{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink3);font-weight:600;padding:12px 8px 4px}
+.nav{padding:7px 9px;border-radius:7px;color:var(--ink2)}.nav.on{background:var(--raised);color:var(--ink);font-weight:600;box-shadow:inset 3px 0 0 var(--acc)}
+.main{padding:22px 26px;display:flex;flex-direction:column;gap:18px;min-width:0}
+h1{font-family:Fraunces;font-weight:600;font-size:28px;margin:0;letter-spacing:-.015em}.sub{color:var(--ink2);margin-top:4px}
+.eb{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);font-weight:600}
+.strip{display:grid;grid-template-columns:repeat(4,1fr);background:var(--surface);border:1px solid var(--line);border-radius:13px}
+.strip>div{padding:14px 18px;border-left:1px solid var(--line)}.strip>div:first-child{border-left:0}
+.val{font-size:25px;font-weight:600;margin-top:5px;font-variant-numeric:tabular-nums}.det{color:var(--ink2);font-size:12px;margin-top:3px}
+.good{color:#4fa66a}.bad{color:#e0533f}
+.row{display:grid;grid-template-columns:1.25fr 1fr;gap:18px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:16px 18px;min-width:0}
+.ptitle{font-weight:600;font-size:14px;margin-bottom:2px}.pdesc{color:var(--ink2);font-size:12.5px;margin-bottom:10px}
+.btns{display:flex;gap:8px;flex-wrap:wrap}.b{padding:7px 13px;border-radius:8px;font-weight:600;font-size:12.5px;border:1px solid transparent}
+.b1{background:var(--acc);color:var(--accInk)}.b2{background:var(--surface);border-color:var(--line);color:var(--ink)}.b3{color:var(--ink2)}
+.link{color:var(--accText);font-weight:600}
+.board{position:relative;width:100%;aspect-ratio:1;border-radius:4px;overflow:hidden;background-color:var(--sql);background-image:conic-gradient(var(--sqd) 90deg,transparent 90deg 180deg,var(--sqd) 180deg 270deg,transparent 270deg);background-size:25% 25%}
+.board piece{position:absolute;width:12.5%;height:12.5%;background-size:cover}
+.lm{position:absolute;width:12.5%;height:12.5%;background:rgba(246,215,87,.45)}
+.badge{position:absolute;width:6%;height:6%;border-radius:50%;background:#fa412d;color:#fff;font-weight:800;font-size:9px;display:flex;align-items:center;justify-content:center;border:2px solid #fff}
+.moves{display:grid;grid-template-columns:28px 1fr 1fr;gap:2px 4px;font-family:PlexMono;font-size:12.5px}
+.moves span{padding:3px 6px;border-radius:5px}.moves .n{color:var(--ink3);text-align:right}.moves .cur{background:var(--raised)}
+.dot{display:inline-block;width:14px;height:14px;border-radius:50%;margin-right:5px;vertical-align:-2px;color:#fff;font-size:8px;text-align:center;line-height:14px;font-weight:800;font-style:normal}
+.pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;background:var(--raised);color:var(--ink2)}
+.prio{display:flex;gap:12px;padding:10px 0;border-top:1px solid var(--line)}.prio:first-of-type{border-top:0}
+.rank{width:26px;height:26px;flex:none;border-radius:7px;display:flex;align-items:center;justify-content:center;font-weight:700;background:var(--raised)}
+.rank.r1{background:var(--acc);color:var(--accInk)}
+.wdl{display:flex;height:6px;border-radius:9px;overflow:hidden;background:var(--raised);margin-top:8px}
+</style></head><body data-p="A" data-m="dark">
+<div class="bar"><b style="margin-right:4px">Palette</b>
+<button data-set-p="A">A · Graphite & Vermilion</button><button data-set-p="B">B · Paper & Cobalt</button><button data-set-p="C">C · Club Green & Cream</button><button data-set-p="D">D · Monochrome</button>
+<span style="flex:1"></span><b>Mode</b><button data-set-m="light">Light</button><button data-set-m="dark">Dark</button></div>
+<div class="app">
+ <div class="side"><div class="wm">plyback</div>
+  <div class="grp">Review</div><div class="nav on">Overview</div><div class="nav">Games</div><div class="nav">Import PGN</div>
+  <div class="grp">Analyze</div><div class="nav">Insights</div><div class="nav">Compare</div><div class="nav">Reports</div>
+  <div class="grp">System</div><div class="nav">Activity</div><div class="nav">Settings</div></div>
+ <div class="main">
+  <div><div class="eb">klemen_r · blitz 652</div><h1>Overview</h1><div class="sub">Last 30 days across 205 reviewed games.</div></div>
+  <div class="strip">
+   <div><div class="eb">Score</div><div class="val">59%</div><div class="det">118 W · 2 D · 85 L</div></div>
+   <div><div class="eb">Accuracy</div><div class="val">78.4%</div><div class="det">opponents 74.1%</div></div>
+   <div><div class="eb">Blunders / game</div><div class="val bad">1.62</div><div class="det">opponents 1.53</div></div>
+   <div><div class="eb">Rating</div><div class="val good">+254</div><div class="det">blitz · peak 660</div></div></div>
+  <div class="row">
+   <div class="panel"><div class="ptitle">Accuracy over time</div><div class="pdesc">Weekly average, you vs. opponents in the same games</div>
+    <svg viewBox="0 0 400 110" width="100%"><g stroke="var(--line)"><line x1="0" x2="400" y1="15" y2="15"/><line x1="0" x2="400" y1="55" y2="55"/><line x1="0" x2="400" y1="95" y2="95"/></g>
+    <path d="M0 88 L50 76 L100 82 L150 56 L200 62 L250 40 L300 46 L350 24 L400 30" fill="none" stroke="var(--you)" stroke-width="2.4" stroke-linejoin="round"/>
+    <path d="M0 66 L50 72 L100 64 L150 68 L200 60 L250 66 L300 58 L350 62 L400 56" fill="none" stroke="var(--opp)" stroke-width="1.8" stroke-dasharray="5 4"/></svg>
+    <div style="margin-top:12px" class="btns"><span class="b b1">Run full analysis</span><span class="b b2">Compare periods</span><span class="b b3">Export</span></div></div>
+   <div class="panel"><div class="ptitle">Where to improve first</div><div class="pdesc">Ranked by winning chances lost per game</div>
+    <div class="prio"><div class="rank r1">1</div><div><b>Piece safety</b> <span class="pill">High confidence</span><div class="pdesc" style="margin:2px 0 0">0.78 hanging pieces per game · <span class="link">See 53 examples</span></div></div></div>
+    <div class="prio"><div class="rank">2</div><div><b>Converting winning positions</b><div class="pdesc" style="margin:2px 0 0">73% conversion (38 of 52)</div></div></div>
+    <div class="prio"><div class="rank">3</div><div><b>Opening: Queen's Pawn Game</b><div class="pdesc" style="margin:2px 0 0">37% score over 15 games</div><div class="wdl"><div style="width:30%;background:#4fa66a"></div><div style="width:13%;background:var(--ink3)"></div><div style="width:57%;background:#e0533f"></div></div></div></div></div>
+  </div>
+  <div class="row" style="grid-template-columns:280px 1fr">
+   <div class="board" id="board"></div>
+   <div class="panel"><div class="ptitle">23. Qh5 <span style="color:#fa412d">Blunder</span></div><div class="pdesc">It leaves your knight on g5 unprotected — Bxg5 wins it. Better was Qd3.</div>
+    <div class="moves"><span class="n">21.</span><span>O-O-O</span><span><i class="dot" style="background:#98bc4b">✓</i>Nd5</span>
+    <span class="n">22.</span><span>Re1</span><span>h6</span><span class="n">23.</span><span class="cur"><i class="dot" style="background:#fa412d">??</i>Qh5</span><span><i class="dot" style="background:#5c8bb0">!</i>Bxg5</span>
+    <span class="n">24.</span><span><i class="dot" style="background:#f7c045">?!</i>N5h3</span><span>Nxe3</span></div>
+    <div style="margin-top:14px" class="btns"><span class="b b2">◀</span><span class="b b2">▶</span><span class="b b3">Hint</span></div></div>
+  </div>
+ </div></div>
+<script>
+const pos=[['black','rook',0,0],['black','king',6,0],['black','pawn',0,1],['black','pawn',1,1],['black','pawn',5,1],['black','pawn',6,1],['black','bishop',4,2],['black','knight',5,2],['white','knight',6,3],['white','queen',7,3],['white','pawn',3,4],['white','bishop',4,5],['white','pawn',0,6],['white','pawn',1,6],['white','pawn',2,6],['white','king',2,7],['white','rook',3,7],['white','rook',4,7]];
+const b=document.getElementById('board');b.className='board cg-wrap';
+b.insertAdjacentHTML('beforeend','<div class="lm" style="left:87.5%;top:37.5%"></div><div class="lm" style="left:37.5%;top:87.5%"></div>');
+for(const [c,t,x,y] of pos) b.insertAdjacentHTML('beforeend',`<piece class="${c} ${t}" style="left:${x*12.5}%;top:${y*12.5}%"></piece>`);
+b.insertAdjacentHTML('beforeend','<div class="badge" style="left:96%;top:37%;transform:translate(-50%,0)">??</div>');
+const sync=()=>document.querySelectorAll('[data-set-p],[data-set-m]').forEach(x=>x.classList.toggle('on',x.dataset.setP===document.body.dataset.p||x.dataset.setM===document.body.dataset.m));
+document.querySelectorAll('[data-set-p]').forEach(x=>x.onclick=()=>{document.body.dataset.p=x.dataset.setP;sync()});
+document.querySelectorAll('[data-set-m]').forEach(x=>x.onclick=()=>{document.body.dataset.m=x.dataset.setM;sync()});
+const q=new URLSearchParams(location.search);if(q.get('p'))document.body.dataset.p=q.get('p');if(q.get('m'))document.body.dataset.m=q.get('m');sync();
+</script></body></html>

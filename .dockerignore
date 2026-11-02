@@ -1,0 +1,17 @@
+.git
+.github
+.venv
+data
+frontend/node_modules
+frontend/dist
+frontend/test-results
+frontend/playwright-report
+backend/tests/.testdata
+backend/tests/.e2edata
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+.env
+.env.*
+*.pgn
+klemen_r_analysis_and_training_plan.md

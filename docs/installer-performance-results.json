@@ -1,0 +1,55 @@
+{
+  "measured_on": "2026-11-02",
+  "runtime": {
+    "python": "3.14.3 (tags/v3.14.3:323c59a, Feb  3 2026, 16:04:56) [MSC v.1944 64 bit (AMD64)]",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "machine": "AMD64"
+  },
+  "asset_url": "https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-windows-x86-64-universal.zip",
+  "release": "sf_19",
+  "asset_digest": "sha256:3c8bf1f9ea66a09350a40df4f632288285ac206d99f33ab5842c408fc30b48a7",
+  "repeats": 3,
+  "scope": "extraction only; archive already downloaded; old is source-equivalent read-all reference; new also retains notices",
+  "samples": {
+    "reference": [
+      {
+        "seconds": 0.731716,
+        "peak_python_bytes": 380854866
+      },
+      {
+        "seconds": 0.681896,
+        "peak_python_bytes": 380812592
+      },
+      {
+        "seconds": 0.607786,
+        "peak_python_bytes": 380812576
+      }
+    ],
+    "streamed": [
+      {
+        "seconds": 0.592156,
+        "peak_python_bytes": 5151119
+      },
+      {
+        "seconds": 0.582184,
+        "peak_python_bytes": 5150907
+      },
+      {
+        "seconds": 0.567383,
+        "peak_python_bytes": 5150891
+      }
+    ]
+  },
+  "archive_bytes": 81431614,
+  "identical_binary_sha256": "45bc8e4969147db9c2eb533810637994619bff0eacc81ccfd9854394901bcbd0",
+  "medians": {
+    "reference": {
+      "seconds": 0.681896,
+      "peak_python_bytes": 380812592
+    },
+    "streamed": {
+      "seconds": 0.582184,
+      "peak_python_bytes": 5150907
+    }
+  }
+}

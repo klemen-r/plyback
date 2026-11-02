@@ -1,0 +1,36 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+@font-face{font-family:Fraunces;src:url(fraunces.woff2) format('woff2');font-weight:100 900}
+@font-face{font-family:Plex;src:url(plex400.woff2);font-weight:400}@font-face{font-family:Plex;src:url(plex600.woff2);font-weight:600}
+body{margin:0;padding:20px;background:#777;font-family:Plex,sans-serif;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.card{border-radius:14px;padding:22px;display:flex;flex-direction:column;gap:16px;min-height:300px}
+.top{display:flex;align-items:center;justify-content:space-between}
+.lock{display:flex;align-items:center;gap:11px}.word{font-size:27px;letter-spacing:-.02em}
+.tag{font-size:12px;letter-spacing:.12em;text-transform:uppercase;opacity:.6;font-weight:600}
+.sw{display:flex;gap:6px}.sw i{width:26px;height:26px;border-radius:7px;display:block;border:1px solid rgba(128,128,128,.25)}
+.ui{display:grid;grid-template-columns:1.1fr 1fr;gap:12px}.panel{border-radius:11px;padding:14px;border:1px solid}
+.eb{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;font-weight:600;opacity:.55}.big{font-size:30px;font-weight:600;margin-top:6px}
+.btn{display:inline-block;margin-top:10px;padding:7px 13px;border-radius:8px;font-weight:600;font-size:13px}
+.sizes{display:flex;align-items:end;gap:10px}
+</style></head><body>
+<script>
+const knight=(t,a,b)=>`<svg viewBox="0 0 64 64" width="S" height="S"><rect width="64" height="64" rx="15" fill="${t}"/><rect x="17" y="13" width="13" height="13" rx="2.5" fill="${b}"/><rect x="17" y="28" width="13" height="13" rx="2.5" fill="${b}" opacity=".55"/><rect x="17" y="43" width="13" height="13" rx="2.5" fill="${b}" opacity=".3"/><rect x="34" y="13" width="13" height="13" rx="2.5" fill="${a}"/></svg>`;
+const half=(t,a,b)=>`<svg viewBox="0 0 64 64" width="S" height="S"><rect width="64" height="64" rx="15" fill="${t}"/><circle cx="32" cy="32" r="17" fill="none" stroke="${b}" stroke-width="5"/><path d="M44.02 19.98A17 17 0 0 1 19.98 44.02Z" fill="${a}"/></svg>`;
+const pawn=(t,a,b)=>`<svg viewBox="0 0 64 64" width="S" height="S"><rect width="64" height="64" rx="15" fill="${t}"/><circle cx="36" cy="25" r="10.5" fill="none" stroke="${b}" stroke-width="6"/><path d="M22.5 15v37" stroke="${b}" stroke-width="6" stroke-linecap="round"/><circle cx="36" cy="25" r="3.6" fill="${a}"/></svg>`;
+const plies=(t,a,b)=>`<svg viewBox="0 0 64 64" width="S" height="S"><rect width="64" height="64" rx="15" fill="${t}"/><path d="M22 16 38 32 22 48" fill="none" stroke="${b}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity=".45"/><path d="M32 16 48 32 32 48" fill="none" stroke="${a}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const D=[
+ {id:'A',name:'Graphite & Vermilion',note:'Sharp, energetic, competitive',mark:knight,bg:'#0d0d0e',panel:'#161617',line:'#27272a',ink:'#f2f1ee',mute:'#9a9a9e',acc:'#ff5a36',accInk:'#fff',tile:'#ff5a36',ma:'#0d0d0e',mb:'#0d0d0e',font:'Plex',w:600,sw:['#0d0d0e','#161617','#f2f1ee','#ff5a36','#8a8a8f']},
+ {id:'B',name:'Paper & Cobalt',note:'Editorial, calm, analytical (light-first)',mark:half,bg:'#f6f5f1',panel:'#ffffff',line:'#e3e1da',ink:'#121316',mute:'#64656b',acc:'#2b4dff',accInk:'#fff',tile:'#121316',ma:'#2b4dff',mb:'#f6f5f1',font:'Fraunces',w:600,sw:['#f6f5f1','#ffffff','#121316','#2b4dff','#9aa0ad']},
+ {id:'C',name:'Club Green & Cream',note:'Classic chess-club warmth, understated',mark:pawn,bg:'#0f1714',panel:'#16211d',line:'#24332d',ink:'#efeadf',mute:'#9fa89f',acc:'#d9c89b',accInk:'#14201b',tile:'#d9c89b',ma:'#2f6b52',mb:'#14201b',font:'Fraunces',w:600,sw:['#0f1714','#16211d','#efeadf','#d9c89b','#5f8f77']},
+ {id:'D',name:'Monochrome',note:'Minimal, precise, tool-like',mark:plies,bg:'#0a0a0a',panel:'#131313',line:'#262626',ink:'#ededed',mute:'#8f8f8f',acc:'#ededed',accInk:'#0a0a0a',tile:'#ededed',ma:'#0a0a0a',mb:'#0a0a0a',font:'Plex',w:600,sw:['#0a0a0a','#131313','#ededed','#8f8f8f','#3d3d3d']},
+];
+for(const d of D){
+ const m=s=>d.mark(d.tile,d.ma,d.mb).replaceAll('"S"',`"${s}"`);
+ const chart=`<svg viewBox="0 0 160 50" width="100%" height="50"><path d="M0 40 L20 34 L40 37 L60 25 L80 28 L100 18 L120 21 L140 10 L160 13" fill="none" stroke="${d.acc}" stroke-width="2.2"/><path d="M0 30 L20 33 L40 29 L60 31 L80 27 L100 30 L120 26 L140 28 L160 25" fill="none" stroke="${d.mute}" stroke-width="1.6" stroke-dasharray="4 3"/></svg>`;
+ document.body.insertAdjacentHTML('beforeend',`<div class="card" style="background:${d.bg};color:${d.ink}">
+ <div class="top"><div class="lock">${m(42)}<span class="word" style="font-family:${d.font};font-weight:${d.w}">plyback</span></div><span class="tag">${d.id} · ${d.name}</span></div>
+ <div class="sizes">${m(64)}${m(32)}${m(20)}${m(16)}<span style="margin-left:auto" class="sw">${d.sw.map(c=>`<i style="background:${c}"></i>`).join('')}</span></div>
+ <div class="ui"><div class="panel" style="background:${d.panel};border-color:${d.line}"><div class="eb">Accuracy · last 30 days</div><div class="big">78.4%</div><div style="color:${d.mute};font-size:12px">opponents 74.1%</div>${chart}</div>
+ <div class="panel" style="background:${d.panel};border-color:${d.line}"><div class="eb">Top priority</div><div style="font-family:${d.font};font-size:19px;font-weight:600;margin-top:6px">Piece safety</div><div style="color:${d.mute};font-size:12.5px;margin-top:4px">0.78 hanging pieces per game</div><span class="btn" style="background:${d.acc};color:${d.accInk}">Review examples</span></div></div>
+ <div style="font-size:12.5px;color:${d.mute}">${d.note}</div></div>`);
+}
+</script></body></html>

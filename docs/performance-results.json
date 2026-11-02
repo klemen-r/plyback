@@ -1,0 +1,291 @@
+{
+  "games": 4100,
+  "moves": 226900,
+  "output_equal": true,
+  "repeat": 7,
+  "warm_insights_ms": {
+    "before": [
+      1761.2991000059992,
+      1753.3610000100452,
+      1775.240799994208,
+      1764.8131999885663,
+      1781.9357000116725,
+      1716.8557000113651,
+      1641.6634999914095
+    ],
+    "after": [
+      1580.5785999982618,
+      1680.919200007338,
+      1615.2186999970581,
+      1607.581599993864,
+      2168.223199987551,
+      1585.5433999968227,
+      1579.7022999904584
+    ]
+  },
+  "medians_ms": {
+    "before": 1761.3,
+    "after": 1607.6
+  },
+  "environment": {
+    "date": "2026-11-02",
+    "python": "3.14.3",
+    "sqlite": "3.50.4",
+    "platform": "Windows"
+  },
+  "full_run_under_concurrent_load": {
+    "python": "3.14.3",
+    "platform": "Windows",
+    "sqlite": "3.50.4",
+    "scale": 20,
+    "repeat": 5,
+    "build_db_s": 13.9,
+    "openings_index_ms": 21.1,
+    "games": 4100,
+    "moves": 226900,
+    "insights_cold_ms": 3725.4,
+    "insights_all_ms": {
+      "median_ms": 2726.1,
+      "min_ms": 1516.7
+    },
+    "insights_blitz_white_ms": {
+      "median_ms": 3155.7,
+      "min_ms": 1658.2
+    },
+    "api_games_page_ms": {
+      "median_ms": 135.9,
+      "min_ms": 109.3
+    },
+    "api_games_filtered_ms": {
+      "median_ms": 214.3,
+      "min_ms": 180.7
+    },
+    "api_game_detail_ms": {
+      "median_ms": 41.2,
+      "min_ms": 28.1
+    },
+    "api_accounts_ms": {
+      "median_ms": 62.4,
+      "min_ms": 39.2
+    },
+    "api_status_ms": {
+      "median_ms": 189.3,
+      "min_ms": 139.9
+    },
+    "api_insights_cached_ms": {
+      "median_ms": 32.7,
+      "min_ms": 26.3
+    },
+    "pipeline_overhead_ms_per_game": 56.7
+  },
+  "analysis_pipeline": {
+    "games": 2,
+    "plies": 133,
+    "engine": "Stockfish 19",
+    "depth": 16,
+    "multipv": 2,
+    "time_cap_seconds": 5,
+    "threads": 1,
+    "hash_mb": 64,
+    "equivalent_output": true,
+    "identical_engine_requests": true,
+    "replay_overhead_ms": {
+      "before": [
+        274.39430000958964,
+        274.6466000098735,
+        259.3232000072021,
+        258.7638999975752,
+        265.3246000118088,
+        267.4068000051193,
+        264.7749000170734,
+        258.50930000888184,
+        263.7801000091713,
+        261.34060000185855
+      ],
+      "after": [
+        156.11949999583885,
+        149.59279997856356,
+        154.014300002018,
+        149.11779999965802,
+        150.86650001467206,
+        147.40270000766031,
+        148.18499999819323,
+        151.3890999776777,
+        152.098799997475,
+        150.7438999833539
+      ]
+    },
+    "replay_median_ms": {
+      "before": 264.28,
+      "after": 150.81
+    },
+    "live_samples": [
+      {
+        "plies": 88,
+        "wall_ms": 58137,
+        "engine_ms": 57895.15,
+        "python_overhead_ms": 241.85,
+        "engine_calls": 97,
+        "threat_calls": 8,
+        "terminal_calls": 0,
+        "minimum_main_depth_nonterminal": 16
+      },
+      {
+        "plies": 45,
+        "wall_ms": 66636,
+        "engine_ms": 66535.98,
+        "python_overhead_ms": 100.02,
+        "engine_calls": 55,
+        "threat_calls": 9,
+        "terminal_calls": 1,
+        "minimum_main_depth_nonterminal": 16
+      }
+    ],
+    "san_conversions": {
+      "before": 665,
+      "after": 269
+    },
+    "traced_peak_bytes": {
+      "before": [
+        574939,
+        574963,
+        574963
+      ],
+      "after": [
+        512508,
+        512500,
+        512500
+      ]
+    }
+  },
+  "analysis_node_cap_experiment": {
+    "python": "3.14.3",
+    "platform": "Windows",
+    "engine": "Stockfish 19",
+    "options": {
+      "depth": 16,
+      "multipv": 2,
+      "threat_depth": 10
+    },
+    "time_cap": 5,
+    "node_cap": 100000,
+    "threads": 1,
+    "hash_mb": 64,
+    "startup_ms": 431.94,
+    "samples": [
+      {
+        "plies": 88,
+        "wall_ms": 14700.38,
+        "engine_ms": 14590.02,
+        "python_overhead_ms": 110.36,
+        "engine_calls": 97,
+        "threat_calls": 8,
+        "nodes": 8740136,
+        "achieved_depths": [
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16
+        ]
+      },
+      {
+        "plies": 45,
+        "wall_ms": 8983.23,
+        "engine_ms": 8937.08,
+        "python_overhead_ms": 46.15,
+        "engine_calls": 55,
+        "threat_calls": 9,
+        "nodes": 4452998,
+        "achieved_depths": [
+          0,
+          10,
+          12,
+          13,
+          14,
+          15,
+          16
+        ]
+      }
+    ],
+    "replay_ms": [
+      165.81860001315363,
+      177.40409998805262,
+      144.24439999856986,
+      176.1273999873083,
+      175.5282999947667
+    ],
+    "replay_median_ms": 175.53,
+    "output_equal": true
+  },
+  "service_cache_recorded_search_experiment": [
+    {
+      "plies": 88,
+      "cold": {
+        "engine_evaluations": 97,
+        "recorded_search_ms": 57895.15
+      },
+      "warm": {
+        "engine_evaluations": 66,
+        "recorded_search_ms": 37245.46
+      },
+      "saved_engine_calls": 31
+    },
+    {
+      "plies": 45,
+      "cold": {
+        "engine_evaluations": 55,
+        "recorded_search_ms": 66535.98
+      },
+      "warm": {
+        "engine_evaluations": 24,
+        "recorded_search_ms": 8652.67
+      },
+      "saved_engine_calls": 31
+    }
+  ],
+  "service_cache_real_engine": {
+    "python": "3.14.3",
+    "platform": "Windows",
+    "engine": "Stockfish 19",
+    "plies": 45,
+    "depth": 16,
+    "multipv": 2,
+    "time_cap_seconds": 5,
+    "threads": 1,
+    "hash_mb": 64,
+    "fresh_process_each_run": true,
+    "normal_queue_skips_completed_analysis": true,
+    "samples": [
+      {
+        "scenario": "cold",
+        "wall_ms": 31198.13,
+        "engine_evaluations": 56,
+        "uci_searches": 55,
+        "nodes": 14333388,
+        "engine_ms": 31107.1,
+        "main_depths_nonterminal": [
+          16
+        ],
+        "threat_searches": 10,
+        "cached_positions": 31
+      },
+      {
+        "scenario": "warm_forced_rerun",
+        "wall_ms": 10127.52,
+        "engine_evaluations": 25,
+        "uci_searches": 24,
+        "nodes": 4185482,
+        "engine_ms": 10022.85,
+        "main_depths_nonterminal": [
+          16
+        ],
+        "threat_searches": 10,
+        "cached_positions": 31
+      }
+    ],
+    "cpu": "Intel Core i5-9400F (6 cores / 6 logical processors)"
+  }
+}

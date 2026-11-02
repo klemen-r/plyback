@@ -1,0 +1,20 @@
+services:
+  plyback:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # Required when the server is reachable from other machines. Change it.
+      PLYBACK_PASSWORD: ${PLYBACK_PASSWORD:?Set PLYBACK_PASSWORD}
+      # Behind an HTTPS reverse proxy, also set:
+      # PLYBACK_SECURE_COOKIES: "1"
+    volumes:
+      - plyback-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+volumes:
+  plyback-data:

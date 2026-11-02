@@ -1,0 +1,23 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;padding:28px;background:#0E1013;color:#ECE7DD;font-family:Georgia,serif;display:grid;gap:22px}
+.row{display:flex;gap:24px;align-items:center;flex-wrap:wrap}.light{background:#F4EFE6;padding:20px;border-radius:12px}
+.word{font-weight:600;font-size:40px;letter-spacing:-0.02em}
+</style></head><body>
+<div class="row" id="r1"></div><div class="row" id="r2"></div><div class="row light" id="l"></div>
+<script>
+// C: right-pointing play counter, rounded joins
+const C = (tile, ink) => `<svg viewBox="0 0 64 64" width="SIZE" height="SIZE" xmlns="http://www.w3.org/2000/svg">
+<rect width="64" height="64" rx="16" fill="${tile}"/>
+<path fill="${ink}" stroke="${ink}" stroke-width="2.5" stroke-linejoin="round" fill-rule="evenodd"
+ d="M17 13.5h17a13.5 13.5 0 0 1 0 27h-6v10.5H17Z M31 19.5l11 7-11 7Z"/></svg>`;
+// D: same idea, open counter carved with tile color (triangle rounded via stroke)
+const D = (tile, ink) => `<svg viewBox="0 0 64 64" width="SIZE" height="SIZE" xmlns="http://www.w3.org/2000/svg">
+<rect width="64" height="64" rx="16" fill="${tile}"/>
+<path fill="${ink}" stroke="${ink}" stroke-width="3" stroke-linejoin="round" d="M18 14h16a13 13 0 0 1 0 26h-6v10H18Z"/>
+<path fill="${tile}" stroke="${tile}" stroke-width="2.4" stroke-linejoin="round" d="M31.5 20.5 41 27l-9.5 6.5Z"/></svg>`;
+const V=[['#E3A84A','#15171B'],['#15171B','#E3A84A'],['#ECE7DD','#15171B']];
+for (const f of [C,D]) for (const [t,i] of V) for (const s of [88,40,20,16]) (f===C?r1:r2).insertAdjacentHTML('beforeend', f(t,i).replaceAll('SIZE',s));
+r1.insertAdjacentHTML('beforeend', `<span style="display:flex;align-items:center;gap:12px">${D('#E3A84A','#15171B').replaceAll('SIZE',40)}<span class="word">plyback</span></span>`);
+for (const [t,i] of V) l.insertAdjacentHTML('beforeend', D(t,i).replaceAll('SIZE',48));
+l.insertAdjacentHTML('beforeend', `<span style="display:flex;align-items:center;gap:12px;color:#15171B">${D('#15171B','#E3A84A').replaceAll('SIZE',40)}<span class="word">plyback</span></span>`);
+</script></body></html>

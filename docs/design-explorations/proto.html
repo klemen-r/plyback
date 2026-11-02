@@ -1,0 +1,112 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Plyback — Overview prototype</title>
+<link rel="stylesheet" href="pieces.css">
+<style>
+*{box-sizing:border-box}
+:root{--font:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,Roboto,"Helvetica Neue",Arial,sans-serif;--mono:ui-monospace,"SF Mono","Cascadia Mono",Consolas,monospace}
+[data-m=light]{--bg:#f6f6f4;--surface:#fff;--hover:#f0f0ed;--line:#e2e2de;--line2:#d0d0cb;--ink:#15171a;--ink2:#5b6069;--ink3:#8b9099;--sql:#e9ecf0;--sqd:#9aa6b8;--good:#2f7d4a;--bad:#b9382a}
+[data-m=dark]{--bg:#121417;--surface:#181b1f;--hover:#1f2328;--line:#2a2e34;--line2:#383d44;--ink:#e6e8eb;--ink2:#9ca2ab;--ink3:#6d737c;--sql:#d9dee6;--sqd:#7f8fa8;--good:#6fbf86;--bad:#e3735f}
+body{margin:0;font-family:var(--font);font-size:13px;line-height:1.45;background:var(--bg);color:var(--ink)}
+.accent-text{color:var(--acc-text)}
+.ctl{position:sticky;top:0;z-index:9;display:flex;gap:8px;align-items:center;padding:8px 14px;background:#2b2d31;color:#ddd;font:12px var(--font);flex-wrap:wrap}
+.ctl button{font:inherit;padding:4px 9px;border-radius:4px;border:1px solid #555;background:#3a3c41;color:#eee;cursor:pointer}.ctl .sw{width:18px;height:18px;border-radius:3px;border:1px solid #777;cursor:pointer;padding:0}
+.app{display:grid;grid-template-columns:208px 1fr;min-height:calc(100vh - 38px)}
+.side{border-right:1px solid var(--line);background:var(--surface);padding:14px 10px;display:flex;flex-direction:column}
+.brand{display:flex;align-items:center;gap:9px;padding:2px 8px 14px;font-weight:600;font-size:15px;letter-spacing:-.01em}
+.acct{display:flex;align-items:center;gap:8px;padding:7px 8px;border:1px solid var(--line);border-radius:5px;margin-bottom:14px}
+.av{width:22px;height:22px;border-radius:3px;background:var(--line2)}
+.sec{color:var(--ink3);font-size:12px;padding:12px 8px 4px}
+.nav{display:block;padding:5px 8px;border-radius:4px;color:var(--ink2);text-decoration:none}.nav:hover{background:var(--hover)}
+.nav.on{background:var(--hover);color:var(--ink);font-weight:500}
+.foot{margin-top:auto;border-top:1px solid var(--line);padding:10px 8px 0;color:var(--ink3);font-size:12px}
+.foot .st::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--good);margin-right:6px;vertical-align:1px}
+.main{padding:22px 32px 48px;max-width:1180px}
+.head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;padding-bottom:14px;border-bottom:1px solid var(--line);margin-bottom:18px}
+h1{font-size:20px;font-weight:600;margin:0;letter-spacing:-.01em}.meta{color:var(--ink2);margin-top:3px}
+.btn{font:inherit;font-size:13px;font-weight:500;height:28px;padding:0 11px;border-radius:4px;border:1px solid var(--line2);background:var(--surface);color:var(--ink);cursor:pointer}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--on-acc)}.btn.primary:hover{background:var(--acc-hover)}
+.filters{display:flex;gap:6px;margin-bottom:18px}.seg{display:inline-flex;border:1px solid var(--line2);border-radius:4px;overflow:hidden}.seg span{padding:4px 10px;border-right:1px solid var(--line2);color:var(--ink2);background:var(--surface)}.seg span:last-child{border-right:0}.seg .on{background:var(--hover);color:var(--ink);font-weight:500}
+.metrics{display:grid;grid-template-columns:repeat(5,1fr);border:1px solid var(--line);border-radius:6px;background:var(--surface);margin-bottom:22px}
+.metrics>div{padding:12px 14px;border-left:1px solid var(--line)}.metrics>div:first-child{border-left:0}
+.lbl{color:var(--ink2);font-size:12px}.val{font-size:20px;font-weight:500;margin-top:2px;font-variant-numeric:tabular-nums}.sub{color:var(--ink3);font-size:12px}
+.cols{display:grid;grid-template-columns:1.35fr 1fr;gap:28px}
+h2{font-size:14px;font-weight:600;margin:0 0 2px}.h2sub{color:var(--ink2);margin-bottom:10px}
+.box{border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th{text-align:left;font-weight:500;color:var(--ink2);font-size:12px;padding:7px 12px;border-bottom:1px solid var(--line)}
+td{padding:8px 12px;border-bottom:1px solid var(--line)}tr:last-child td{border-bottom:0}tr:hover td{background:var(--hover)}
+.r{text-align:right}.muted{color:var(--ink2)}.res{display:inline-block;width:16px;font-weight:600}.w{color:var(--good)}.l{color:var(--bad)}
+a{color:var(--acc-text);text-decoration:none}a:hover{text-decoration:underline}
+.cls{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;color:#fff;font-size:8.5px;font-weight:700;margin-right:4px;vertical-align:-3px}
+.prio td:first-child{color:var(--ink3);width:24px}
+.chart{padding:12px 14px 6px}
+.board{position:relative;width:100%;aspect-ratio:1;background-color:var(--sql);background-image:conic-gradient(var(--sqd) 90deg,transparent 90deg 180deg,var(--sqd) 180deg 270deg,transparent 270deg);background-size:25% 25%}
+.board piece{position:absolute;width:12.5%;height:12.5%;background-size:cover}
+.lm{position:absolute;width:12.5%;height:12.5%;background:color-mix(in srgb,var(--acc) 30%,transparent)}
+.review{display:grid;grid-template-columns:260px 1fr;gap:18px;margin-top:26px}
+.moves{font-family:var(--mono);font-size:12.5px;display:grid;grid-template-columns:30px 1fr 1fr}.moves span{padding:3px 6px}.moves .n{color:var(--ink3);text-align:right}.moves .cur{background:color-mix(in srgb,var(--acc) 14%,transparent);border-radius:3px}
+</style></head><body data-m="light">
+<div class="ctl"><b>Mode</b><button data-m="light">Light</button><button data-m="dark">Dark</button>
+<span style="margin-left:14px"><b>Cover color</b></span>
+<button class="sw" style="background:#244b84" data-c="#244b84" title="Informant blue"></button>
+<button class="sw" style="background:#a8402e" data-c="#a8402e"></button><button class="sw" style="background:#3f5e4c" data-c="#3f5e4c"></button>
+<button class="sw" style="background:#b8862b" data-c="#b8862b"></button><button class="sw" style="background:#6b4fa0" data-c="#6b4fa0"></button><button class="sw" style="background:#15171a" data-c="#15171a"></button>
+<input type="color" value="#244b84" id="pick" style="width:28px;height:20px;border:0;background:none"></div>
+<div class="app">
+<aside class="side">
+ <div class="brand"><svg width="20" height="20" viewBox="0 0 64 64"><rect x="10" y="4" width="17" height="17" rx="2" fill="currentColor"/><rect x="10" y="24" width="17" height="17" rx="2" fill="currentColor" opacity=".45"/><rect x="10" y="44" width="17" height="17" rx="2" fill="currentColor" opacity=".2"/><rect x="31" y="4" width="17" height="17" rx="2" fill="var(--acc)"/></svg>Plyback</div>
+ <div class="acct"><span class="av"></span><div style="flex:1"><div style="font-weight:500">klemen_r</div><div class="sub">205 games · all reviewed</div></div></div>
+ <a class="nav on">Overview</a><a class="nav">Games</a><a class="nav">Insights</a><a class="nav">Compare</a><a class="nav">Reports</a>
+ <div class="sec">Library</div><a class="nav">Import PGN</a><a class="nav">Activity</a><a class="nav">Settings</a>
+ <div class="foot"><div class="st">Stockfish 19 · idle</div><div style="margin-top:4px">Synced 2 min ago</div></div>
+</aside>
+<main class="main">
+ <div class="head"><div><h1>Overview</h1><div class="meta">klemen_r · Blitz 652 · Bullet 528 · Rapid 336</div></div><div style="display:flex;gap:6px"><button class="btn">Sync now</button><button class="btn primary">Run full analysis</button></div></div>
+ <div class="filters"><div class="seg"><span>7 days</span><span class="on">30 days</span><span>90 days</span><span>All time</span></div></div>
+ <div class="metrics">
+  <div><div class="lbl">Games</div><div class="val">205</div><div class="sub">118 W · 2 D · 85 L</div></div>
+  <div><div class="lbl">Score</div><div class="val">59%</div><div class="sub">White 55% · Black 61%</div></div>
+  <div><div class="lbl">Accuracy</div><div class="val">78.4</div><div class="sub">Opponents 74.1</div></div>
+  <div><div class="lbl">Blunders per game</div><div class="val">1.62</div><div class="sub">Opponents 1.53</div></div>
+  <div><div class="lbl">Blitz rating</div><div class="val">652 <span class="sub w">+254</span></div><div class="sub">Peak 660</div></div></div>
+ <div class="cols">
+  <div><h2>Recent games</h2><div class="h2sub">Reviewed automatically after each game.</div>
+   <div class="box"><table><thead><tr><th></th><th>Opponent</th><th>Opening</th><th class="r">Accuracy</th><th class="r">Errors</th><th class="r">Date</th></tr></thead><tbody>
+   <tr><td><span class="res w">W</span></td><td>Makundi <span class="muted">630</span></td><td class="muted">King's Pawn: Bayonet</td><td class="r">74.1</td><td class="r"><span class="cls" style="background:#e8813a">?</span>2 <span class="cls" style="background:#d9412f">??</span>1</td><td class="r muted">Nov 2</td></tr>
+   <tr><td><span class="res w">W</span></td><td>Tuchesssb <span class="muted">640</span></td><td class="muted">Caro-Kann Defense</td><td class="r">57.4</td><td class="r"><span class="cls" style="background:#d9412f">??</span>3</td><td class="r muted">Nov 2</td></tr>
+   <tr><td><span class="res l">L</span></td><td>SamDenStore <span class="muted">665</span></td><td class="muted">Caro-Kann: Campomanes</td><td class="r">54.5</td><td class="r"><span class="cls" style="background:#d9412f">??</span>2</td><td class="r muted">Nov 2</td></tr>
+   <tr><td><span class="res w">W</span></td><td>gabriiellyaan <span class="muted">612</span></td><td class="muted">Zukertort: Lemberger</td><td class="r">73.7</td><td class="r"><span class="cls" style="background:#3f7fbf">!</span>1 <span class="cls" style="background:#d9412f">??</span>1</td><td class="r muted">Nov 2</td></tr>
+   <tr><td><span class="res w">W</span></td><td>muu9m <span class="muted">627</span></td><td class="muted">Three Knights Opening</td><td class="r">67.1</td><td class="r"><span class="cls" style="background:#d9412f">??</span>3</td><td class="r muted">Nov 2</td></tr>
+   </tbody></table></div>
+   <div style="margin-top:8px"><a>All games →</a></div></div>
+  <div><h2>Where to improve first</h2><div class="h2sub">Winning chances lost per game, compared with opponents.</div>
+   <div class="box"><table class="prio"><tbody>
+    <tr><td>1</td><td>Piece safety<div class="sub">0.78 per game · opponents 0.75</div></td><td class="r">41%</td></tr>
+    <tr><td>2</td><td>Converting winning positions<div class="sub">38 of 52 converted</div></td><td class="r">47%</td></tr>
+    <tr><td>3</td><td>Opening: Queen's Pawn Game<div class="sub">37% score over 15 games</div></td><td class="r">39%</td></tr>
+   </tbody></table></div>
+   <div style="margin-top:8px"><a>Open insights →</a></div>
+   <h2 style="margin-top:22px">Accuracy, weekly</h2>
+   <div class="box chart"><svg viewBox="0 0 400 100" width="100%"><g stroke="var(--line)"><line x1="0" x2="400" y1="10" y2="10"/><line x1="0" x2="400" y1="50" y2="50"/><line x1="0" x2="400" y1="90" y2="90"/></g>
+    <path d="M0 80 L57 70 L114 75 L171 52 L228 57 L285 37 L342 42 L400 26" fill="none" stroke="var(--acc-line)" stroke-width="1.8"/>
+    <path d="M0 60 L57 65 L114 58 L171 62 L228 55 L285 60 L342 53 L400 56" fill="none" stroke="var(--ink3)" stroke-width="1.3" stroke-dasharray="4 3"/></svg>
+    <div class="sub" style="padding:2px 0 6px">— You &nbsp; - - Opponents</div></div></div>
+ </div>
+ <div class="review"><div class="board" id="board"></div>
+  <div><h2>Game review · 23. Qh5</h2><div class="h2sub"><span class="cls" style="background:#d9412f">??</span>Blunder. It leaves your knight on g5 unprotected — Bxg5 wins it. Better was Qd3 (−0.82).</div>
+   <div class="box" style="padding:8px"><div class="moves"><span class="n">21.</span><span>O-O-O</span><span>Nd5</span><span class="n">22.</span><span>Re1</span><span>h6</span><span class="n">23.</span><span class="cur">Qh5</span><span>Bxg5</span><span class="n">24.</span><span>N5h3</span><span>Nxe3</span></div></div>
+   <div style="margin-top:10px;display:flex;gap:6px"><button class="btn">◀</button><button class="btn">▶</button><button class="btn">Show best move</button></div></div></div>
+</main></div>
+<script>
+const pos=[['black','rook',0,0],['black','king',6,0],['black','pawn',0,1],['black','pawn',1,1],['black','pawn',5,1],['black','pawn',6,1],['black','bishop',4,2],['black','knight',5,2],['white','knight',6,3],['white','queen',7,3],['white','pawn',3,4],['white','bishop',4,5],['white','pawn',0,6],['white','pawn',1,6],['white','pawn',2,6],['white','king',2,7],['white','rook',3,7],['white','rook',4,7]];
+const b=document.getElementById('board');b.className='board cg-wrap';
+b.insertAdjacentHTML('beforeend','<div class="lm" style="left:87.5%;top:37.5%"></div><div class="lm" style="left:37.5%;top:87.5%"></div>');
+for(const [c,t,x,y] of pos) b.insertAdjacentHTML('beforeend',`<piece class="${c} ${t}" style="left:${x*12.5}%;top:${y*12.5}%"></piece>`);
+function lum(h){const n=parseInt(h.slice(1),16);const c=[n>>16,(n>>8)&255,n&255].map(v=>{v/=255;return v<=.03928?v/12.92:((v+.055)/1.055)**2.4});return .2126*c[0]+.7152*c[1]+.0722*c[2]}
+function setAccent(h){const s=document.body.style,dark=document.body.dataset.m==='dark';s.setProperty('--acc',h);
+ s.setProperty('--on-acc',lum(h)>.45?'#15171a':'#ffffff');s.setProperty('--acc-hover',`color-mix(in oklab, ${h} 86%, ${dark?'white':'black'})`);
+ const L=lum(h);s.setProperty('--acc-text',dark?(L<.25?`color-mix(in oklab, ${h} 55%, white)`:h):(L>.35?`color-mix(in oklab, ${h} 60%, black)`:h));
+ s.setProperty('--acc-line',dark&&L<.2?`color-mix(in oklab, ${h} 55%, white)`:h);window._acc=h}
+document.querySelectorAll('[data-m]').forEach(x=>{if(x.tagName==='BUTTON')x.onclick=()=>{document.body.dataset.m=x.dataset.m;setAccent(window._acc)}});
+document.querySelectorAll('[data-c]').forEach(x=>x.onclick=()=>{setAccent(x.dataset.c);pick.value=x.dataset.c});
+pick.oninput=e=>setAccent(e.target.value);setAccent('#244b84');
+</script></body></html>

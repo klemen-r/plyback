@@ -1,0 +1,24 @@
+/.venv/
+/data/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+/build/
+/dist/
+/backend/build/
+/backend/dist/
+/backend/tests/.testdata/
+/backend/tests/.e2edata/
+/frontend/node_modules/
+/frontend/dist/
+/frontend/test-results/
+/frontend/playwright-report/
+.env
+.env.*
+!.env.example
+*.log
+# Personal chess notes and exports stay local.
+/chess_com_games_*.pgn
+/klemen_r_analysis_and_training_plan.md
