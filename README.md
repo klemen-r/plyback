@@ -97,6 +97,7 @@ use Settings or the password command. The image is built for the host architectu
 - Filters by period, time control, colour, result, rated status, opening and move classification.
 - Account insights for openings, phases, recurring mistakes, time management, conversion and sessions,
   with confidence labels and links to evidence positions and training resources.
+- Practice: positions from your own mistakes with one clear answer, on a spaced-repetition schedule.
 - Side-by-side comparisons and immutable saved report snapshots.
 - Password sessions, CSRF checks, body limits, outbound URL validation and browser security headers.
 

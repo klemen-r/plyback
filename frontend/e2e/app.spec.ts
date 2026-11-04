@@ -115,6 +115,38 @@ test.describe.serial('Plyback end to end', () => {
     await expect(page.getByText('7. Nd5#', { exact: true })).toBeVisible()
   })
 
+  test('practice: positions from your own mistakes, answers and scheduling', async ({ page }) => {
+    await page.goto('/practice')
+    await expect(page.getByRole('heading', { name: 'Practice' })).toBeVisible()
+    await expect(page.getByText(/to move$/)).toBeVisible()
+    // The answer is not in the page until an attempt.
+    await expect(page.getByText(/The move was|Correct,/)).toHaveCount(0)
+    const board = await page.locator('cg-board').boundingBox()
+    expect(board!.y + board!.height).toBeLessThanOrEqual(900)
+    await page.getByRole('button', { name: 'Show answer' }).click()
+    await expect(page.getByText(/^The move was /)).toBeVisible()
+    await expect(page.getByText(/comes back later in this session/)).toBeVisible()
+    await page.getByRole('button', { name: 'Next move in line' }).click()
+    await page.getByRole('link', { name: 'Open in game review' }).waitFor()
+    await page.getByRole('button', { name: 'Next', exact: true }).click()
+    await expect(page.getByText(/^2 \/ \d+$/)).toBeVisible()
+    await page.getByRole('tab', { name: 'Blunders' }).click()
+    await page.reload()
+    await expect(page.getByRole('tab', { name: 'Blunders' })).toHaveAttribute('aria-selected', 'true')
+    await page.getByRole('tab', { name: 'All' }).click()
+    await expect(page.getByText('Learning')).toBeVisible()
+    // The line toggle and the range are remembered; a range goes through answered positions too.
+    const toggle = page.getByRole('switch', { name: 'Play out the line' })
+    await expect(toggle).toHaveAttribute('aria-checked', 'true')
+    await toggle.click()
+    await page.getByLabel('Which games').selectOption('30')
+    // Fixture games have fixed dates, so the range may be empty; either way the page says so.
+    await expect(page.getByText(/positions from these games/).first()).toBeVisible()
+    await page.reload()
+    await expect(page.getByRole('switch', { name: 'Play out the line' })).toHaveAttribute('aria-checked', 'false')
+    await expect(page.getByLabel('Which games')).toHaveValue('30')
+  })
+
   test('insights dashboard with evidence and filters', async ({ page }) => {
     await page.goto('/insights')
     await expect(page.getByRole('heading', { name: 'Account insights' })).toBeVisible()

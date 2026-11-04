@@ -19,6 +19,8 @@ export interface BoardProps {
   coordinates?: boolean
   className?: string
   mini?: boolean
+  /** Change to put the board back to `fen`, e.g. to undo a rejected move. */
+  nonce?: number
 }
 
 function turnColor(fen: string): 'white' | 'black' {
@@ -29,7 +31,7 @@ function inCheck(fen: string): boolean {
   try { return new Chess(fen).inCheck() } catch { return false }
 }
 
-export default function Board({ fen, orientation, lastMove, shapes, interactive, onMove, coordinates = true, className, mini }: BoardProps) {
+export default function Board({ fen, orientation, lastMove, shapes, interactive, onMove, coordinates = true, className, mini, nonce }: BoardProps) {
   const { board } = useAppearance()
   const el = useRef<HTMLDivElement>(null)
   const api = useRef<Api | null>(null)
@@ -74,7 +76,7 @@ export default function Board({ fen, orientation, lastMove, shapes, interactive,
     api.current.set(config())
     api.current.setAutoShapes(shapes ?? [])
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fen, orientation, lastMove?.[0], lastMove?.[1], interactive, JSON.stringify(shapes ?? []), coordinates])
+  }, [fen, orientation, lastMove?.[0], lastMove?.[1], interactive, JSON.stringify(shapes ?? []), coordinates, nonce])
 
   return (
     <div data-board={board} className={clsx('board', `orientation-${orientation}`, mini && 'mini', className)}>

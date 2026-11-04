@@ -6,6 +6,168 @@
     "description": "Plyback native server. Password sessions and X-Requested-With: plyback protect API requests."
   },
   "paths": {
+    "/api/accounts/{account_id}/practice": {
+      "get": {
+        "tags": [
+          "practice"
+        ],
+        "summary": "Practice queue",
+        "description": "Due positions first, then new ones from the most recent games. Positions are the account’s own blunders, mistakes and misses in standard chess whose best move beats the second engine line by at least 0.05 expected points. The answer is only returned after an attempt.",
+        "operationId": "practice_queue",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Account Id"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "all",
+                "blunder",
+                "mistake",
+                "miss"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "phase",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "all",
+                "opening",
+                "middlegame",
+                "endgame"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "description": "Unix time. When set, every position from games that ended since then, answered or not, in random order.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 10
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "422": {
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/accounts/{account_id}/practice/{game_id}/{ply}": {
+      "post": {
+        "tags": [
+          "practice"
+        ],
+        "summary": "Answer a practice position",
+        "description": "Send {\"uci\": \"e2e4\"} to answer, or {\"reveal\": true} to show the answer (counts as a miss). Returns whether it was correct, the solution and the new schedule.",
+        "operationId": "practice_answer",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Account Id"
+            }
+          },
+          {
+            "name": "game_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "ply",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "uci": {
+                    "type": "string",
+                    "minLength": 4,
+                    "maxLength": 5
+                  },
+                  "reveal": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "422": {
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "summary": "Health",

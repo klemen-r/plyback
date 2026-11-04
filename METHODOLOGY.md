@@ -122,7 +122,32 @@ opening during the first 10 moves or while still in book; otherwise middlegame.
   interval lies entirely below the baseline.
 - **Performance rating:** average opponent rating + 400 × (wins − losses) / games (linear approximation).
 
-## 7. Known limitations
+## 7. Practice
+
+Practice turns your own reviewed mistakes into positions to solve.
+
+- **Which positions:** your own moves (never your opponent's) reviewed as Blunder, Mistake or Miss in standard chess,
+  where the engine's best move was at least **5 points of winning chance** better than its second choice, judged
+  from your side with the same expected-points model as section 2. That margin makes the stored best move the one
+  fair answer: any other move is at least that much worse at the review's depth, so answers are checked against the
+  stored review with no new engine search. Positions where two moves are nearly equal (including two forced mates)
+  are left out.
+- **Order:** with *All games*, positions that are due come first (oldest first), then new ones from your most recent
+  games. Choosing *Today's games* or the last 7 or 30 days instead goes through every position from those games,
+  answered before or not, in random order.
+- **Retries:** a wrong move is put back and you can try again, ask for a hint (the piece to move) or show the answer.
+  Only the first try counts for the schedule.
+- **Play out the line (optional):** after the right move your opponent replies with the engine line and you continue,
+  for up to three of your moves. Later in a line more than one move can be good, so a move that differs from the
+  line is checked with the live engine and accepted when it keeps within 5 points of winning chance of the best
+  move. The schedule still depends only on the first move.
+- **Schedule:** a small Leitner system. A correct first try moves the position up one box and brings it back after
+  1, 3, 7, 16, 35, then 80 days. A wrong first try, or *Show answer*, sends it back to the first box and brings it
+  back after 10 minutes. A position counts as mastered after four correct answers in a row.
+- Re-analysing a game updates its positions: the answer always comes from the current review, and positions that no
+  longer qualify drop out. Deleting a game or account deletes its schedule.
+
+## 8. Known limitations
 
 - Moderate-depth engine analysis can misjudge very deep tactics; re-analyse a game deeper from the review page.
 - The time cap may return a shallower completed iteration. Paired candidate searches and threat tests add engine work;

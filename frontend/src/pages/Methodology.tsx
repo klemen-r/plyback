@@ -57,6 +57,11 @@ export default function Methodology() {
         <p>Result statistics use every game in the selection; engine statistics only use analysed games. Every pattern shows its sample size and a confidence label, and score ranges use Wilson 95% intervals. Openings are only flagged as a weakness or strength when the difference is large relative to the sample.</p>
         <p>Where possible you are compared with <b>your opponents in the same games</b>: because Chess.com pairs players of similar rating, this is a fair like-for-like baseline. Improvement priorities are ranked by winning chances lost per game in each area, weighted by how you compare with those opponents. Categories can overlap (one blunder can both hang a piece and ignore a threat).</p>
       </Block>
+      <Block title="Practice">
+        <p>Practice uses your own moves reviewed as a blunder, mistake or miss in standard chess, but only where the engine’s best move was at least <b>5 points of winning chance</b> better than its second choice. That makes the best move the one fair answer, so your answer is checked against the stored review without a new engine search. Positions where two moves are nearly equal are left out.</p>
+        <p>A wrong move is put back so you can try again or ask for a hint, but only the first try counts: a correct first try brings the position back after 1, 3, 7, 16, 35, then 80 days, and a wrong first try or <i>Show answer</i> brings it back after 10 minutes. Four correct answers in a row count as mastered.</p>
+        <p>With <i>Play out the line</i> your opponent replies with the engine line and you continue for up to three moves. Later in a line more than one move can be good, so a different move is checked with the live engine and accepted when it is within 5 points of winning chance of the best one. <i>Today’s games</i> and the 7- and 30-day ranges go through every position from those games in random order.</p>
+      </Block>
       <Block title="Limitations">
         <ul className="list-disc space-y-1 pl-5">
           <li>Engine evaluations at moderate depth are not perfect; very deep tactics can be misjudged. Re-analyse a game deeper from the review page if in doubt.</li>

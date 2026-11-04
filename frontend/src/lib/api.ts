@@ -1,5 +1,5 @@
 import type {
-  Account, EventRow, GameDetail, GamesPage, InsightFilters, Insights, InteractiveResult, QueueDetail, Report, Session, Settings, Status,
+  Account, EventRow, GameDetail, GamesPage, InsightFilters, Insights, InteractiveResult, PracticeKind, PracticeQueue, PracticeResult, QueueDetail, Report, Session, Settings, Status,
 } from './types'
 
 export class ApiError extends Error {
@@ -97,6 +97,11 @@ export const api = {
   createReport: (account_id: number, filters: InsightFilters, title?: string) =>
     request<Report>('POST', `/accounts/${account_id}/reports`, { filters, title }),
   report: (id: number) => request<Report>('GET', `/reports/${id}`),
+
+  practice: (account_id: number, kind?: PracticeKind, limit = 10, since?: number) =>
+    request<PracticeQueue>('GET', `/accounts/${account_id}/practice${qs({ kind, limit, since })}`),
+  answerPractice: (account_id: number, game_id: number, ply: number, answer: { uci: string } | { reveal: true }) =>
+    request<PracticeResult>('POST', `/accounts/${account_id}/practice/${game_id}/${ply}`, answer),
   finalizeReport: (id: number) => request<Report>('POST', `/reports/${id}/finalize`),
   deleteReport: (id: number) => request<{ deleted: boolean }>('DELETE', `/reports/${id}`),
 }

@@ -304,3 +304,18 @@ export interface Session {
   password_set: boolean
   auth_required: boolean
 }
+
+export type PracticeKind = 'blunder' | 'mistake' | 'miss'
+export interface PracticeStats { total: number; new: number; due: number; learning: number; mastered: number; next_due_at: number | null }
+export interface PracticeItem {
+  game_id: number; ply: number; fen: string; color: Color; move_number: number
+  classification: PracticeKind; phase: string | null; ep_loss: number
+  last_uci: string | null; last_san: string | null; end_time: number | null; time_class: string | null
+  opponent: string | null; opponent_rating: number | null
+  status: 'new' | 'due' | 'scheduled'; box: number; attempts: number; correct: number
+}
+export interface PracticeQueue { stats: PracticeStats; items: PracticeItem[] }
+export interface PracticeResult {
+  correct: boolean; uci: string | null; san: string | null; best_uci: string; best_san: string
+  line_san: string[]; game_san: string; explanation: string | null; box: number; due_at: number; stats: PracticeStats
+}

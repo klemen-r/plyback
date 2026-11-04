@@ -330,6 +330,7 @@ impl App {
         let result: Option<ApiResult> = self
             .insights
             .handle(method, &meta.path, &meta.query, body)
+            .or_else(|| crate::practice::handle(&self.db, method, &meta.path, &meta.query, body))
             .or_else(|| self.services.handle(method, &meta.path, &meta.query, body));
         let (status, value) = result.unwrap_or_else(|| Err(api_error(404, "Not found")))?;
         Ok((status, value, None))
