@@ -344,6 +344,7 @@ impl Engine {
     }
 
     fn start(&mut self) -> Result<()> {
+        let started = Instant::now();
         self.close();
         let mut process = Process::spawn(&self.path)?;
         process.send("uci")?;
@@ -385,6 +386,7 @@ impl Engine {
         }
         self.process = Some(process);
         self.metrics.process_starts += 1;
+        tracing::debug!(target: "plyback::review_timing", event = "startup", elapsed_us = started.elapsed().as_micros() as u64);
         Ok(())
     }
 
@@ -430,6 +432,7 @@ impl Engine {
             request.root_moves.len()
         });
         let key = self.cache_key(request)?;
+        let cache_started = Instant::now();
         if let Some(db) = &self.db
             && let Ok(Some(Some(data))) = db.read_until(
                 Instant::now() + CACHE_LOCK_WAIT,
@@ -451,8 +454,10 @@ impl Engine {
                 return Err(api_error(499, "Analysis request was cancelled"));
             }
             self.metrics.cache_hits += 1;
+            tracing::debug!(target: "plyback::review_timing", event = "cache_read", elapsed_us = cache_started.elapsed().as_micros() as u64);
             return Ok(lines);
         }
+        tracing::debug!(target: "plyback::review_timing", event = "cache_read", elapsed_us = cache_started.elapsed().as_micros() as u64);
         let mut last_error = None;
         for _ in 0..2 {
             if cancel.load(Ordering::Relaxed) {
@@ -461,12 +466,16 @@ impl Engine {
             if self.process.is_none() {
                 self.start()?;
             }
-            match self.search_once(request, &board, expected, cancel) {
+            let search_started = Instant::now();
+            let result = self.search_once(request, &board, expected, cancel);
+            tracing::debug!(target: "plyback::review_timing", event = "uci", elapsed_us = search_started.elapsed().as_micros() as u64);
+            match result {
                 Ok(lines) => {
                     if cancel.load(Ordering::Relaxed) {
                         return Err(api_error(499, "Analysis request was cancelled"));
                     }
                     if let Some(db) = &self.db {
+                        let cache_started = Instant::now();
                         let stored = serde_json::to_string(&lines)?;
                         if let Err(error) = db.transaction_until(Instant::now() + CACHE_LOCK_WAIT, || cancel.load(Ordering::Relaxed), |tx| Ok(tx.execute("INSERT INTO position_cache(key,depth,multipv,data,created_at) VALUES (?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data,created_at=excluded.created_at", rusqlite::params![key,request.depth,expected as i64,stored,now()])?)) {
                             tracing::warn!(%error, "Position cache write failed");
@@ -475,6 +484,7 @@ impl Engine {
                         if self.cache_writes.is_multiple_of(128) {
                             let _ = db.try_transaction(|tx| Ok(tx.execute("DELETE FROM position_cache WHERE key IN (SELECT key FROM position_cache ORDER BY created_at DESC,key DESC LIMIT -1 OFFSET ?)", [CACHE_ENTRIES])?));
                         }
+                        tracing::debug!(target: "plyback::review_timing", event = "cache_write", elapsed_us = cache_started.elapsed().as_micros() as u64);
                     }
                     return Ok(lines);
                 }

@@ -217,7 +217,23 @@ pub fn analyze(
         progress,
         &LogisticModel,
         &name,
-        |request| engine.search(request, cancel),
+        |request| {
+            let before = engine.metrics();
+            let started = Instant::now();
+            let result = engine.search(request, cancel);
+            let after = engine.metrics();
+            tracing::debug!(
+                target: "plyback::review_timing",
+                event = "search",
+                kind = if !request.root_moves.is_empty() { "paired" } else if request.depth == options.threat_depth && request.multipv == 1 { "threat" } else { "main" },
+                elapsed_us = started.elapsed().as_micros() as u64,
+                searches = after.searches - before.searches,
+                cache_hits = after.cache_hits - before.cache_hits,
+                depth = result.as_ref().ok().and_then(|lines| lines.first()).map(|line| line.depth),
+                nodes = result.as_ref().ok().and_then(|lines| lines.last()).map(|line| line.nodes),
+            );
+            result
+        },
     )
 }
 
@@ -241,6 +257,7 @@ pub fn analyze_with(
     }
     let started = Instant::now();
     let game = pgn::parse(text)?;
+    tracing::debug!(target: "plyback::review_timing", event = "pgn", elapsed_us = started.elapsed().as_micros() as u64);
     if game.moves.is_empty() {
         return Err(api_error(400, "Game has no moves"));
     }
@@ -252,6 +269,7 @@ pub fn analyze_with(
             .map(|m| pgn::board(&m.fen_after, game.chess960))
             .collect::<Result<Vec<_>>>()?,
     );
+    tracing::debug!(target: "plyback::review_timing", event = "setup", elapsed_us = started.elapsed().as_micros() as u64);
     let mut searches = Vec::with_capacity(boards.len());
     let mut evaluations = Vec::with_capacity(boards.len());
     let mut history = Vec::new();

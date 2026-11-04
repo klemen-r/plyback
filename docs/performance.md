@@ -130,3 +130,53 @@ An additional explicitly node-capped experiment (`--nodes 100000`) took 14.7 and
 It measures a different search budget and is **not enabled in production** or used
 as evidence of equivalent-quality acceleration. Full raw results are retained in
 [performance-results.json](performance-results.json).
+
+## Native queue workload profiling
+
+The opt-in Rust example reviews the ten most recent eligible games from
+`data/snapshot.db`, ordered by end time. Supply a self-contained SQLite snapshot
+without a WAL. The example only reads and copies that file; all database changes
+and temporary files stay under the ignored `benchmark-output/` directory.
+It disables accounts and reports in the disposable copy to prevent network sync
+and unrelated jobs. It never discovers or defaults to a live database.
+
+Set `PLYBACK_STOCKFISH` to the intended engine executable, then run from `rust/`:
+
+```powershell
+cargo +1.97.1 run --release --locked --offline --example review_benchmark -- --out benchmark-output/reviews-1.json
+```
+
+The output path is relative to the checkout root and must be a new file directly
+inside `benchmark-output/`. `--games` overrides the default ten-game sample.
+The workload retains stored worker/thread/hash settings and fixes the production
+search budget at depth 16, MultiPV 2, 5 seconds, with depth-10 threat probes and no
+node ceiling. First it clears the position cache, then it uses a SQLite backup of
+the completed disposable database for a warm repeat with fresh workers/engines.
+Cold means an empty persistent position cache, not a cold OS file cache.
+
+Aggregate JSON contains enqueue-to-stored completion latencies, per-request
+timings/depths/cache hits, UCI search counts, PGN/setup time, storage time and
+normalized stored-result digests. It exports no PGNs, player identities, original
+game IDs or result values. Warm equality and differing-field counts are reported
+explicitly rather than assumed: concurrent cold searches can share a cache key
+while carrying different engine hash histories. A warm repeat is not a new-game
+speedup or a guarantee of identical cold results.
+
+The `uci` timing includes engine search, transport, UCI parsing and returned-line
+validation; it is not Stockfish's own reported CPU time. Sum request times across
+workers separately from batch wall time because worker intervals overlap. The
+observer polls SQLite every 10 ms, so short warm latencies include polling and
+observer contention. Setup time includes PGN time; these are not additive.
+Run samples sequentially without concurrent builds/tests, and report noise and
+any searches that reached the time cap below the requested depth.
+
+The queue also has a separate reproducible forced-race probe:
+
+```powershell
+cargo +1.97.1 test --release --locked --offline --lib benchmark_idle_enqueue_race -- --ignored --nocapture
+```
+
+It enqueues a synthetic game between observing an empty queue and entering the
+worker's wait. Preserving the earlier wake generation prevents that notification
+from being lost and avoids the otherwise possible 500 ms idle polling delay.
+This does not reduce Stockfish search time or promise higher batch throughput.

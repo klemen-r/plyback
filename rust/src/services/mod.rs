@@ -40,6 +40,7 @@ pub struct Services {
     current_sync: Mutex<Option<i64>>,
     client: sync::ChessComClient,
 }
+
 impl Services {
     pub fn new(db: Arc<Database>) -> Result<Arc<Self>> {
         Ok(Arc::new(Self {
@@ -122,14 +123,23 @@ impl Services {
         self.wake.1.notify_all();
     }
     fn wait(&self, duration: Duration) {
+        self.wait_since(self.wake_generation(), duration);
+    }
+    fn wake_generation(&self) -> u64 {
+        *self.wake.0.lock().unwrap()
+    }
+    /// Observe before checking for work so a notification between the check
+    /// and this wait cannot be lost. Returns whether the wait timed out.
+    fn wait_since(&self, observed: u64, duration: Duration) -> bool {
         let lock = self.wake.0.lock().unwrap();
-        let observed = *lock;
-        let _ = self
-            .wake
+        self.wake
             .1
             .wait_timeout_while(lock, duration, |generation| {
                 *generation == observed && !self.stop.load(Ordering::SeqCst)
-            });
+            })
+            .unwrap()
+            .1
+            .timed_out()
     }
     pub fn engine_status(&self) -> Value {
         let located = crate::engine::locate_stockfish();
@@ -147,5 +157,62 @@ impl Services {
     fn request_sync(&self, id: i64) {
         self.requested.lock().unwrap().insert(id);
         self.notify();
+    }
+}
+
+#[cfg(test)]
+mod wake_tests {
+    use super::*;
+    use std::time::Instant;
+
+    fn enqueue_in_empty_check_race(samples: usize) -> Vec<f64> {
+        let db = Arc::new(Database::open(":memory:").unwrap());
+        db.execute(
+            "INSERT INTO games(uuid,pgn,imported_at) VALUES('wake-test','1. e4 e5 *',0)",
+            &[],
+        )
+        .unwrap();
+        let service = Services::new(db.clone()).unwrap();
+        let mut samples_ms = Vec::new();
+        for _ in 0..samples {
+            let observed = service.wake_generation();
+            assert_eq!(
+                db.scalar("SELECT COUNT(*) FROM jobs WHERE status='queued'", &[])
+                    .unwrap(),
+                0
+            );
+            service.enqueue(&[1], PRIORITY_NEW, None, false).unwrap();
+            let started = Instant::now();
+            // A timeout is a lost notification, independent of host timing.
+            assert!(!service.wait_since(observed, Duration::from_millis(500)));
+            samples_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+            db.execute("DELETE FROM jobs", &[]).unwrap();
+        }
+        samples_ms
+    }
+
+    #[test]
+    fn enqueue_between_empty_check_and_wait_is_not_lost() {
+        enqueue_in_empty_check_race(1);
+    }
+
+    #[test]
+    fn unchanged_generation_waits_and_stop_does_not() {
+        let service = Services::new(Arc::new(Database::open(":memory:").unwrap())).unwrap();
+        let observed = service.wake_generation();
+        assert!(service.wait_since(observed, Duration::from_millis(1)));
+        service.request_stop();
+        let observed = service.wake_generation();
+        assert!(!service.wait_since(observed, Duration::from_millis(500)));
+    }
+
+    /// Force the enqueue between checking an empty queue and waiting.
+    #[test]
+    #[ignore = "explicit idle enqueue latency measurement"]
+    fn benchmark_idle_enqueue_race() {
+        println!(
+            "idle_enqueue_samples_ms={:?}",
+            enqueue_in_empty_check_race(5)
+        );
     }
 }

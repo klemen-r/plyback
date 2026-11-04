@@ -59,8 +59,10 @@ One mutex owns each database connection. Queries return owned rows; no network o
 holds the connection. Short, immediate write transactions serialize changes. Engine position-cache
 reads and writes retry short lock attempts (25 ms SQLite budget each) for up to 2 seconds and check
 cancellation every 10 ms. Brief contention between workers therefore no longer drops completed
-searches, so a warm re-review replays the cold one exactly; a connection held longer than that is
-treated as a cache miss, and cancellation never waits behind it. The response cache has 64 entries and a 32 MiB serialized-payload
+searches. Concurrent cold workers can still complete different engine responses for the same cache
+key because their hash histories differ; a later write replaces the cached response, so a warm
+re-review is not guaranteed to reproduce every concurrent cold result. A connection held longer
+than the retry budget is treated as a cache miss, and cancellation never waits behind it. The response cache has 64 entries and a 32 MiB serialized-payload
 limit, two concurrent refresh computations and a 120-second maximum age for stale responses.
 
 Worker database waits poll cancellation with short lock attempts; cancelled writes roll back. If a

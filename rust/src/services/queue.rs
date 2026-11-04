@@ -274,6 +274,7 @@ impl Services {
     fn worker_loop(&self, worker: u64, cancel: Arc<AtomicBool>, threads: usize, hash: usize) {
         let mut engine: Option<Engine> = None;
         while !cancel.load(Ordering::SeqCst) && !self.stop.load(Ordering::SeqCst) {
+            let observed = self.wake_generation();
             if self.paused.load(Ordering::SeqCst) {
                 self.wait(Duration::from_secs(1));
                 continue;
@@ -297,7 +298,7 @@ impl Services {
                     .flatten()
                     .unwrap_or(false)
                 {
-                    self.wait(Duration::from_millis(500));
+                    self.wait_since(observed, Duration::from_millis(500));
                     continue;
                 }
                 match Engine::new(threads, hash) {
@@ -318,7 +319,7 @@ impl Services {
             let job = match self.claim(&cancel) {
                 Ok(Some(job)) => job,
                 Ok(None) => {
-                    self.wait(Duration::from_millis(500));
+                    self.wait_since(observed, Duration::from_millis(500));
                     continue;
                 }
                 Err(error) => {
@@ -434,6 +435,8 @@ impl Services {
             anyhow::bail!("Analysis cancelled");
         }
         result["duration_ms"] = json!(started.elapsed().as_millis() as u64);
+        let analysis_us = started.elapsed().as_micros() as u64;
+        let storing = Instant::now();
         let saved = store::save_analysis(
             &self.db,
             &store::AnalysisClaim {
@@ -449,6 +452,7 @@ impl Services {
             multipv as i64,
             &engine.name,
         )?;
+        tracing::debug!(target: "plyback::review_timing", event = "stored", game_id, worker, analysis_us, storage_us = storing.elapsed().as_micros() as u64, saved);
         if !saved {
             return Ok(false);
         }
