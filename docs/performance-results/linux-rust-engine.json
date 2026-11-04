@@ -1,0 +1,78 @@
+{
+  "cold_no_database_cache": [
+    {
+      "achieved_depths": [
+        10,
+        16
+      ],
+      "evaluation_calls": 145,
+      "non_search_ms": 12.215465999994194,
+      "paired_root_searches": 48,
+      "plies": 88,
+      "returned_iteration_nodes": 53693319,
+      "search_wall_ms": 32781.92658500001,
+      "threat_calls": 8,
+      "uci_searches": 145,
+      "wall_ms": 32794.142051
+    },
+    {
+      "achieved_depths": [
+        0,
+        10,
+        16
+      ],
+      "evaluation_calls": 77,
+      "non_search_ms": 4.413167000011526,
+      "paired_root_searches": 23,
+      "plies": 45,
+      "returned_iteration_nodes": 22171026,
+      "search_wall_ms": 15442.944659999988,
+      "threat_calls": 8,
+      "uci_searches": 76,
+      "wall_ms": 15447.357827
+    }
+  ],
+  "engine": "Stockfish 19",
+  "hash_mb": 64,
+  "limitations": "One cold run per fixture; CPU load and Stockfish hash state affect timing. Comparison intentionally changes search workload through paired root evaluation; search budgets unchanged. Returned-iteration nodes exclude any discarded partial iteration. Warm cache measures repeated identical review, not new game analysis.",
+  "node_cap": null,
+  "options": {
+    "depth": 16,
+    "multipv": 2,
+    "threat_depth": 10,
+    "time_cap": 5.0
+  },
+  "platform": "linux",
+  "release": true,
+  "replay_median_ms": 5.73271,
+  "replay_ms": [
+    7.492618,
+    5.743196,
+    5.73271,
+    5.510427,
+    5.670787
+  ],
+  "startup_ms": 327.99043300000005,
+  "threads": 1,
+  "validation": {
+    "consistent_root_losses": true,
+    "legal_games": true,
+    "replay_output_equal": true,
+    "warm_output_equal": true
+  },
+  "warm_cache": {
+    "entries": 220,
+    "hits": 1110,
+    "median_ms": 11.295889,
+    "process_starts": 0,
+    "repeats": [
+      14.019005,
+      11.380796,
+      11.220696,
+      11.295889,
+      11.084202
+    ],
+    "seed_ms": 45692.952077999995,
+    "uci_searches": 0
+  }
+}

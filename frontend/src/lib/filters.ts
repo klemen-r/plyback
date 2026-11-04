@@ -20,7 +20,7 @@ export function restoreFilters(value: unknown): FilterState {
   const timeClasses = Array.isArray(raw.time_classes) ? raw.time_classes : []
   const date = (v: unknown) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined
   return {
-    period: ['all', 'custom', '30', '90', '365'].includes(String(raw.period)) ? String(raw.period) : 'all',
+    period: ['all', 'custom', '1', '7', '30', '90', '365'].includes(String(raw.period)) ? String(raw.period) : 'all',
     time_classes: TIME_CLASSES.filter(tc => timeClasses.includes(tc)),
     color: raw.color === 'white' || raw.color === 'black' ? raw.color : '',
     rated: raw.rated === 'true' || raw.rated === 'false' ? raw.rated : '',

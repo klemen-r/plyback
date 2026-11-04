@@ -6,7 +6,7 @@ import ClassIcon from './ClassIcon'
 
 const NOTABLE = new Set(['brilliant', 'great', 'inaccuracy', 'mistake', 'miss', 'blunder'])
 
-export default function MoveList({ moves, current, onSelect }: { moves: MoveRow[]; current: number; onSelect: (ply: number) => void }) {
+export default function MoveList({ moves, current, onSelect, className = 'max-h-[340px]' }: { moves: MoveRow[]; current: number; onSelect: (ply: number) => void; className?: string }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const el = ref.current?.querySelector<HTMLElement>(`[data-ply="${current}"]`)
@@ -40,7 +40,7 @@ export default function MoveList({ moves, current, onSelect }: { moves: MoveRow[
   }
 
   return (
-    <div ref={ref} className="max-h-[340px] overflow-y-auto pr-1">
+    <div ref={ref} className={clsx('overflow-y-auto pr-1', className)}>
       <div className="grid grid-cols-[2.25rem_1fr_1fr] gap-y-0.5">
         {rows.map(r => (
           <div key={r.num} className="contents">

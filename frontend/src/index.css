@@ -1,8 +1,8 @@
 @import "tailwindcss";
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";
-@import "chessground/assets/chessground.base.css";
-@import "chessground/assets/chessground.cburnett.css";
+@import "@lichess-org/chessground/assets/chessground.base.css";
+@import "@lichess-org/chessground/assets/chessground.cburnett.css";
 
 @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 
@@ -71,23 +71,36 @@
   --accent-ink: #86a6d6;
 }
 
-html, body, #root { min-height: 100%; }
+/* Element defaults live in the base layer so Tailwind utilities can override them. */
+@layer base {
+  html, body, #root { min-height: 100%; }
+  /* Anything scrolled into view (anchors, focused controls) clears the sticky header. */
+  html { scroll-padding-top: 7rem; }
 
-body {
-  background: var(--bg);
-  color: var(--fg);
-  font-family: var(--font-sans);
-  font-size: 14px;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  font-feature-settings: "ss01";
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "ss01";
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  ::selection { background: color-mix(in srgb, var(--accent-ink) 25%, transparent); }
+  * { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+  :focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 2px; }
+  button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+  b, strong { font-weight: 600; }
 }
 
-::selection { background: color-mix(in srgb, var(--accent-ink) 25%, transparent); }
-* { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
-:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 2px; }
-button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+/* iOS zooms into focused fields below 16px. Unlayered on purpose: it must beat text-size utilities. */
+@media (pointer: coarse) and (max-width: 639px) {
+  input:not([type=checkbox], [type=radio], [type=color], [type=range]), select, textarea { font-size: 16px; }
+}
 
 .tnum { font-variant-numeric: tabular-nums; }
 
@@ -98,7 +111,8 @@ button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
   border-radius: 6px;
 }
 @keyframes skeleton { from { background-position: 200% 0; } to { background-position: -200% 0; } }
-.appear { animation: appear 0.18s ease-out both; }
+/* No forwards fill: a lingering transform would trap position:fixed children (the phone move bar). */
+.appear { animation: appear 0.18s ease-out backwards; }
 @keyframes appear { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   .appear, .skeleton { animation: none; }
@@ -106,18 +120,26 @@ button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 }
 
 /* --- board ------------------------------------------------------------------------------- */
-.board {
+.board, .board-swatch {
   --sq-light: #e6e9ee;
   --sq-dark: #97a4b6;
+}
+.board {
   position: relative;
   width: 100%;
   aspect-ratio: 1 / 1;
   border-radius: 3px;
   overflow: hidden;
 }
-.board[data-board=walnut] { --sq-light: #ebdfc9; --sq-dark: #a98563; }
-.board[data-board=green] { --sq-light: #ebecd0; --sq-dark: #779556; }
-.board[data-board=mono] { --sq-light: #e4e4e4; --sq-dark: #9a9a9a; }
+:is(.board, .board-swatch)[data-board=walnut] { --sq-light: #ebdfc9; --sq-dark: #a98563; }
+:is(.board, .board-swatch)[data-board=green] { --sq-light: #ebecd0; --sq-dark: #779556; }
+:is(.board, .board-swatch)[data-board=mono] { --sq-light: #e4e4e4; --sq-dark: #9a9a9a; }
+.board-swatch {
+  display: inline-block;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.08);
+  background: conic-gradient(var(--sq-dark) 90deg, var(--sq-light) 90deg 180deg, var(--sq-dark) 180deg 270deg, var(--sq-light) 270deg);
+}
 .board .cg-wrap { position: absolute; inset: 0; width: 100%; height: 100%; }
 /* 4×4 tiles of a 2×2 checker give the 8×8 pattern; a8 and h1 are light from either side. */
 .board cg-board {
@@ -132,6 +154,7 @@ button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 .board cg-board square.oc.move-dest { background: radial-gradient(transparent 0%, transparent 79%, rgb(0 0 0 / 0.26) 80%); }
 .board cg-board square.check { background: radial-gradient(ellipse at center, #ff3b30 0%, #e0261b 25%, transparent 89%); }
 .board coords { font-family: var(--font-sans); font-weight: 600; font-size: 10px; text-shadow: none; }
+.board coords.files, .board coords.squares { text-transform: none; }
 .board coords coord { color: var(--sq-dark) !important; }
 .board coords.ranks coord:nth-child(even), .board coords.files coord:nth-child(odd) { color: var(--sq-light) !important; }
 .board.orientation-black coords.ranks coord:nth-child(odd), .board.orientation-black coords.files coord:nth-child(even) { color: var(--sq-light) !important; }

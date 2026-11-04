@@ -59,7 +59,7 @@ export default function ActivityPage() {
           {(ev.data ?? []).map(e => (
             <div key={e.id} className="flex gap-3 border-b border-line/50 px-5 py-2 text-sm last:border-0">
               <span className="w-24 shrink-0 text-xs text-fg-3">{timeAgo(e.ts)}</span>
-              <span className={clsx('w-16 shrink-0 text-xs font-medium uppercase', e.level === 'error' ? 'text-bad' : e.level === 'warning' ? 'text-warn' : 'text-fg-3')}>{e.source}</span>
+              <span className={clsx('w-16 shrink-0 text-xs font-medium capitalize', e.level === 'error' ? 'text-bad' : e.level === 'warning' ? 'text-warn' : 'text-fg-3')}>{e.source}</span>
               <span className="text-fg/90">{e.message}</span>
             </div>
           ))}

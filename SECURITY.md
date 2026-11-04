@@ -37,7 +37,14 @@ credentials.
 - **Data at rest** — a single SQLite file in the data directory. Protect it with normal file
   permissions or disk encryption; the Docker image runs as an unprivileged user on a read-only root
   filesystem.
-- **Dependencies** — audited in CI with `pip-audit` and `npm audit`; Dependabot keeps them current.
+- **Concurrency** — request work is bounded; password verification and rotation use a transactional
+  comparison before creating a session. Revoked sessions are checked again after body upload.
+  Background results require the original game identity and current job claim before they can commit;
+  sync writes check immutable account generations so deleted IDs cannot receive stale responses.
+- **Engine** — UCI output, deadlines and retries are bounded. Cancelled requests stop searching;
+  unresponsive engines are killed and reaped. Worker count, threads and hash have aggregate limits.
+- **Dependencies** — audited in CI with `cargo audit`, `npm audit` and `pip-audit` for the retained
+  development oracle; Dependabot covers all three. The production runtime contains no Python or Node.
 
 ## Running behind a reverse proxy
 

@@ -1,0 +1,22 @@
+{
+  "games": 1100,
+  "insights_all_median_ms": 234.898078,
+  "insights_all_ms": [
+    234.898078,
+    233.55277999999998,
+    234.699913,
+    239.96201,
+    237.006948
+  ],
+  "insights_blitz_white_median_ms": 87.502961,
+  "insights_blitz_white_ms": [
+    86.07464900000001,
+    75.740749,
+    87.502961,
+    90.779344,
+    89.052296
+  ],
+  "insights_cold_ms": 354.839274,
+  "moves": 60500,
+  "output_equal": true
+}

@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import FilterBar from '../components/FilterBar'
 import { DEFAULT_FILTERS, toInsightFilters, type FilterState } from '../lib/filters'
-import { PageHeader, Button, Card, Empty, ErrorNote, Loading, Badge, Progress } from '../components/ui'
+import { PageHeader, Button, Card, Empty, ErrorNote, Input, Loading, Badge, Progress } from '../components/ui'
 import { useAccount } from '../lib/account-context'
 import { api } from '../lib/api'
 import { fmtDate } from '../lib/format'
@@ -30,8 +30,7 @@ export default function Reports() {
         <div className="space-y-3">
           <FilterBar value={fs} onChange={setFs} />
           <div className="flex flex-wrap gap-2">
-            <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Title (optional)" aria-label="Report title"
-              className="h-10 flex-1 rounded-lg border border-line bg-subtle px-3 text-sm outline-none placeholder:text-fg-3 focus:border-accent" />
+            <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Title (optional)" aria-label="Report title" className="min-w-48 flex-1" />
             <Button variant="primary" onClick={() => create.mutate()} loading={create.isPending}><Plus className="h-4 w-4" />Analyse & create report</Button>
           </div>
           {create.error && <ErrorNote error={create.error} />}

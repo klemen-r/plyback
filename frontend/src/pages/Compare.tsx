@@ -77,7 +77,7 @@ export default function Compare() {
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_480px]">
           <Card title="Side by side" bodyClass="p-0">
             <table className="w-full text-sm">
-              <thead><tr className="border-b border-line text-left text-xs uppercase tracking-wide text-fg-3"><th className="px-5 py-2 font-medium">Metric</th><th className="px-3 py-2 text-right font-medium">A</th><th className="px-3 py-2 text-right font-medium">B</th><th className="px-5 py-2 text-right font-medium">A − B</th></tr></thead>
+              <thead><tr className="border-b border-line text-left text-[12.5px] text-fg-3"><th className="px-5 py-2 font-medium">Metric</th><th className="px-3 py-2 text-right font-medium">A</th><th className="px-3 py-2 text-right font-medium">B</th><th className="px-5 py-2 text-right font-medium">A − B</th></tr></thead>
               <tbody>
                 {rows.map(r => {
                   const d = r.a !== null && r.a !== undefined && r.b !== null && r.b !== undefined ? r.a - r.b : null

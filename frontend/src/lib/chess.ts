@@ -1,5 +1,5 @@
 import { Chess } from 'chess.js'
-import type { Key } from 'chessground/types'
+import type { Key } from '@lichess-org/chessground/types'
 
 export function legalDests(fen: string): Map<Key, Key[]> {
   const dests = new Map<Key, Key[]>()

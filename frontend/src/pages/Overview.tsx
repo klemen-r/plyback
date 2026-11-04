@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { LineChart } from '../components/charts'
 import GameTable from '../components/GameTable'
+import LatestGame from '../components/LatestGame'
 import { Mark } from '../components/Logo'
 import { Banner, Button, Card, Confidence, Empty, Figure, Figures, Loading, Meter, PageHeader, Progress, Section, Tabs } from '../components/ui'
 import { useAccount } from '../lib/account-context'
@@ -39,8 +40,8 @@ export default function Overview() {
   const [period, setPeriod] = useState('30')
   const since = period === 'all' ? undefined : Math.floor((nowTs() - Number(period) * DAY) / 3600) * 3600
   const recent = useQuery({
-    queryKey: ['games', { account_id: account?.id, page_size: 8 }],
-    queryFn: () => api.games({ account_id: account!.id, page_size: 8 }),
+    queryKey: ['games', { account_id: account?.id, page_size: 10 }],
+    queryFn: () => api.games({ account_id: account!.id, page_size: 10 }),
     enabled: !!account, refetchInterval: 15000,
   })
   const window_ = useQuery({ queryKey: ['insights', account?.id, { since }], queryFn: () => api.insights(account!.id, since ? { since } : {}), enabled: !!account, refetchInterval: 30000 })
@@ -60,7 +61,7 @@ export default function Overview() {
   const ratingLine = Object.entries(account.ratings).filter(([, r]) => r.rating).map(([tc, r]) => `${tc[0].toUpperCase()}${tc.slice(1)} ${r.rating}`).join(' · ')
 
   return (
-    <div className="appear space-y-10">
+    <div className="appear space-y-7">
       <PageHeader title="Overview"
         description={<>{ratingLine || 'No ratings yet'} <span className="text-fg-3">· synced {timeAgo(account.last_sync_at)}</span></>}
         actions={<Button onClick={() => sync.mutate()} loading={sync.isPending || account.sync_status === 'syncing'}><RefreshCw className="h-3.5 w-3.5" />Sync now</Button>} />
@@ -79,7 +80,7 @@ export default function Overview() {
       <div>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <Tabs label="Period" value={period} onChange={setPeriod}
-            options={[{ value: '7', label: '7 days' }, { value: '30', label: '30 days' }, { value: '90', label: '90 days' }, { value: 'all', label: 'All time' }]} />
+            options={[{ value: '1', label: '24 hours' }, { value: '7', label: '7 days' }, { value: '30', label: '30 days' }, { value: '90', label: '90 days' }, { value: 'all', label: 'All time' }]} />
           {d && <Confidence c={d.data_quality.confidence} n={d.data_quality.analyzed} />}
         </div>
         {d ? (
@@ -97,14 +98,20 @@ export default function Overview() {
         ) : <div className="skeleton h-[98px]" />}
       </div>
 
-      <div className="grid gap-10 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
-        <Section title="Recent games" actions={<Link to="/games" className="flex items-center gap-1 text-fg-2 hover:text-fg">All games <ArrowRight className="h-3.5 w-3.5" /></Link>}>
+      {/* Phones: latest game, recent games, priorities. Wide screens: recent games beside the other two. */}
+      <div className="grid gap-7 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] lg:grid-rows-[auto_1fr] lg:gap-x-6 lg:[grid-template-areas:'recent_latest'_'recent_improve']">
+        {recent.data?.items[0] && (
+          <Section title="Latest game" className="lg:[grid-area:latest]">
+            <Card padded={false}><LatestGame g={recent.data.items[0]} /></Card>
+          </Section>
+        )}
+        <Section className="lg:[grid-area:recent]" title="Recent games" actions={<Link to="/games" className="flex items-center gap-1 text-fg-2 hover:text-fg">All games <ArrowRight className="h-3.5 w-3.5" /></Link>}>
           <Card padded={false} className="overflow-hidden">
             {recent.data?.items.length ? <GameTable games={recent.data.items} compact />
               : recent.isLoading ? <Loading /> : <Empty title="No games yet">They appear here as soon as the first sync finishes.</Empty>}
           </Card>
         </Section>
-        <Section title="Where to improve" actions={<Link to="/insights" className="flex items-center gap-1 text-fg-2 hover:text-fg">Insights <ArrowRight className="h-3.5 w-3.5" /></Link>}>
+        <Section className="lg:[grid-area:improve]" title="Where to improve" actions={<Link to="/insights" className="flex items-center gap-1 text-fg-2 hover:text-fg">Insights <ArrowRight className="h-3.5 w-3.5" /></Link>}>
           <Card padded={false}>
             {priorities.length ? priorities.map((p, i) => (
               <Link key={p.key} to="/insights#priorities" className={'block px-4 py-3.5 transition-colors hover:bg-hover/60' + (i ? ' border-t border-line' : '')}>

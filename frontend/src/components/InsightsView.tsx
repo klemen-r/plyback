@@ -43,7 +43,7 @@ function Compare({ user, opp, unit = '', better = 'lower', digits = 2 }: { user:
   const worse = opp !== null && opp !== undefined && (better === 'lower' ? user > opp * 1.1 : user < opp * 0.9)
   const nicer = opp !== null && opp !== undefined && (better === 'lower' ? user < opp * 0.9 : user > opp * 1.1)
   return (
-    <span className="tabular">
+    <span className="tnum">
       <span className={clsx('font-semibold', worse && 'text-bad', nicer && 'text-good')}>{user.toFixed(digits)}{unit}</span>
       {opp !== null && opp !== undefined && <span className="ml-1 text-xs text-fg-3">vs {opp.toFixed(digits)}{unit}</span>}
     </span>
@@ -53,9 +53,9 @@ function Compare({ user, opp, unit = '', better = 'lower', digits = 2 }: { user:
 function PriorityCard({ p, open, onToggle }: { p: Priority; open: boolean; onToggle: () => void }) {
   const ratio = p.vs_opponents ?? 1
   return (
-    <div className={clsx('rounded-xl border bg-surface transition-colors', open ? 'border-accent/50' : 'border-line')}>
+    <div className={clsx('rounded-lg border bg-surface transition-colors', open ? 'border-accent/50' : 'border-line')}>
       <button onClick={onToggle} className="flex w-full items-start gap-4 p-4 text-left">
-        <div className={clsx('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-bold',
+        <div className={clsx('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-semibold',
           p.rank === 1 ? 'bg-bad/20 text-bad' : p.rank && p.rank <= 3 ? 'bg-warn/15 text-warn' : 'bg-hover text-fg-2')}>
           {p.rank ?? '–'}
         </div>
@@ -71,7 +71,7 @@ function PriorityCard({ p, open, onToggle }: { p: Priority; open: boolean; onTog
         </div>
         {p.ep_lost_per_game !== undefined && (
           <div className="hidden w-36 shrink-0 text-right sm:block">
-            <div className="text-xl font-bold tnum">{(p.ep_lost_per_game * 100).toFixed(0)}<span className="text-sm text-fg-2">%</span></div>
+            <div className="text-xl font-semibold tnum">{(p.ep_lost_per_game * 100).toFixed(0)}<span className="text-sm text-fg-2">%</span></div>
             <div className="text-[11px] text-fg-3">win chance lost / game</div>
           </div>
         )}
@@ -80,12 +80,12 @@ function PriorityCard({ p, open, onToggle }: { p: Priority; open: boolean; onTog
       {open && (
         <div className="space-y-4 border-t border-line p-4">
           <div>
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-fg-3">Evidence from your games</div>
+            <div className="mb-2 text-[13px] font-medium text-fg-2">Evidence from your games</div>
             <Examples items={p.examples} />
           </div>
           {p.resources.length > 0 && (
             <div>
-              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-fg-3">Free training resources</div>
+              <div className="mb-2 text-[13px] font-medium text-fg-2">Free training resources</div>
               <Resources items={p.resources} />
             </div>
           )}
@@ -122,7 +122,7 @@ function OpeningTable({ families, color }: { families: OpeningFamily[]; color: C
     <div className="overflow-x-auto">
       <table className="w-full min-w-[720px] text-sm">
         <thead>
-          <tr className="border-b border-line text-left text-xs uppercase tracking-wide text-fg-3">
+          <tr className="border-b border-line text-left text-[12.5px] text-fg-3">
             <th className="py-2 font-medium">Opening</th>
             <th className="py-2 text-right font-medium">Games</th>
             <th className="w-40 py-2 pl-4 font-medium">Result</th>
@@ -167,7 +167,7 @@ function FragmentRows({ f, open, toggle, color }: { f: OpeningFamily; open: bool
           <td colSpan={7} className="p-4">
             <div className="grid gap-4 lg:grid-cols-2">
               <div>
-                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-fg-3">Variations</div>
+                <div className="mb-2 text-[13px] font-medium text-fg-2">Variations</div>
                 <table className="w-full text-xs">
                   <tbody>
                     {f.variations.map(v => (
@@ -183,14 +183,14 @@ function FragmentRows({ f, open, toggle, color }: { f: OpeningFamily; open: bool
               </div>
               <div className="space-y-3">
                 <div>
-                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-fg-3">Recent games</div>
+                  <div className="mb-2 text-[13px] font-medium text-fg-2">Recent games</div>
                   <div className="flex flex-wrap gap-2">
                     {f.recent_game_ids.map(id => <Link key={id} to={`/games/${id}`} className="rounded-md bg-hover px-2 py-1 text-xs text-accent hover:underline">Game #{id}</Link>)}
                     <Link to={`/games?opening=${encodeURIComponent(f.family)}&color=${color}`} className="rounded-md px-2 py-1 text-xs text-fg-2 hover:text-fg">All games →</Link>
                   </div>
                 </div>
                 <div>
-                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-fg-3">Study it</div>
+                  <div className="mb-2 text-[13px] font-medium text-fg-2">Study it</div>
                   <Resources items={f.resources} />
                 </div>
               </div>
@@ -211,11 +211,11 @@ function Openings({ data }: { data: Insights }) {
       <OpeningTable families={o.families} color={color} />
       {o.first_moves.length > 0 && (
         <div className="mt-6">
-          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-fg-3">{color === 'white' ? 'Your first move' : 'Your reply to White’s first move'}</div>
+          <div className="mb-2 text-[13px] font-medium text-fg-2">{color === 'white' ? 'Your first move' : 'Your reply to White’s first move'}</div>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             {o.first_moves.slice(0, 8).map(m => (
               <div key={m.move} className="rounded-lg border border-line bg-subtle px-3 py-2">
-                <div className="flex items-center justify-between text-sm"><span className="font-mono font-semibold">{m.move}</span><span className="tabular text-fg-2">{m.games} g · {pct(m.score)}</span></div>
+                <div className="flex items-center justify-between text-sm"><span className="font-mono font-semibold">{m.move}</span><span className="tnum text-fg-2">{m.games} g · {pct(m.score)}</span></div>
                 <WDLBar wins={m.wins} draws={m.draws} losses={m.losses} className="mt-2" />
               </div>
             ))}
@@ -237,8 +237,9 @@ function Phases({ data }: { data: Insights }) {
         <BarChart data={chart} x="phase" series={[{ key: 'You', name: 'You', color: SERIES.you }, { key: 'Opponents', name: 'Opponents', color: SERIES.opp }]} unit="%" />
       </Card>
       <Card title="Error rates by phase" subtitle="Per 100 moves. Red = clearly worse than opponents.">
-        <table className="w-full text-sm">
-          <thead><tr className="text-left text-xs uppercase tracking-wide text-fg-3"><th className="py-1.5 font-medium">Phase</th><th className="text-right font-medium">Moves</th><th className="text-right font-medium">Blunders</th><th className="text-right font-medium">Mistakes</th><th className="text-right font-medium">Win% lost / game</th></tr></thead>
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[480px] text-sm">
+          <thead><tr className="text-left text-[12.5px] text-fg-3"><th className="py-1.5 font-medium">Phase</th><th className="text-right font-medium">Moves</th><th className="text-right font-medium">Blunders</th><th className="text-right font-medium">Mistakes</th><th className="text-right font-medium">Win% lost / game</th></tr></thead>
           <tbody>
             {(['opening', 'middlegame', 'endgame'] as const).map(k => (
               <tr key={k} className="border-t border-line/60">
@@ -251,9 +252,10 @@ function Phases({ data }: { data: Insights }) {
             ))}
           </tbody>
         </table>
+        </div>
         {ph.endgame_types.length > 0 && (
           <div className="mt-5">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-fg-3">Endgames by type</div>
+            <div className="mb-2 text-[13px] font-medium text-fg-2">Endgames by type</div>
             <table className="w-full text-sm">
               <tbody>
                 {ph.endgame_types.map(t => (
@@ -403,7 +405,7 @@ function Recurring({ data }: { data: Insights }) {
     <Card title="Recurring mistakes" subtitle="The same position, reached in different games, where you chose a weaker move. These are the cheapest points to win back.">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {data.recurring.slice(0, 9).map(r => (
-          <div key={r.fen} className="flex gap-3 rounded-xl border border-line bg-subtle p-3">
+          <div key={r.fen} className="flex gap-3 rounded-lg border border-line bg-subtle p-3">
             <div className="w-32 shrink-0"><MiniBoard fen={r.fen} orientation={r.color} played={r.played[0]?.san} best={r.best_san} /></div>
             <div className="min-w-0 flex-1 text-sm">
               <div className="font-semibold">{r.occurrences}× in {r.games.length} games</div>
@@ -439,7 +441,7 @@ function Results({ data }: { data: Insights }) {
           <div className="space-y-3 text-sm">
             {([['Wins', r.wins_by, 'text-good'], ['Losses', r.losses_by, 'text-bad'], ['Draws', r.draws_by, 'text-fg-2']] as const).map(([label, obj, tone]) => (
               <div key={label}>
-                <div className={clsx('mb-1 text-xs font-semibold uppercase tracking-wide', tone)}>{label}</div>
+                <div className={clsx('mb-1 text-[13px] font-medium', tone)}>{label}</div>
                 <div className="flex flex-wrap gap-1.5">{reasons(obj).map(([k, v]) => <Badge key={k}>{REASON_LABEL[k] ?? k}: {v}</Badge>)}{!reasons(obj).length && <span className="text-xs text-fg-3">none</span>}</div>
               </div>
             ))}
@@ -461,11 +463,11 @@ function Results({ data }: { data: Insights }) {
         <Card title="Sessions & tilt" subtitle={`${s.sessions} sessions (games < 30 min apart).`}>
           <div className="space-y-2 text-sm">
             {(['win', 'loss', 'draw'] as const).map(k => (
-              <div key={k} className="flex justify-between"><span className="text-fg-2">After a {k}</span><span className="tabular">{pct(s.after[k].score)} <span className="text-xs text-fg-3">({s.after[k].games})</span></span></div>
+              <div key={k} className="flex justify-between"><span className="text-fg-2">After a {k}</span><span className="tnum">{pct(s.after[k].score)} <span className="text-xs text-fg-3">({s.after[k].games})</span></span></div>
             ))}
             <div className="border-t border-line pt-2" />
             {Object.entries(s.by_game_in_session).map(([k, v]) => (
-              <div key={k} className="flex justify-between"><span className="text-fg-2">Game {k} of a session</span><span className="tabular">{pct(v.score)} <span className="text-xs text-fg-3">({v.games})</span></span></div>
+              <div key={k} className="flex justify-between"><span className="text-fg-2">Game {k} of a session</span><span className="tnum">{pct(v.score)} <span className="text-xs text-fg-3">({v.games})</span></span></div>
             ))}
             {s.tilt && (
               <div className={clsx('mt-2 rounded-lg px-3 py-2 text-xs', s.tilt.significant ? 'bg-warn/10 text-warn' : 'bg-subtle text-fg-2')}>
@@ -522,14 +524,14 @@ export default function InsightsView({ data, header }: { data: Insights; header?
   const dq = data.data_quality
   if (!dq.games) return <Card><Empty title="No games in this selection">Try a wider time period or remove some filters.</Empty></Card>
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {header}
       {dq.notes.length > 0 && (
-        <div className="rounded-xl border border-warn/30 bg-warn/5 px-4 py-3 text-sm text-warn">
+        <div className="rounded-lg border border-warn/30 bg-warn/5 px-4 py-3 text-sm text-warn">
           {dq.notes.map(n => <div key={n}>{n}</div>)}
         </div>
       )}
-      <nav className="sticky top-14 z-10 -mx-1 flex gap-1 overflow-x-auto rounded-xl border border-line bg-surface/95 p-1 backdrop-blur lg:top-2">
+      <nav className="sticky top-[6.5rem] z-10 -mx-1 flex gap-1 overflow-x-auto rounded-lg border border-line bg-surface/80 p-1 backdrop-blur-xl backdrop-saturate-150">
         {SECTIONS.map(([id, label]) => (
           <a key={id} href={`#${id}`} onClick={e => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }) }}
             className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium text-fg-2 hover:bg-subtle hover:text-fg">{label}</a>

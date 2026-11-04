@@ -1,5 +1,8 @@
 # Performance verification
 
+These are historical measurements of the preserved Python baseline. The production server is now
+native Rust; see [native migration and current comparisons](native-migration.md).
+
 The separate [Stockfish installer measurement](installer-performance.md) records
 archive-extraction memory, download integrity and installation failure recovery.
 

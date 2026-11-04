@@ -1,84 +1,95 @@
 # Architecture
 
-Plyback is a single process: a FastAPI application that serves the REST API and the built web UI,
-plus background threads for synchronisation and analysis. All state lives in one SQLite database.
+Plyback runs as one native Rust process. Axum serves the existing JSON API and React bundle;
+managed background threads synchronise public games, analyse jobs and build reports. Stockfish
+remains a separate UCI process. SQLite owns durable state. Python is retained only as a development
+oracle and benchmark reference; production launchers and the container never import it.
 
-```
-                 ┌──────────────── Browser (React + TypeScript) ────────────────┐
-                 │  Overview · Games · Review · Insights · Compare · Reports     │
-                 └───────────────────────────┬───────────────────────────────────┘
-                                             │ JSON over HTTP (same origin)
-┌────────────────────────────────────────────▼────────────────────────────────────────────┐
-│ plyback.main            app factory, security middleware, static files                  │
-│ plyback.api.*           routers: system, auth, accounts, games, engine, queue, insights │
-├──────────────────────────────────────────────────────────────────────────────────────────┤
-│ services.sync           polls Chess.com per account (ETag/304, adaptive interval)        │
-│ services.analysis       persistent priority queue → worker pool → one Stockfish each    │
-│ services.reports        on-demand account analysis, snapshots when complete              │
-│ services.interactive    dedicated engine for exploring positions in the UI               │
-├──────────────────────────────────────────────────────────────────────────────────────────┤
-│ analysis.*              PGN/clocks, engine wrapper, win%/accuracy, classification,       │
-│                         tactics (SEE, forks, mates, threats), explanations, openings     │
-│ insights.*              account statistics, priorities, evidence, training resources     │
-│ chesscom.client         rate-limited, retrying, conditional HTTP client                  │
-├──────────────────────────────────────────────────────────────────────────────────────────┤
-│ db                      SQLite (WAL), per-thread connections, serialised writes,         │
-│                         atomic schema + data migrations                               │
-└──────────────────────────────────────────────────────────────────────────────────────────┘
-```
+| Layer | Owning code |
+|---|---|
+| HTTP, bounded blocking work, auth, static files | `rust/src/http.rs`, `security.rs` |
+| CLI, startup, backup, shutdown | `rust/src/main.rs`, `config.rs` |
+| Account sync, game API, queue, worker lifecycle | `rust/src/services/` |
+| Persistent UCI transport and position cache | `rust/src/engine.rs` |
+| PGN, legal moves, classification, tactics, explanations | `rust/src/pgn.rs`, `analysis.rs` |
+| Insight computation, cache, report snapshots | `rust/src/insights/` |
+| SQLite ownership and transactional upgrades | `rust/src/db.rs`, `rust/migrations/` |
 
-## Data model
+## Data model and upgrades
 
 | Table | Purpose |
 |---|---|
-| `accounts`, `archives` | Connected Chess.com users and the monthly archives already fetched (ETag, completeness). |
-| `games`, `account_games` | Games (shared when two connected accounts played each other) and their link to accounts with colour. |
-| `game_analysis`, `moves` | Per-game summary and per-move results: evaluations, classification, tags, explanation, engine lines. |
-| `jobs` | Analysis queue with priority, attempts, checkpoints (`partial_json`). |
-| `position_cache` | Engine results for opening positions, reused across games. |
-| `reports` | Saved account-analysis snapshots. |
-| `sessions`, `settings`, `events` | Auth sessions (hashed tokens), user settings, activity log. |
+| `accounts`, `archives` | Connected users with immutable row generations, and fetched archives with ETags. |
+| `games`, `account_games` | De-duplicated games and account/colour links. |
+| `game_analysis`, `moves` | Versioned summaries, evaluations, labels, explanations and lines. |
+| `jobs` | Persistent priority queue, attempts and a unique ownership token for each claim. |
+| `position_cache` | Bounded durable results keyed by position history, engine and search options. |
+| `reports`, `report_games` | Saved snapshots and fixed membership guarded by game UUID. |
+| `sessions`, `settings`, `events` | Hashed auth tokens, configuration and activity. |
+
+Migrations 1–5 retain the earlier schema and backfills. Migration 6 adds the report membership schema;
+migration 7 fences job ownership; migration 8 fences account sync against deletion and ID reuse.
+Schema changes, backfills and their version update commit together.
+New reports freeze membership at creation; legacy unfinished reports freeze on their first tick or
+finalization. Ready legacy reports retain their stored JSON. Analysis version 7 identifies the revised scoring model;
+old analyses remain readable while refresh jobs are queued. Back up before upgrading, and restore that
+backup when returning to an older release.
 
 ## Analysis pipeline
 
-1. **Sync** fetches new monthly archives; games are de-duplicated by UUID and their opening is identified
-   immediately (no engine needed).
-2. **Queue**: new games get high priority, history low priority, newest first. Jobs survive restarts;
-   a job interrupted mid-game resumes from its checkpoint.
-3. **Worker**: Stockfish evaluates every position (default depth 16, MultiPV 2); the analyser classifies
-   moves, runs tactical checks and the null-move threat test, writes explanations and accuracy.
-4. **Insights** read a covering index of the `moves` table into an bounded, per-database move cache (invalidated by
-   committed analysis revision) and compute statistics on demand; results are cached per application and filter, invalidated by a transactional data revision, and served
-   stale-while-revalidate while new analyses arrive. Two managed refresh workers coalesce simultaneous requests
-   and finish before database shutdown.
+1. Sync validates public API metadata and archive URLs, uses conditional requests and bounded retries,
+   then inserts de-duplicated games and identifies openings without running an engine. Every response
+   mutation checks the original account generation inside its transaction, including error cleanup.
+2. Workers claim queued games by priority. Each claim captures a random token, game UUID and PGN;
+   progress, retries and completion require that claim to still match. Deleting a game and reusing
+   its integer ID cannot make an old worker overwrite its replacement.
+3. Each worker reuses one Stockfish process. Best and played moves are compared from the mover's
+   perspective at a common root and completed depth. If the played move is absent from MultiPV,
+   a paired root search evaluates both. This additional search is a disclosed correctness cost.
+4. Typed SQL rows feed insight computations. A bounded, per-database response cache uses committed
+   data revisions and coalesces stale refreshes. Computation occurs outside database locks.
+5. New reports freeze game IDs and UUIDs at creation. Publication checks the data revision in the
+   same transaction as the saved result; completed results remain immutable. Pending reports use current
+   data for surviving members; deletion removes a member, while corrected filter fields do not. Failed
+   jobs or explicit early finalization can produce a ready report with partial analysis coverage.
 
-## Concurrency
+## Concurrency and cancellation
 
-- Readers use one SQLite connection per thread (WAL mode); writers share a process-wide lock and
-  `BEGIN IMMEDIATE` transactions.
-- Each analysis worker owns its Stockfish process; changing worker count, threads or hash resizes the
-  pool live. Interrupting a worker raises a `BaseException` subclass so best-effort error handling in
-  the analyser can never swallow it.
+One mutex owns each database connection. Queries return owned rows; no network or engine search
+holds the connection. Short, immediate write transactions serialize changes. Engine position-cache
+reads and writes retry short lock attempts (25 ms SQLite budget each) for up to 2 seconds and check
+cancellation every 10 ms. Brief contention between workers therefore no longer drops completed
+searches, so a warm re-review replays the cold one exactly; a connection held longer than that is
+treated as a cache miss, and cancellation never waits behind it. The response cache has 64 entries and a 32 MiB serialized-payload
+limit, two concurrent refresh computations and a 120-second maximum age for stale responses.
 
-## Extending
+Worker database waits poll cancellation with short lock attempts; cancelled writes roll back. If a
+busy database prevents bounded shutdown cleanup, the durable claim is recovered at the next start.
+The server reserves its listening port before touching data, so a duplicate launch cannot reset jobs.
 
-- New API endpoints: add a router module under `plyback/api/` and include it in `main.create_app`.
-- New insight sections: add a function in `insights/compute.py` working on `G` objects and register its
-  output in `compute_insights`; heavy per-move data should come from the `Move` tuple.
-- Schema changes: append to `db.MIGRATIONS` (and `DATA_MIGRATIONS` for Python back-fills); bump
-  `ANALYSIS_VERSION` when classification output changes so stored analyses refresh automatically.
+HTTP permits cap concurrent blocking work. Body uploads have byte and time limits. Password hashing
+runs off the async reactor and transactionally checks the verified password before issuing a session.
+An API request checks session validity again after reading its body.
 
-## Delivery and operational boundaries
+Live resource changes cancel and join retired workers before starting replacements, using one immutable
+settings snapshot per worker generation. Workers, threads and hash memory have aggregate bounds.
+Interactive analysis has a dedicated engine and a cancellation flag tied to the HTTP request lifetime.
+UCI reads, output, search deadlines and retries are bounded; stubborn children are killed and reaped.
+Shutdown broadcasts cancellation before draining HTTP, rejects late uploads, then joins managed workers.
+Compose grants 90 seconds for a bounded network/database operation to finish. Interrupted jobs remain recoverable; durable
+position results provide reuse when a game restarts, rather than resuming a Python checkpoint object.
 
-Supported installations run from a source checkout or the Docker image. The project metadata does not
-represent a standalone wheel containing the web bundle. Use the setup scripts and locked dependency files.
-The default bind is loopback; LAN/server launch requires an access password. A single instance is shared
-by one person or household; accounts are chess accounts, not isolated login tenants.
+## Extending and distribution
 
-SQLite backups include committed WAL content and are verified before atomic publication. Legacy upgrades
-retain the original database. Shutdown cancels sync retries, joins sync/report/analysis and cache workers,
-closes the interactive engine, then closes database connections. Analysis workers release their own SQLite
-connections when retired during live settings changes.
+Add API routes to the owning native service; keep `rust/openapi.json` compatible with the frontend.
+Extend `insights/compute.rs` with owned typed data, and test against the preserved oracle where behavior
+should match. Append migrations and bump `ANALYSIS_VERSION` when stored results change. Update dependency
+notices whenever the Cargo lock changes.
 
-The final frontend design is pending. `docs/design-explorations` contains the preserved studies; functional
-repairs share existing components without selecting A, D, A+D or C.
+Supported installations are a source checkout and the Docker image. The binary embeds opening data,
+insight resources and the API schema; launchers supply the data and built-interface locations. Network
+access requires a password by default. One instance serves one person or household, not isolated tenants.
+Backups use SQLite's backup API, verify integrity and publish without overwriting an existing file.
+
+The interface follows design study A, Vercel tabs, chosen on 2026-11-03. Appearance (light/dark/system,
+cover colour, board colours) is stored per browser in `frontend/src/lib/theme.ts`.

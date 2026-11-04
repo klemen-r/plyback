@@ -9,7 +9,7 @@ export default function FilterBar({ value, onChange, openings }:
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Tabs label="Period" value={value.period} onChange={v => set({ period: v })}
-        options={[{ value: '30', label: '30d' }, { value: '90', label: '90d' }, { value: '365', label: '1y' }, { value: 'all', label: 'All' }, { value: 'custom', label: 'Custom' }]} />
+        options={[{ value: '1', label: '24h' }, { value: '7', label: '7d' }, { value: '30', label: '30d' }, { value: '90', label: '90d' }, { value: '365', label: '1y' }, { value: 'all', label: 'All' }, { value: 'custom', label: 'Custom' }]} />
       {value.period === 'custom' && (
         <span className="flex items-center gap-1.5">
           <Input type="date" aria-label="From" value={value.from ?? ''} onChange={e => set({ from: e.target.value })} />

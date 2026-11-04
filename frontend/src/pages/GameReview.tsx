@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { DrawShape } from 'chessground/draw'
-import type { Key } from 'chessground/types'
+import type { DrawShape } from '@lichess-org/chessground/draw'
+import type { Key } from '@lichess-org/chessground/types'
 import { Chess, type Square } from 'chess.js'
 import clsx from 'clsx'
 import {
@@ -13,7 +13,7 @@ import ClassIcon, { ClassLabel } from '../components/ClassIcon'
 import EvalBar from '../components/EvalBar'
 import EvalGraph from '../components/EvalGraph'
 import MoveList from '../components/MoveList'
-import { Button, ErrorNote, Loading, Badge, Progress, Tabs, Spinner } from '../components/ui'
+import { Button, Card, ErrorNote, Loading, Badge, Progress, Tabs, Spinner } from '../components/ui'
 import { useAccount } from '../lib/account-context'
 import { api } from '../lib/api'
 import { CLASS_META, CLASS_ORDER, classBadgeSvg, PHASE_LABEL } from '../lib/classification'
@@ -47,7 +47,7 @@ function PlayerBar({ name, rating, accuracy, clock, active, isUser }: { name: st
       <div className="flex min-w-0 items-center gap-2">
         <span className={clsx('truncate font-semibold', isUser && 'text-accent')}>{name ?? '?'}</span>
         {rating && <span className="text-sm text-fg-2">({rating})</span>}
-        {accuracy !== null && accuracy !== undefined && <Badge className="tabular">{accuracy.toFixed(1)}%</Badge>}
+        {accuracy !== null && accuracy !== undefined && <Badge className="tnum">{accuracy.toFixed(1)}%</Badge>}
       </div>
       {clock !== null && clock !== undefined && (
         <span className={clsx('rounded-md px-2 py-0.5 font-mono text-sm tnum', active ? 'bg-fg text-bg' : 'bg-hover text-fg-2')}>{fmtClock(clock)}</span>
@@ -56,37 +56,52 @@ function PlayerBar({ name, rating, accuracy, clock, active, isUser }: { name: st
   )
 }
 
-function SummaryPanel({ data }: { data: GameDetail }) {
+function AccuracyStrip({ data }: { data: GameDetail }) {
+  const a = data.analysis!
+  const g = data.game
+  return (
+    <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line">
+      {(['white', 'black'] as const).map(side => (
+        <div key={side} className="min-w-0 bg-surface px-4 py-3">
+          <div className="flex items-center gap-1.5 text-[13px] text-fg-2">
+            <span className={clsx('h-2.5 w-2.5 shrink-0 rounded-[3px] border border-line-strong', side === 'white' ? 'bg-white' : 'bg-[#222]')} />
+            <span className={clsx('truncate', g.user_color === side && 'font-medium text-fg')}>{g[side].username}</span>
+          </div>
+          <div className="mt-1 text-[26px] font-semibold leading-none tracking-[-0.03em] tnum">{a.accuracy[side]?.toFixed(1) ?? '—'}</div>
+          <div className="mt-1.5 text-[12px] text-fg-3 tnum">
+            Accuracy · ACPL {a.acpl[side] ?? '—'}
+            {g[side].chesscom_accuracy !== null && <span title="Accuracy reported by Chess.com's own Game Review (different algorithm)"> · Chess.com {g[side].chesscom_accuracy?.toFixed(1)}</span>}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function QualityTable({ data }: { data: GameDetail }) {
   const a = data.analysis!
   const g = data.game
   const rows = CLASS_ORDER.filter(c => (a.counts.white[c] ?? 0) + (a.counts.black[c] ?? 0) > 0 || ['brilliant', 'great', 'best', 'mistake', 'blunder'].includes(c))
+  const count = (side: 'white' | 'black', c: Classification) => a.counts[side][c] ?? 0
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3">
-        {(['white', 'black'] as const).map(side => (
-          <div key={side} className={clsx('rounded-xl border px-3 py-3 text-center', g.user_color === side ? 'border-accent/50 bg-accent/5' : 'border-line bg-subtle')}>
-            <div className="truncate text-xs text-fg-2">{g[side].username}</div>
-            <div className="mt-1 text-3xl font-bold tnum">{a.accuracy[side]?.toFixed(1) ?? '—'}</div>
-            <div className="text-[11px] uppercase tracking-wide text-fg-3">Accuracy</div>
-            <div className="mt-1 text-xs text-fg-2 tnum">ACPL {a.acpl[side] ?? '—'}</div>
-            {g[side].chesscom_accuracy !== null && (
-              <div className="mt-0.5 text-[11px] text-fg-3" title="Accuracy reported by Chess.com's own Game Review (different algorithm)">Chess.com: {g[side].chesscom_accuracy?.toFixed(1)}</div>
-            )}
-          </div>
+    <table className="w-full table-fixed text-sm">
+      <thead>
+        <tr className="text-[12.5px] text-fg-3">
+          <th className="truncate pb-1.5 text-left font-medium">{g.white.username}</th>
+          <th className="w-32 pb-1.5" />
+          <th className="truncate pb-1.5 text-right font-medium">{g.black.username}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(c => (
+          <tr key={c} className="border-t border-line/60">
+            <td className="py-1.5 text-left font-semibold tnum" style={{ color: count('white', c) ? CLASS_META[c].color : undefined }}>{count('white', c)}</td>
+            <td className="py-1.5"><span className="flex items-center gap-2"><ClassIcon c={c} size={16} /><span className="text-fg-2">{CLASS_META[c].label}</span></span></td>
+            <td className="py-1.5 text-right font-semibold tnum" style={{ color: count('black', c) ? CLASS_META[c].color : undefined }}>{count('black', c)}</td>
+          </tr>
         ))}
-      </div>
-      <table className="w-full text-sm">
-        <tbody>
-          {rows.map(c => (
-            <tr key={c} className="border-b border-line/50 last:border-0">
-              <td className="w-10 py-1.5 text-center font-semibold tnum" style={{ color: (a.counts.white[c] ?? 0) ? CLASS_META[c].color : undefined }}>{a.counts.white[c] ?? 0}</td>
-              <td className="py-1.5"><span className="flex items-center justify-center gap-2"><ClassIcon c={c} size={16} /><span className="w-20 text-fg-2">{CLASS_META[c].label}</span></span></td>
-              <td className="w-10 py-1.5 text-center font-semibold tnum" style={{ color: (a.counts.black[c] ?? 0) ? CLASS_META[c].color : undefined }}>{a.counts.black[c] ?? 0}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+      </tbody>
+    </table>
   )
 }
 
@@ -110,7 +125,6 @@ function GameReviewContent() {
   const [variation, setVariation] = useState<Variation | null>(null)
   const [showArrows, setShowArrows] = useState(true)
   const [hint, setHint] = useState(false)
-  const [tab, setTab] = useState<'review' | 'moves'>('review')
   const [depth, setDepth] = useState<number>(20)
   const [promotion, setPromotion] = useState<{ orig: string; dest: string } | null>(null)
   const [enginePaused, setEnginePaused] = useState(false)
@@ -257,13 +271,13 @@ function GameReviewContent() {
   const job = g.job
 
   return (
-    <div className="appear">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <Link to="/games" className="rounded-lg p-2 text-fg-2 hover:bg-subtle hover:text-fg" aria-label="Back to games"><ArrowLeft className="h-5 w-5" /></Link>
+    <div className="appear max-sm:pb-[calc(1rem+env(safe-area-inset-bottom))]">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <Link to="/games" className="rounded-md p-1.5 text-fg-2 hover:bg-hover hover:text-fg" aria-label="Back to games"><ArrowLeft className="h-4 w-4" /></Link>
           <div className="min-w-0">
-            <h1 className="truncate text-xl font-bold">{g.white.username} vs {g.black.username} <span className="ml-1 text-base font-medium text-fg-2">{g.result}</span></h1>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-fg-2">
+            <h1 className="truncate text-[17px] font-semibold leading-tight tracking-[-0.01em]">{g.white.username} vs {g.black.username} <span className="ml-1 text-[14px] font-medium text-fg-2">{g.result}</span></h1>
+            <div className="flex flex-wrap items-center gap-x-3 text-[12.5px] text-fg-2">
               <span>{fmtDate(g.end_time, true)}</span>
               <span>{fmtTimeControl(g.time_control)} {g.time_class}</span>
               {g.termination && <span className="truncate">{g.termination}</span>}
@@ -278,7 +292,7 @@ function GameReviewContent() {
       </div>
 
       {!analysis && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-accent-ink/40 bg-accent-ink/10 px-4 py-3">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-accent-ink/40 bg-accent-ink/10 px-4 py-3">
           <div className="flex items-center gap-3 text-sm">
             {job && job.status !== 'failed' ? <Spinner /> : <Cpu className="h-5 w-5 text-accent-ink" />}
             <span>
@@ -296,9 +310,9 @@ function GameReviewContent() {
       )}
       {!canExplore && <p className="mb-4 rounded-lg border border-line bg-surface p-3 text-sm text-fg-2">Chess960 games support recorded-move review. Board exploration and live engine hints are available for standard chess.</p>}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:grid-rows-[auto_1fr] xl:grid-cols-[minmax(0,1fr)_420px] lg:[grid-template-areas:'board_panel'_'quality_panel']">
         {/* board column */}
-        <div className="mx-auto w-full max-w-[min(720px,calc(100vh-150px))] min-w-[280px]">
+        <div className="mx-auto w-full min-w-[280px] max-w-[720px] lg:max-w-[min(720px,calc(100vh-19rem))] lg:[grid-area:board]">
           <PlayerBar name={g[topSide].username} rating={g[topSide].rating} accuracy={analysis?.accuracy[topSide]} clock={clockFor(topSide)}
             active={!inVar && ply < n && moves[ply]?.color === topSide[0]} isUser={g.user_color === topSide} />
           <div className="flex gap-2">
@@ -315,30 +329,32 @@ function GameReviewContent() {
           <PlayerBar name={g[bottomSide].username} rating={g[bottomSide].rating} accuracy={analysis?.accuracy[bottomSide]} clock={clockFor(bottomSide)}
             active={!inVar && ply < n && moves[ply]?.color === bottomSide[0]} isUser={g.user_color === bottomSide} />
 
-          <div className="mt-2 flex items-center justify-between gap-2">
+          {/* On phones the controls float above the page so they stay in reach while reading. */}
+          <div role="toolbar" aria-label="Move navigation"
+            className="mt-2 flex items-center justify-between gap-2 max-sm:fixed max-sm:inset-x-0 max-sm:bottom-0 max-sm:z-30 max-sm:mt-0 max-sm:border-t max-sm:border-line max-sm:bg-surface/75 max-sm:px-3 max-sm:pb-[max(0.5rem,env(safe-area-inset-bottom))] max-sm:pt-2 max-sm:backdrop-blur-xl max-sm:backdrop-saturate-150">
             <div className="flex items-center gap-1">
-              <Button size="sm" variant="ghost" onClick={() => go(0)} aria-label="First move"><ChevronFirst className="h-5 w-5" /></Button>
-              <Button size="sm" variant="secondary" onClick={() => step(-1)} aria-label="Previous move"><ChevronLeft className="h-5 w-5" /></Button>
-              <Button size="sm" variant="secondary" onClick={() => step(1)} aria-label="Next move"><ChevronRight className="h-5 w-5" /></Button>
-              <Button size="sm" variant="ghost" onClick={() => go(n)} aria-label="Last move"><ChevronLast className="h-5 w-5" /></Button>
+              <Button size="sm" variant="ghost" onClick={() => go(0)} aria-label="First move" className="max-sm:h-10 max-sm:w-10 max-sm:px-0"><ChevronFirst className="h-5 w-5" /></Button>
+              <Button size="sm" variant="secondary" onClick={() => step(-1)} aria-label="Previous move" className="max-sm:h-10 max-sm:w-12 max-sm:px-0"><ChevronLeft className="h-5 w-5" /></Button>
+              <Button size="sm" variant="secondary" onClick={() => step(1)} aria-label="Next move" className="max-sm:h-10 max-sm:w-12 max-sm:px-0"><ChevronRight className="h-5 w-5" /></Button>
+              <Button size="sm" variant="ghost" onClick={() => go(n)} aria-label="Last move" className="max-sm:h-10 max-sm:w-10 max-sm:px-0"><ChevronLast className="h-5 w-5" /></Button>
             </div>
             <div className="flex items-center gap-1">
-              <Button size="sm" disabled={!canExplore} variant={hint ? 'primary' : 'ghost'} onClick={() => { setHint(h => !h); setEnginePaused(false) }} title="Show the engine's best move in this position"><Lightbulb className="h-4 w-4" />Hint</Button>
-              <Button size="sm" variant={showArrows ? 'secondary' : 'ghost'} onClick={() => setShowArrows(s => !s)} title="Show better-move arrows on errors">Arrows</Button>
-              <Button size="sm" variant="ghost" onClick={() => setFlip(f => !f)} aria-label="Flip board" title="Flip board (f)"><FlipVertical2 className="h-4 w-4" /></Button>
+              <Button size="sm" disabled={!canExplore} variant={hint ? 'primary' : 'ghost'} onClick={() => { setHint(h => !h); setEnginePaused(false) }} title="Show the engine's best move in this position" className="max-sm:h-10"><Lightbulb className="h-4 w-4" /><span className="max-sm:sr-only">Hint</span></Button>
+              <Button size="sm" variant={showArrows ? 'secondary' : 'ghost'} onClick={() => setShowArrows(s => !s)} title="Show better-move arrows on errors" className="max-sm:h-10">Arrows</Button>
+              <Button size="sm" variant="ghost" onClick={() => setFlip(f => !f)} aria-label="Flip board" title="Flip board (f)" className="max-sm:h-10 max-sm:w-10 max-sm:px-0"><FlipVertical2 className="h-4 w-4" /></Button>
             </div>
           </div>
           {analysis && (
-            <div className="mt-3 card p-2">
+            <div className="mt-3 rounded-lg border border-line bg-surface p-2 lg:hidden">
               <EvalGraph wins={analysis.win_white} evals={analysis.evals} moves={moves} current={inVar ? variation.basePly : ply} onSelect={go} />
             </div>
           )}
         </div>
 
-        {/* side panel */}
-        <div className="flex min-w-0 flex-col gap-4">
+        {/* side panel: stays beside the board while the page scrolls on wide screens */}
+        <div className="flex min-w-0 flex-col gap-4 lg:sticky lg:top-28 lg:max-h-[calc(100vh-11rem)] lg:self-start lg:overflow-y-auto lg:[grid-area:panel] [&>*]:shrink-0">
           {inVar && (
-            <div className="card border-accent-ink/50 p-4">
+            <div className="rounded-lg border border-accent-ink/50 bg-surface p-4">
               <div className="mb-2 flex items-center justify-between">
                 <div className="text-sm font-semibold text-accent-ink">{variation.source === 'engine' ? 'Engine line' : 'Your variation'} <span className="font-normal text-fg-2">from move {Math.ceil((variation.basePly + 1) / 2)}</span></div>
                 <Button size="sm" variant="ghost" onClick={() => setVariation(null)}><X className="h-4 w-4" />Back to game</Button>
@@ -352,43 +368,39 @@ function GameReviewContent() {
             </div>
           )}
 
-          <div className="card">
-            <div className="flex border-b border-line">
-              {(['review', 'moves'] as const).map(t => (
-                <button key={t} onClick={() => setTab(t)} className={clsx('flex-1 px-4 py-3 text-sm font-semibold capitalize', tab === t ? 'border-b-2 border-accent text-fg' : 'text-fg-2 hover:text-fg')}>{t}</button>
-              ))}
+          {analysis && <AccuracyStrip data={data} />}
+          {analysis && (
+            <div className="hidden rounded-lg border border-line bg-surface p-1.5 lg:block">
+              <EvalGraph wins={analysis.win_white} evals={analysis.evals} moves={moves} current={inVar ? variation.basePly : ply} onSelect={go} height={84} />
             </div>
-            <div className="p-4">
-              {tab === 'review' ? (
-                <div className="space-y-4">
-                  <MoveInsight current={current} ply={ply} analysis={!!analysis} allowExploration={canExplore} onPlayLine={(sans, idx) => current && playLine(current.fen_before, ply - 1, sans, idx)} />
-                  {analysis ? <SummaryPanel data={data} /> : <MoveList moves={moves} current={inVar ? -1 : ply} onSelect={go} />}
-                  {analysis && analysis.key_moments.length > 0 && (
-                    <div>
-                      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-fg-3">Key moments</div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {analysis.key_moments.map(p => {
-                          const m = moves[p - 1]
-                          if (!m?.classification) return null
-                          return (
-                            <button key={p} onClick={() => go(p)} className={clsx('flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs', p === ply ? 'border-accent bg-hover' : 'border-line bg-subtle hover:bg-hover')}>
-                              <ClassIcon c={m.classification} size={14} />
-                              <span className="font-mono">{Math.ceil(p / 2)}{p % 2 ? '.' : '…'} {m.san}</span>
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  )}
+          )}
+
+          <Card className="lg:flex lg:min-h-[16rem] lg:!shrink lg:flex-col" bodyClass="p-0 lg:flex lg:min-h-0 lg:flex-col lg:overflow-y-auto">
+            {analysis && <MoveInsight current={current} ply={ply} allowExploration={canExplore} onPlayLine={(sans, idx) => current && playLine(current.fen_before, ply - 1, sans, idx)} />}
+            {analysis && analysis.key_moments.length > 0 && (
+              <div className="border-b border-line px-4 py-3">
+                <div className="mb-2 text-[13px] font-medium text-fg-2">Key moments</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {analysis.key_moments.map(p => {
+                    const m = moves[p - 1]
+                    if (!m?.classification) return null
+                    return (
+                      <button key={p} onClick={() => go(p)} className={clsx('flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors max-sm:py-1.5', p === ply ? 'border-accent-ink bg-hover' : 'border-line bg-subtle hover:bg-hover')}>
+                        <ClassIcon c={m.classification} size={14} />
+                        <span className="font-mono">{Math.ceil(p / 2)}{p % 2 ? '.' : '…'} {m.san}</span>
+                      </button>
+                    )
+                  })}
                 </div>
-              ) : (
-                <MoveList moves={moves} current={inVar ? -1 : ply} onSelect={go} />
-              )}
+              </div>
+            )}
+            <div className="p-2 lg:flex lg:min-h-[9rem] lg:flex-col">
+              <MoveList moves={moves} current={inVar ? -1 : ply} onSelect={go} className="max-h-[340px] lg:max-h-none" />
             </div>
-          </div>
+          </Card>
 
           {canExplore && (inVar || hint || !analysis) && (
-            <div className="card p-4">
+            <div className="rounded-lg border border-line bg-surface p-4">
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-2 text-sm font-semibold"><Cpu className="h-4 w-4 text-accent-ink" />Live engine</div>
                 <Button size="sm" onClick={() => setEnginePaused(p => !p)}>{enginePaused ? 'Start engine' : 'Stop engine'}</Button>
@@ -420,6 +432,12 @@ function GameReviewContent() {
             </div>
           )}
         </div>
+
+        {analysis && (
+          <div className="mx-auto w-full max-w-[720px] lg:max-w-[min(720px,calc(100vh-19rem))] lg:[grid-area:quality]">
+            <Card title="Move quality" bodyClass="px-4 pb-2 pt-3"><QualityTable data={data} /></Card>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -429,7 +447,7 @@ function EngineLineRow({ evalText, sans, depth, onClick, disabled }: { evalText:
   const positive = !evalText.startsWith('-')
   return (
     <div className="flex items-start gap-2 rounded-lg bg-subtle px-2 py-1.5">
-      <span className={clsx('w-14 shrink-0 rounded px-1 py-0.5 text-center font-mono text-xs font-bold', positive ? 'bg-[#e9eaee] text-[#222]' : 'bg-[#3a3f47] text-white')}>{evalText}</span>
+      <span className={clsx('w-14 shrink-0 rounded px-1 py-0.5 text-center font-mono text-xs font-semibold', positive ? 'bg-[#e9eaee] text-[#222]' : 'bg-[#3a3f47] text-white')}>{evalText}</span>
       <div className="flex min-w-0 flex-wrap gap-x-1 font-mono text-[13px] leading-6">
         {sans.slice(0, 10).map((s, i) => (
           <button key={i} disabled={disabled} onClick={() => onClick(i)} className="rounded px-0.5 text-fg/90 enabled:hover:bg-hover enabled:hover:text-fg">{s}</button>
@@ -440,28 +458,28 @@ function EngineLineRow({ evalText, sans, depth, onClick, disabled }: { evalText:
   )
 }
 
-function MoveInsight({ current, ply, analysis, onPlayLine, allowExploration }: { current: MoveRow | null; ply: number; analysis: boolean; onPlayLine: (sans: string[], idx: number) => void; allowExploration: boolean }) {
-  if (!analysis) return null
+function MoveInsight({ current, ply, onPlayLine, allowExploration }: { current: MoveRow | null; ply: number; onPlayLine: (sans: string[], idx: number) => void; allowExploration: boolean }) {
   if (!current) {
     return (
-      <div className="rounded-xl bg-subtle p-4 text-sm text-fg-2">
-        Step through the game with <kbd className="rounded bg-hover px-1">←</kbd> <kbd className="rounded bg-hover px-1">→</kbd>, click the graph, or drag pieces to explore your own ideas.
+      <div className="border-b border-line p-4 text-sm text-fg-2">
+        <span className="pointer-coarse:hidden">Step through the game with <kbd className="rounded bg-hover px-1">←</kbd> <kbd className="rounded bg-hover px-1">→</kbd>, click the graph, or drag pieces to explore your own ideas.</span>
+        <span className="hidden pointer-coarse:inline">Use the arrows at the bottom, tap the graph or a move, or drag pieces to explore your own ideas.</span>
       </div>
     )
   }
   const c = current.classification as Classification | undefined
   const moveNo = `${Math.ceil(ply / 2)}${ply % 2 ? '.' : '…'}`
   return (
-    <div className="rounded-xl bg-subtle p-4" style={c ? { boxShadow: `inset 3px 0 0 ${CLASS_META[c].color}` } : undefined}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
+    <div className="border-b border-line p-4" style={c ? { boxShadow: `inset 3px 0 0 ${CLASS_META[c].color}` } : undefined}>
+      <div className="flex items-center justify-between gap-2" aria-live="polite">
+        <div className="flex min-w-0 items-center gap-2">
           {c && <ClassLabel c={c} />}
-          <span className="font-mono text-sm text-fg-2">{moveNo} {current.san}</span>
+          <span className="truncate font-mono text-sm text-fg-2">{moveNo} {current.san}</span>
         </div>
-        <span className="font-mono text-sm font-semibold">{formatEval(current.eval_after)}</span>
+        <span className="shrink-0 font-mono text-sm font-semibold">{formatEval(current.eval_after)}</span>
       </div>
       {current.explanation && <p className="mt-2 text-sm leading-relaxed text-fg/90">{current.explanation}</p>}
-      <div className="mt-2 flex flex-wrap gap-2 text-xs text-fg-3">
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-fg-3">
         {current.phase && <span>{PHASE_LABEL[current.phase]}</span>}
         {current.accuracy !== undefined && <span>Move accuracy {current.accuracy.toFixed(0)}%</span>}
         {current.ep_loss !== undefined && current.ep_loss > 0 && <span>−{(current.ep_loss * 100).toFixed(1)}% win chance</span>}
@@ -469,7 +487,7 @@ function MoveInsight({ current, ply, analysis, onPlayLine, allowExploration }: {
       </div>
       {current.lines && current.lines.length > 0 && (
         <div className="mt-3 space-y-1.5">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-fg-3">Engine lines before {current.san}</div>
+          <div className="text-[13px] font-medium text-fg-2">Engine lines before {current.san}</div>
           {current.lines.map((l, i) => (
             <EngineLineRow key={i} disabled={!allowExploration} evalText={l.eval} sans={l.san} depth={l.depth} onClick={k => onPlayLine(l.san, k)} />
           ))}

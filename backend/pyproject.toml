@@ -3,7 +3,8 @@ name = "plyback"
 version = "2.0.0"
 description = "Self-hosted Chess.com game review and account insights powered by Stockfish"
 license = "GPL-3.0-or-later"
-requires-python = ">=3.10"
+# Preserved test/oracle environment only; the native server does not require Python.
+requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.162",
     "starlette>=1.10",
@@ -23,7 +24,8 @@ plyback = "plyback.__main__:main"
 testpaths = ["tests"]
 addopts = "-q"
 markers = ["live: tests that talk to the real Chess.com API (run with -m live)"]
-filterwarnings = ["ignore::DeprecationWarning"]
+# The oracle is development-only; Starlette asks TestClient users to move to httpx2.
+filterwarnings = ["ignore::DeprecationWarning", "ignore:Using `httpx` with `starlette.testclient` is deprecated:UserWarning"]
 
 [tool.ruff]
 line-length = 125

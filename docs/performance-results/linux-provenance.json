@@ -1,0 +1,17 @@
+{
+  "workflow_url": "https://github.com/klemen-r/plyback/actions/runs/41528184314",
+  "source_commit": "144e1f67cc5a2dc6a9553a048730e153752de9f3",
+  "job": "Native backend (ubuntu-latest)",
+  "artifact": "native-performance",
+  "artifact_id": 13180578476,
+  "artifact_sha256": "65da1b14788615c0e401671ccbdefdaa351b3fe128a4340ba272393094779e2c",
+  "recorded_at_utc": "2026-11-02T21:33:19Z",
+  "files": [
+    "linux-python-insights.json",
+    "linux-rust-insights.json",
+    "linux-python-engine.json",
+    "linux-rust-engine.json"
+  ],
+  "data": "Committed public test fixtures only; no live data writes",
+  "limits": "Compare timings within this runner; labels intentionally differ across scoring algorithms; cold engine samples have one repetition per game."
+}

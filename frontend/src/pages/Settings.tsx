@@ -1,19 +1,71 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import clsx from 'clsx'
 import { Check, Save } from 'lucide-react'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { PageHeader, Button, Card, ErrorNote, Input, Loading, Tabs, Switch } from '../components/ui'
 import { api } from '../lib/api'
+import { ACCENT_PRESETS, BOARD_THEMES, DEFAULT_ACCENT, isHexColour, setAppearance, useAppearance, type Mode } from '../lib/theme'
 import type { Settings } from '../lib/types'
+
+function Row({ label, description, children }: { label: string; description?: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-2">
+      <span className="min-w-0 max-w-sm"><span className="block text-sm font-medium">{label}</span>{description && <span className="block text-xs text-fg-2">{description}</span>}</span>
+      {children}
+    </div>
+  )
+}
+
+function Appearance() {
+  const { mode, accent, board } = useAppearance()
+  const [hex, setHex] = useState(accent)
+  const [prevAccent, setPrevAccent] = useState(accent)
+  if (accent !== prevAccent) { setPrevAccent(accent); setHex(accent) }
+  const choose = (value: string) => setAppearance({ accent: value.toLowerCase() })
+  const preset = ACCENT_PRESETS.some(p => p.value === accent)
+  return <Card title="Appearance" subtitle="Stored in this browser and applied immediately.">
+    <Row label="Theme">
+      <Tabs<Mode> label="Theme" value={mode} onChange={m => setAppearance({ mode: m })}
+        options={[{ value: 'system', label: 'System' }, { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }]} />
+    </Row>
+    <Row label="Cover colour" description="Used for the logo, primary buttons and highlights. Text in this colour is adjusted to stay readable.">
+      <div className="flex flex-wrap items-center gap-2">
+        <div role="group" aria-label="Cover colour presets" className="flex items-center gap-1.5">
+          {ACCENT_PRESETS.map(p => (
+            <button key={p.value} type="button" aria-pressed={accent === p.value} aria-label={p.name} title={p.name}
+              onClick={() => choose(p.value)} style={{ background: p.value }}
+              className={clsx('h-8 w-8 rounded-[5px] ring-offset-2 ring-offset-surface transition-shadow sm:h-6 sm:w-6',
+                accent === p.value ? 'ring-2 ring-fg' : 'ring-1 ring-inset ring-black/10 hover:ring-2 hover:ring-line-strong')} />
+          ))}
+        </div>
+        <label className={clsx('relative h-8 w-8 cursor-pointer overflow-hidden rounded-[5px] ring-offset-2 ring-offset-surface sm:h-6 sm:w-6',
+          preset ? 'ring-1 ring-inset ring-line-strong' : 'ring-2 ring-fg')} title="Any colour" style={preset ? undefined : { background: accent }}>
+          {preset && <span aria-hidden className="absolute inset-0 bg-[conic-gradient(#e5484d,#f5d90a,#30a46c,#0090ff,#8e4ec6,#e5484d)]" />}
+          <input type="color" aria-label="Any cover colour" value={accent} onChange={e => choose(e.target.value)} className="absolute inset-0 cursor-pointer opacity-0" />
+        </label>
+        <Input aria-label="Cover colour hex" className="w-[5.5rem] font-mono tnum" maxLength={7} spellCheck={false} value={hex}
+          aria-invalid={!isHexColour(hex)}
+          onChange={e => { const v = e.target.value.trim(); setHex(v); if (isHexColour(v)) choose(v) }}
+          onBlur={() => setHex(accent)} />
+        {accent !== DEFAULT_ACCENT && <Button variant="ghost" onClick={() => choose(DEFAULT_ACCENT)}>Reset</Button>}
+      </div>
+    </Row>
+    <Row label="Board">
+      <Tabs label="Board colours" value={board} onChange={b => setAppearance({ board: b })}
+        options={BOARD_THEMES.map(t => ({ value: t.value, label: <span className="flex items-center gap-1.5"><span aria-hidden className="board-swatch h-3.5 w-3.5" data-board={t.value} />{t.label}</span> }))} />
+    </Row>
+  </Card>
+}
 
 function NumberField({ label, description, value, onChange, min, max, step = 1, suffix }:
   { label: string; description?: string; value: number; onChange: (v: number) => void; min: number; max: number; step?: number; suffix?: string }) {
   return (
     <label className="flex items-center justify-between gap-4 py-2">
-      <span><span className="block text-sm font-medium">{label}</span>{description && <span className="block text-xs text-fg-2">{description}</span>}</span>
-      <span className="flex items-center gap-2">
-        <input type="number" value={value} min={min} max={max} step={step} onChange={e => onChange(Number(e.target.value))} aria-label={label}
-          className="h-9 w-24 rounded-lg border border-line bg-subtle px-3 text-right text-sm tnum outline-none focus:border-accent" />
-        {suffix && <span className="w-8 text-xs text-fg-3">{suffix}</span>}
+      <span className="min-w-0"><span className="block text-sm font-medium">{label}</span>{description && <span className="block text-xs text-fg-2">{description}</span>}</span>
+      <span className="flex shrink-0 items-center gap-2">
+        <Input type="number" value={value} min={min} max={max} step={step} onChange={e => onChange(Number(e.target.value))} aria-label={label}
+          className="w-24 text-right tnum" />
+        <span className="w-6 text-xs text-fg-3">{suffix}</span>
       </span>
     </label>
   )
@@ -71,11 +123,10 @@ export default function SettingsPage() {
       {save.error && <ErrorNote error={save.error} />}
       <Card title="Engine" subtitle={status.data.engine.error ? undefined : `${status.data.engine.name ?? 'Stockfish'} · ${status.data.engine.path ?? ''}`}>
         {status.data.engine.error && <div className="mb-3"><ErrorNote error={status.data.engine.error} /></div>}
-        <div className="flex items-center justify-between gap-4 py-2">
-          <span><span className="block text-sm font-medium">Analysis depth</span><span className="block text-xs text-fg-2">Deeper is more accurate but slower. Standard (16) is a good balance; changes apply to newly queued games.</span></span>
-          <Tabs value={presetValue} onChange={v => v !== 'custom' && set('analysis_depth', presets[v])}
-            options={[...Object.entries(presets).map(([k, d]) => ({ value: k, label: `${k[0].toUpperCase()}${k.slice(1)} (${d})` })), { value: 'custom', label: 'Custom' }]} />
-        </div>
+        <Row label="Analysis depth" description="Deeper is more accurate but slower. Standard (16) is a good balance; changes apply to newly queued games.">
+          <Tabs label="Analysis depth" value={presetValue} onChange={v => v !== 'custom' && set('analysis_depth', presets[v])}
+            options={[...Object.entries(presets).sort(([, a], [, b]) => a - b).map(([k, d]) => ({ value: k, label: <>{k[0].toUpperCase()}{k.slice(1)}<span className="max-sm:hidden"> ({d})</span></> })), { value: 'custom', label: 'Custom' }]} />
+        </Row>
         <NumberField label="Custom depth" value={form.analysis_depth} onChange={v => set('analysis_depth', v)} min={6} max={30} />
         <NumberField label="Engine lines (MultiPV)" description="2+ is needed to detect “only moves” (Great)" value={form.analysis_multipv} onChange={v => set('analysis_multipv', v)} min={1} max={5} />
         <NumberField label="Time cap per position" value={form.max_seconds_per_position} onChange={v => set('max_seconds_per_position', v)} min={0.2} max={60} step={0.5} suffix="s" />
@@ -89,11 +140,11 @@ export default function SettingsPage() {
         <NumberField label="…while actively playing" description="Used for 30 minutes after a new game was found" value={form.active_sync_interval_seconds} onChange={v => set('active_sync_interval_seconds', v)} min={30} max={3600} step={10} suffix="sec" />
         <label className="flex items-center justify-between gap-4 py-2">
           <span><span className="block text-sm font-medium">Contact (optional)</span><span className="block text-xs text-fg-2">Added to the User-Agent so Chess.com can reach you about API usage.</span></span>
-          <input value={form.contact} onChange={e => set('contact', e.target.value)} placeholder="you@example.com" aria-label="Contact"
-            className="h-9 w-56 rounded-lg border border-line bg-subtle px-3 text-sm outline-none placeholder:text-fg-3 focus:border-accent" />
+          <Input value={form.contact} onChange={e => set('contact', e.target.value)} placeholder="you@example.com" aria-label="Contact" className="w-56" />
         </label>
         <Switch checked={form.auto_analyze_new} onChange={v => set('auto_analyze_new', v)} label="Default: analyse new games automatically" />
       </Card>
+      <Appearance />
       <AccessPassword />
       <Card title="About">
         <div className="grid grid-cols-2 gap-2 text-sm text-fg-2">

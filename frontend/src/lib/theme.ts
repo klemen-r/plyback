@@ -29,17 +29,26 @@ export const ACCENT_PRESETS = [
   { name: 'Plum', value: '#74407d' },
 ]
 
+export const BOARD_THEMES: { value: BoardTheme; label: string }[] = [
+  { value: 'slate', label: 'Slate' },
+  { value: 'walnut', label: 'Walnut' },
+  { value: 'green', label: 'Green' },
+  { value: 'mono', label: 'Mono' },
+]
+
+export const isHexColour = (value: string) => /^#[0-9a-f]{6}$/i.test(value)
+
 const KEY = 'plyback.appearance'
 const DEFAULTS: Appearance = { mode: 'system', accent: DEFAULT_ACCENT, board: 'slate' }
 
 function load(): Appearance {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}')
-    const accent = typeof raw.accent === 'string' && /^#[0-9a-f]{6}$/i.test(raw.accent) ? raw.accent : DEFAULTS.accent
+    const accent = typeof raw.accent === 'string' && isHexColour(raw.accent) ? raw.accent.toLowerCase() : DEFAULTS.accent
     return {
       mode: ['system', 'light', 'dark'].includes(raw.mode) ? raw.mode : DEFAULTS.mode,
       accent,
-      board: ['slate', 'walnut', 'green', 'mono'].includes(raw.board) ? raw.board : DEFAULTS.board,
+      board: BOARD_THEMES.some(t => t.value === raw.board) ? raw.board : DEFAULTS.board,
     }
   } catch {
     return DEFAULTS
@@ -73,6 +82,8 @@ export function applyAppearance(a: Appearance = state) {
   let ink = a.accent
   if (contrast(L, bgL) < 3.2) ink = `color-mix(in oklab, ${a.accent} ${dark ? 55 : 62}%, ${dark ? 'white' : 'black'})`
   root.style.setProperty('--accent-ink', ink)
+  // Mobile browser chrome follows the chosen theme, not only the system one.
+  document.querySelectorAll<HTMLMetaElement>('meta[name=theme-color]').forEach(m => { m.content = dark ? '#111111' : '#ffffff' })
   const icon = document.querySelector<HTMLLinkElement>('link[rel=icon]')
   if (icon) icon.href = `data:image/svg+xml,${encodeURIComponent(markSvg(a.accent === '#171717' ? '#8f8f8f' : a.accent))}`
 }

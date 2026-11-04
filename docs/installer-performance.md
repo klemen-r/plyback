@@ -1,5 +1,9 @@
 # Stockfish installer verification
 
+This records the retained Python baseline installer. Native setup now uses
+`scripts/install_stockfish.mjs`; its mocked safety regressions run in CI on Linux and Windows.
+The memory and timing numbers below do not describe the new Node setup helper.
+
 Measured on 2026-11-02 using Python 3.14.3 on Windows 11 AMD64. The test used the
 [official Stockfish 19 Windows universal ZIP](https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-windows-x86-64-universal.zip),
 81,431,614 bytes, verified against the release asset's SHA-256 digest. Raw runtime

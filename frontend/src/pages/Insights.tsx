@@ -52,10 +52,10 @@ export default function InsightsPage() {
       <FilterBar value={fs} onChange={update} openings={openings.data} />
       {(analyze.error || report.error) && <div className="mt-4"><ErrorNote error={analyze.error ?? report.error} /></div>}
       {dq && (
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-line bg-surface px-4 py-3">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-lg border border-line bg-surface px-4 py-3">
           <div className="min-w-[240px] flex-1">
             <div className="flex items-center justify-between text-sm">
-              <span><b className="tabular">{dq.analyzed}</b> of <b className="tabular">{dq.games}</b> games analysed</span>
+              <span><b className="tnum">{dq.analyzed}</b> of <b className="tnum">{dq.games}</b> games analysed</span>
               <span className="text-xs text-fg-3">{q.isFetching ? 'updating…' : q.data?.generated_at ? `updated ${timeAgo(q.data.generated_at)}` : ''}</span>
             </div>
             <Progress value={dq.analyzed} max={dq.games} className="mt-2" />

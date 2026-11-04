@@ -18,5 +18,5 @@ Run the Python backend separately for development. Override the dev proxy with `
 Playwright starts isolated backend/Chess.com fixture servers on 8790/8799 and uses a disposable database.
 Tests exercise the built interface; run `npm run build` first.
 
-The final visual direction is pending. A, D, A+D and C remain unapproved; archived design studies live
-in [docs/design-explorations](../docs/design-explorations/). Keep feature work independent of that choice.
+The visual direction is study A, Vercel tabs (chosen 2026-11-03); the archived studies live in
+[docs/design-explorations](../docs/design-explorations/). Reuse the primitives in `src/components/ui.tsx`.

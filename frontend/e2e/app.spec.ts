@@ -16,6 +16,8 @@ async function waitForAnalysis(page: Page, total: number) {
 }
 
 async function playOnBoard(page: Page, from: string, to: string) {
+  // Clicks go to raw coordinates, so the whole board must be clear of the sticky header.
+  await page.locator('cg-board').evaluate(el => el.scrollIntoView({ block: 'center' }))
   const board = await page.locator('cg-board').boundingBox()
   if (!board) throw new Error('Chessboard is not visible')
   for (const square of [from, to]) {
@@ -74,13 +76,29 @@ test.describe.serial('Plyback end to end', () => {
     await page.keyboard.press('ArrowRight')
     await expect(page.getByText(/^1\. /).first()).toBeVisible()
     await page.keyboard.press('End')
-    await page.getByRole('button', { name: 'Moves' }).click()
-    await expect(page.locator('[data-ply]').first()).toBeVisible()
-    await page.getByRole('button', { name: 'Review' }).click()
+    // The move list sits beside the current move; selecting a move updates the explanation.
+    await page.locator('[data-ply="1"]').click()
+    await expect(page.getByText(/^1\. /).first()).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Move quality' })).toBeVisible()
     await page.getByRole('button', { name: /Hint/ }).click()
     await expect(page.getByText('Live engine')).toBeVisible()
+    // Desktop: the move controls and the side panel are reachable without scrolling the page.
+    // Measure from the top of the page: the side panel is sticky, so its position moves with any scroll
+    // that earlier clicks or key presses caused.
+    const bottoms = await page.evaluate(() => {
+      window.scrollTo(0, 0)
+      return ['[role=toolbar]', 'main .grid.gap-6 > :nth-child(2)'].map(s => document.querySelector(s)!.getBoundingClientRect().bottom)
+    })
+    for (const bottom of bottoms) expect(bottom).toBeLessThanOrEqual(900)
     await page.screenshot({ path: test.info().outputPath('game-review-desktop.png') })
     await page.setViewportSize({ width: 390, height: 844 })
+    // On phones the move controls are pinned to the bottom of the screen.
+    const toolbar = page.getByRole('toolbar', { name: 'Move navigation' })
+    await expect(toolbar).toHaveCSS('position', 'fixed')
+    const box = await toolbar.boundingBox()
+    expect(box && box.y + box.height).toBeGreaterThan(830)
+    await toolbar.getByRole('button', { name: 'Next move' }).click()
+    await expect(page.getByText(/^1… /).first()).toBeVisible()
     await page.screenshot({ path: test.info().outputPath('game-review-mobile.png') })
   })
 
@@ -119,18 +137,54 @@ test.describe.serial('Plyback end to end', () => {
 
   test('compare and settings pages', async ({ page }) => {
     await page.goto('/compare')
-    await expect(page.getByText('Side by side')).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByRole('heading', { name: 'Side by side', exact: true })).toBeVisible({ timeout: 30_000 })
     await page.goto('/settings')
-    await page.getByLabel('Parallel workers').fill('2')
-    await page.getByRole('button', { name: /Save changes/ }).click()
-    await expect.poll(async () => (await (await page.request.get('/api/settings')).json()).workers).toBe(2)
+    const workers = page.getByLabel('Parallel workers')
+    const target = Number(await workers.inputValue()) === 1 ? 2 : 1
+    await workers.fill(String(target))
+    const save = page.getByRole('button', { name: /Save changes/ })
+    await expect(save).toBeEnabled()
+    await save.click()
+    await expect.poll(async () => (await (await page.request.get('/api/settings')).json()).workers).toBe(target)
   })
 
-  test('mobile layout has working navigation', async ({ page }) => {
+  test('appearance: theme, any cover colour and board colours persist in this browser', async ({ page }) => {
+    await page.goto('/settings')
+    const accent = () => page.evaluate(() => document.documentElement.style.getPropertyValue('--accent'))
+    await page.getByRole('button', { name: 'Brick' }).click()
+    await expect(page.getByRole('button', { name: 'Brick' })).toHaveAttribute('aria-pressed', 'true')
+    expect(await accent()).toBe('#b4402c')
+    const hex = page.getByLabel('Cover colour hex')
+    await hex.fill('#12')
+    expect(await accent()).toBe('#b4402c')
+    await hex.fill('#FFD000')
+    expect(await accent()).toBe('#ffd000')
+    await page.getByRole('tab', { name: 'Dark' }).click()
+    await page.getByRole('tab', { name: /Walnut/ }).click()
+    await page.reload()
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+    expect(await accent()).toBe('#ffd000')
+    await expect(page.getByRole('tab', { name: /Walnut/ })).toHaveAttribute('aria-selected', 'true')
+    await page.getByRole('button', { name: 'Reset' }).click()
+    await page.getByRole('tab', { name: 'System' }).click()
+    expect(await accent()).toBe('#244b84')
+  })
+
+  test('mobile layout has working navigation without sideways scrolling', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto('/')
     await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Insights' }).click()
     await expect(page.getByRole('heading', { name: 'Account insights' })).toBeVisible()
+    for (const path of ['/', '/insights', '/games', '/settings']) {
+      await page.goto(path)
+      await page.locator('main h1').first().waitFor()
+      await page.waitForTimeout(1500)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), path).toBeLessThanOrEqual(0)
+    }
+    await page.goto('/')
+    await expect(page.getByRole('heading', { name: 'Latest game' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Open review' })).toBeVisible()
+    await page.goto('/insights')
     await page.screenshot({ path: test.info().outputPath('mobile.png') })
   })
 

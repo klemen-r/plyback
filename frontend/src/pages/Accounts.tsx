@@ -104,7 +104,7 @@ export default function Accounts() {
   const { accounts } = useAccount()
   const nav = useNavigate()
   return (
-    <div className="appear space-y-10">
+    <div className="appear space-y-7">
       <PageHeader title="Accounts" description="Chess.com accounts connected to this Plyback server. Games sync automatically and are reviewed on this computer." />
       <Section title="Connect an account">
         <Card><AddAccountForm onAdded={() => { if (!accounts.length) nav('/') }} /></Card>

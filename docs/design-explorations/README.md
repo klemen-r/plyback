@@ -1,11 +1,11 @@
-# Design explorations — decision pending
+# Design explorations
 
-These are preserved copies of the existing design studies, including their local fonts and piece styles.
-No final design has been approved. A, D, A+D and C remain options. The working application is provisional.
+These are preserved copies of the design studies, including their local fonts and piece styles.
+On 2026-11-03 the owner chose **A, Vercel tabs**; the application follows it. B, C, D and A+D are kept
+for reference only.
 
-Open `styles2.html` for the second-round A/D/C comparison; `styles.html`, `directions.html`,
+Open `styles2.html` for the second-round A/B/C/D comparison; `styles.html`, `directions.html`,
 `proto.html`, `palettes.html` and `sheet.html` preserve earlier alternatives and identity work.
 The studies contain illustrative chess data and mock interactions, not live application results.
 
-Font licenses are retained under `licenses/`. Runtime changes should continue through shared functionality
-until the user explicitly chooses the final visual direction. Do not infer approval from the current app.
+Font licenses are retained under `licenses/`.

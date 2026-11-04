@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, ChevronLeft, ChevronRight, Search, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import ClassIcon from '../components/ClassIcon'
 import { MiniBoard } from '../components/Evidence'
 import GameTable from '../components/GameTable'
+import { useCostliestMove } from '../lib/costliest'
 import { Button, Card, Empty, ErrorNote, Loading, PageHeader, Select } from '../components/ui'
 import { useAccount } from '../lib/account-context'
 import { api, type GameQuery } from '../lib/api'
@@ -16,12 +17,8 @@ const PAGE = 30
 
 /** Preview of the selected game: its costliest moment on a board, plus the summary. */
 function Preview({ g, onClose }: { g: GameSummary; onClose: () => void }) {
-  const { account } = useAccount()
-  const detail = useQuery({ queryKey: ['game', g.id, account?.id], queryFn: () => api.game(g.id, account?.id) })
+  const { detail, worst } = useCostliestMove(g)
   const me = g.user_color
-  const moves = detail.data?.moves ?? []
-  const mine = me ? moves.filter(m => m.color === me[0]) : moves
-  const worst = useMemo(() => [...mine].filter(m => m.ep_loss !== undefined).sort((a, b) => (b.ep_loss ?? 0) - (a.ep_loss ?? 0))[0], [mine])
   const opp = me === 'white' ? g.black : me === 'black' ? g.white : null
   return (
     <Card padded={false} className="sticky top-32 overflow-hidden">
@@ -91,35 +88,35 @@ export default function Games() {
     <div className="appear">
       <PageHeader title="Games" description={q.data ? `${q.data.total.toLocaleString()} games${account ? ` played by ${account.display_name}` : ''}` : ' '}
         actions={<Link to="/import"><Button>Import PGN</Button></Link>} />
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-fg-3" />
+      <div className="mb-4 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center max-sm:[&>*:last-child:nth-child(even)]:col-span-2">
+        <div className="relative col-span-2">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-3" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Opponent or opening" aria-label="Search games"
-            className="h-8 w-56 rounded-md border border-line bg-surface pl-8 pr-2.5 text-[13.5px] outline-none placeholder:text-fg-3 hover:border-line-strong focus:border-accent-ink" />
+            className="h-10 w-full rounded-md border border-line bg-surface pl-8 pr-2.5 text-[13.5px] outline-none placeholder:text-fg-3 hover:border-line-strong focus:border-accent-ink sm:h-8 sm:w-56" />
         </div>
-        <Select label="Time control" value={get('time_class')} onChange={v => set('time_class', v)}>
+        <Select label="Time control" value={get('time_class')} onChange={v => set('time_class', v)} className="w-full sm:w-auto">
           <option value="">All time controls</option><option value="bullet">Bullet</option><option value="blitz">Blitz</option><option value="rapid">Rapid</option><option value="daily">Daily</option>
         </Select>
         {account && <>
-          <Select label="Result" value={get('outcome')} onChange={v => set('outcome', v)}>
+          <Select label="Result" value={get('outcome')} onChange={v => set('outcome', v)} className="w-full sm:w-auto">
             <option value="">All results</option><option value="win">Wins</option><option value="loss">Losses</option><option value="draw">Draws</option>
           </Select>
-          <Select label="Colour" value={get('color')} onChange={v => set('color', v)}>
+          <Select label="Colour" value={get('color')} onChange={v => set('color', v)} className="w-full sm:w-auto">
             <option value="">Both colours</option><option value="white">White</option><option value="black">Black</option>
           </Select>
-          <Select label="Contains" value={get('classification')} onChange={v => set('classification', v)}>
+          <Select label="Contains" value={get('classification')} onChange={v => set('classification', v)} className="w-full sm:w-auto">
             <option value="">Any moves</option>
             {(['brilliant', 'great', 'blunder', 'miss'] as const).map(c => <option key={c} value={c}>With a {CLASS_META[c].label.toLowerCase()}</option>)}
           </Select>
         </>}
-        <Select label="Opening" value={get('opening')} onChange={v => set('opening', v)} className="max-w-[220px]">
+        <Select label="Opening" value={get('opening')} onChange={v => set('opening', v)} className="w-full sm:w-auto sm:max-w-[220px]">
           <option value="">All openings</option>
           {openings.data?.map(o => <option key={o.family} value={o.family}>{o.family} ({o.n})</option>)}
         </Select>
-        <Select label="Review status" value={get('analyzed')} onChange={v => set('analyzed', v)}>
+        <Select label="Review status" value={get('analyzed')} onChange={v => set('analyzed', v)} className="w-full sm:w-auto">
           <option value="">Reviewed or not</option><option value="1">Reviewed</option><option value="0">Not reviewed</option>
         </Select>
-        <Select label="Sort" value={get('sort')} onChange={v => set('sort', v)}>
+        <Select label="Sort" value={get('sort')} onChange={v => set('sort', v)} className="w-full sm:w-auto">
           <option value="">Newest first</option><option value="end_time_asc">Oldest first</option><option value="accuracy_desc">Highest accuracy</option><option value="accuracy_asc">Lowest accuracy</option>
         </Select>
       </div>

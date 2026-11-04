@@ -1,0 +1,53 @@
+{
+  "python": "3.13.1",
+  "platform": "Darwin",
+  "engine": "Stockfish 19",
+  "options": {
+    "depth": 16,
+    "multipv": 2,
+    "threat_depth": 10
+  },
+  "time_cap": 5,
+  "node_cap": null,
+  "threads": 1,
+  "hash_mb": 64,
+  "startup_ms": 317.12,
+  "samples": [
+    {
+      "plies": 88,
+      "wall_ms": 20729.75,
+      "engine_ms": 20687.97,
+      "python_overhead_ms": 41.78,
+      "engine_calls": 97,
+      "threat_calls": 8,
+      "nodes": 31750623,
+      "achieved_depths": [
+        10,
+        16
+      ]
+    },
+    {
+      "plies": 45,
+      "wall_ms": 10266.4,
+      "engine_ms": 10247.18,
+      "python_overhead_ms": 19.23,
+      "engine_calls": 55,
+      "threat_calls": 9,
+      "nodes": 14233468,
+      "achieved_depths": [
+        0,
+        10,
+        16
+      ]
+    }
+  ],
+  "replay_ms": [
+    52.88066598586738,
+    52.936458960175514,
+    52.50054190400988,
+    52.89070797152817,
+    54.63095800951123
+  ],
+  "replay_median_ms": 52.89,
+  "output_equal": true
+}

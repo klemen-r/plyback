@@ -15,9 +15,9 @@ export function Button({ variant = 'secondary', size = 'md', loading, className,
       disabled={rest.disabled || loading}
       className={clsx(
         'inline-flex shrink-0 select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-md font-medium transition-colors disabled:pointer-events-none disabled:opacity-50',
-        size === 'sm' && 'h-7 px-2.5 text-[13px]',
-        size === 'md' && 'h-8 px-3 text-[13.5px]',
-        size === 'icon' && 'h-8 w-8',
+        size === 'sm' && 'h-9 px-2.5 text-[13px] sm:h-7',
+        size === 'md' && 'h-10 px-3 text-[13.5px] sm:h-8',
+        size === 'icon' && 'h-10 w-10 sm:h-8 sm:w-8',
         variant === 'primary' && 'bg-accent text-accent-fg hover:opacity-90',
         variant === 'secondary' && 'border border-line bg-surface text-fg shadow-[0_1px_0_rgb(0_0_0/0.02)] hover:bg-hover',
         variant === 'ghost' && 'text-fg-2 hover:bg-hover hover:text-fg',
@@ -33,17 +33,17 @@ export function Button({ variant = 'secondary', size = 'md', loading, className,
 
 export function Card({ children, className, padded = true, title, subtitle, actions, bodyClass }:
   { children: ReactNode; className?: string; padded?: boolean; title?: ReactNode; subtitle?: ReactNode; actions?: ReactNode; bodyClass?: string }) {
-  return <div className={clsx('rounded-lg border border-line bg-surface', className)}>
-    {title && <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
-      <div><h2 className="font-semibold">{title}</h2>{subtitle && <p className="mt-0.5 text-xs text-fg-2">{subtitle}</p>}</div>{actions}
+  return <div className={clsx('min-w-0 rounded-lg border border-line bg-surface', className)}>
+    {title && <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+      <div><h2 className="font-semibold">{title}</h2>{subtitle && <p className="mt-0.5 text-xs text-fg-2 [overflow-wrap:anywhere]">{subtitle}</p>}</div>{actions}
     </div>}
-    <div className={bodyClass ?? (padded ? 'p-5' : undefined)}>{children}</div>
+    <div className={bodyClass ?? (padded ? 'p-4' : undefined)}>{children}</div>
   </div>
 }
 
 export function PageHeader({ title, description, subtitle, actions }: { title: ReactNode; description?: ReactNode; subtitle?: ReactNode; actions?: ReactNode }) {
   return (
-    <div className="mb-8 flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
+    <div className="mb-6 flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
       <div className="min-w-0">
         <h1 className="text-[28px] font-semibold leading-tight tracking-[-0.035em] text-fg sm:text-[30px]">{title}</h1>
         {(description ?? subtitle) && <div className="mt-1.5 text-[14px] text-fg-2">{description ?? subtitle}</div>}
@@ -56,7 +56,7 @@ export function PageHeader({ title, description, subtitle, actions }: { title: R
 export function Section({ id, title, description, actions, children, className }:
   { id?: string; title: ReactNode; description?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section id={id} className={clsx('scroll-mt-32', className)}>
+    <section id={id} className={clsx('scroll-mt-12', className)}>
       <div className="mb-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
         <div className="min-w-0">
           <h2 className="text-[16px] font-semibold tracking-[-0.015em] text-fg">{title}</h2>
@@ -79,7 +79,7 @@ export function Loading({ label = 'Loading' }: { label?: string }) {
 
 export function Empty({ title, children, action, className, icon }: { title: string; children?: ReactNode; action?: ReactNode; className?: string; icon?: ReactNode }) {
   return (
-    <div className={clsx('flex flex-col items-center px-6 py-14 text-center', className)}>
+    <div className={clsx('flex flex-col items-center px-6 py-10 text-center', className)}>
       {icon && <div className="mb-3 text-fg-3">{icon}</div>}
       <div className="text-[14px] font-medium text-fg">{title}</div>
       {children && <div className="mt-1 max-w-sm text-[13px] text-fg-2">{children}</div>}
@@ -111,7 +111,9 @@ export function Banner({ children, actions, tone = 'neutral' }: { children: Reac
 export function Figures({ children, cols = 4, className }: { children: ReactNode; cols?: number; className?: string }) {
   return (
     <div style={{ '--cols': cols } as React.CSSProperties}
-      className={clsx('grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line md:[grid-template-columns:repeat(var(--cols),minmax(0,1fr))]', className)}>
+      className={clsx('grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line md:[grid-template-columns:repeat(var(--cols),minmax(0,1fr))]',
+        // An odd last figure spans the row on phones instead of leaving an empty cell.
+        'max-md:[&>*:last-child:nth-child(odd)]:col-span-2', className)}>
       {children}
     </div>
   )
@@ -119,10 +121,10 @@ export function Figures({ children, cols = 4, className }: { children: ReactNode
 
 export function Figure({ label, value, detail, tone, hint }: { label: ReactNode; value: ReactNode; detail?: ReactNode; tone?: 'good' | 'bad' | 'warn'; hint?: string }) {
   return (
-    <div className="min-w-0 bg-surface px-5 py-4" title={hint}>
+    <div className="min-w-0 bg-surface px-4 py-3.5" title={hint}>
       <div className="truncate text-[13px] text-fg-2">{label}</div>
       <div className={clsx('tnum mt-1.5 text-[26px] font-semibold leading-none tracking-[-0.03em]', tone === 'good' && 'text-good', tone === 'bad' && 'text-bad', tone === 'warn' && 'text-warn')}>{value}</div>
-      {detail && <div className="mt-1.5 truncate text-[12.5px] text-fg-3">{detail}</div>}
+      {detail && <div className="mt-1.5 text-[12.5px] text-fg-3 sm:truncate">{detail}</div>}
     </div>
   )
 }
@@ -144,7 +146,7 @@ export function Confidence({ c, n }: { c: Conf; n?: number }) {
 }
 
 export function Badge({ children, className }: { children: ReactNode; className?: string }) {
-  return <span className={clsx('inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-line px-2 text-[12px] leading-5 text-fg-2', className)}>{children}</span>
+  return <span className={clsx('inline-flex items-center gap-1 whitespace-nowrap rounded-[5px] border border-line px-1.5 text-[12px] leading-5 text-fg-2', className)}>{children}</span>
 }
 
 export function Progress({ value, max, className }: { value: number; max: number; className?: string }) {
@@ -174,7 +176,7 @@ export function Switch({ checked, onChange, label, description, disabled }:
         {description && <div className="mt-0.5 text-[13px] text-fg-2">{description}</div>}
       </div>
       <button type="button" role="switch" aria-checked={checked} aria-label={label} disabled={disabled} onClick={() => onChange(!checked)}
-        className={clsx('relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors', checked ? 'bg-accent' : 'bg-line-strong')}>
+        className={clsx('relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors after:absolute after:-inset-2.5 after:content-[""]', checked ? 'bg-accent' : 'bg-line-strong')}>
         <span className={clsx('absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-[left]', checked ? 'left-[18px]' : 'left-0.5')} />
       </button>
     </div>
@@ -184,10 +186,10 @@ export function Switch({ checked, onChange, label, description, disabled }:
 export function Tabs<T extends string>({ value, options, onChange, label }:
   { value: T; options: { value: T; label: ReactNode }[]; onChange: (v: T) => void; label?: string }) {
   return (
-    <div role="tablist" aria-label={label} className="inline-flex h-8 items-center rounded-md border border-line bg-subtle p-0.5">
+    <div role="tablist" aria-label={label} className="inline-flex h-10 max-w-full items-center overflow-x-auto rounded-md border border-line bg-subtle p-0.5 [scrollbar-width:none] sm:h-8">
       {options.map(o => (
         <button key={o.value} type="button" role="tab" aria-selected={value === o.value} onClick={() => onChange(o.value)}
-          className={clsx('h-full rounded-[5px] px-2.5 text-[13px] font-medium transition-colors',
+          className={clsx('h-full whitespace-nowrap rounded-[5px] px-2.5 text-[13px] font-medium transition-colors',
             value === o.value ? 'bg-surface text-fg shadow-[0_0_0_1px_var(--line)]' : 'text-fg-2 hover:text-fg')}>
           {o.label}
         </button>
@@ -200,7 +202,7 @@ export function Select({ value, onChange, children, className, label }:
   { value: string; onChange: (v: string) => void; children: ReactNode; className?: string; label: string }) {
   return (
     <select aria-label={label} value={value} onChange={e => onChange(e.target.value)}
-      className={clsx('h-8 rounded-md border border-line bg-surface pl-2.5 pr-7 text-[13.5px] text-fg outline-none transition-colors hover:border-line-strong focus-visible:border-accent-ink', className)}>
+      className={clsx('h-10 rounded-md border border-line bg-surface pl-2.5 pr-7 text-[13.5px] text-fg outline-none transition-colors hover:border-line-strong focus-visible:border-accent-ink sm:h-8', className)}>
       {children}
     </select>
   )
@@ -209,19 +211,7 @@ export function Select({ value, onChange, children, className, label }:
 export function Input({ className, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input {...rest}
-      className={clsx('h-8 rounded-md border border-line bg-surface px-2.5 text-[13.5px] text-fg outline-none transition-colors placeholder:text-fg-3 hover:border-line-strong focus:border-accent-ink', className)} />
-  )
-}
-
-export function Row({ label, description, children }: { label: string; description?: ReactNode; children: ReactNode }) {
-  return (
-    <div className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-10">
-      <div className="min-w-0">
-        <div className="text-[14px] font-medium">{label}</div>
-        {description && <div className="mt-0.5 text-[13px] text-fg-2">{description}</div>}
-      </div>
-      <div className="shrink-0">{children}</div>
-    </div>
+      className={clsx('h-10 rounded-md border border-line bg-surface px-2.5 text-[13.5px] text-fg outline-none transition-colors placeholder:text-fg-3 hover:border-line-strong focus:border-accent-ink sm:h-8', className)} />
   )
 }
 
@@ -233,11 +223,4 @@ export function ResultMark({ outcome }: { outcome: 'win' | 'loss' | 'draw' | nul
 
 export function Kbd({ children }: { children: ReactNode }) {
   return <kbd className="rounded border border-line bg-subtle px-1 font-mono text-[11px] leading-[18px] text-fg-3">{children}</kbd>
-}
-
-export function TextLink({ children, onClick, href }: { children: ReactNode; onClick?: () => void; href?: string }) {
-  const cls = 'text-[13px] text-fg-2 transition-colors hover:text-fg'
-  return href
-    ? <a className={cls} href={href} target="_blank" rel="noreferrer">{children}</a>
-    : <button type="button" className={cls} onClick={onClick}>{children}</button>
 }

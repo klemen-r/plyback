@@ -1,4 +1,6 @@
 /.venv/
+/rust/target/
+/benchmark-output/
 /data/
 __pycache__/
 *.py[cod]

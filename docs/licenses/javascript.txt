@@ -294,7 +294,7 @@ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
 
 
-===== chessground 9.2.1 — LICENSE =====
+===== @lichess-org/chessground 10.5.0 — LICENSE =====
 
                     GNU GENERAL PUBLIC LICENSE
                        Version 3, 29 June 2007

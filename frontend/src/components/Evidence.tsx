@@ -1,4 +1,4 @@
-import type { DrawShape } from 'chessground/draw'
+import type { DrawShape } from '@lichess-org/chessground/draw'
 import { ArrowUpRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { sanToSquares } from '../lib/chess'

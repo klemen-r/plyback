@@ -5,8 +5,12 @@ and license terms. Dependency source links and complete web dependency notices a
 
 | Component | Source | License |
 |---|---|---|
-| python-chess (`chess`) | https://github.com/niklasf/python-chess | GPL-3.0-or-later |
-| chessground and its bundled piece assets | https://github.com/lichess-org/chessground | GPL-3.0-or-later |
+| shakmaty / pgn-reader | https://github.com/niklasf/shakmaty / https://github.com/niklasf/rust-pgn-reader | GPL-3.0-or-later |
+| Axum / Tokio / Tower | https://github.com/tokio-rs | MIT |
+| rusqlite / bundled SQLite | https://github.com/rusqlite/rusqlite / https://sqlite.org | MIT / public domain |
+| Rust dependency tree | Exact package versions and source links in `rust/Cargo.lock` and the notice bundle | Individual terms in `docs/licenses/rust.txt` |
+| python-chess (`chess`, preserved test baseline only) | https://github.com/niklasf/python-chess | GPL-3.0-or-later |
+| @lichess-org/chessground and its bundled piece assets | https://github.com/lichess-org/chessground | GPL-3.0-or-later |
 | Stockfish (separately downloaded) | https://github.com/official-stockfish/Stockfish | GPL-3.0 |
 | Lichess opening dataset | https://github.com/lichess-org/chess-openings | CC0-1.0 |
 | chess.js | https://github.com/jhlywa/chess.js | BSD-2-Clause |
@@ -15,11 +19,13 @@ and license terms. Dependency source links and complete web dependency notices a
 | TanStack Query | https://github.com/TanStack/query | MIT |
 | Lucide icons | https://github.com/lucide-icons/lucide | ISC |
 | Geist and Geist Mono | https://github.com/vercel/geist-font | SIL OFL-1.1 |
-| FastAPI / Starlette / Uvicorn / HTTPX / Pydantic | Official projects named in Python metadata | MIT or BSD-3-Clause, as retained in each distribution |
+| FastAPI / Starlette / Uvicorn / HTTPX / Pydantic (preserved test baseline only) | Official projects named in Python metadata | MIT or BSD-3-Clause, as retained in each distribution |
 
 [Complete installed production JavaScript notices](docs/licenses/javascript.txt) are also included
-in the web build as `/THIRD_PARTY_LICENSES.txt`. Python distributions retain their license files in
-the installed environment. The GPL text is included in [LICENSE](LICENSE).
+in the web build as `/THIRD_PARTY_LICENSES.txt`. [Rust dependency notices](docs/licenses/rust.txt)
+are included with the container; regenerate with `node scripts/rust_notices.mjs` after lockfile changes.
+The preserved Python test environment retains its own license files and is not shipped in the production image.
+The GPL text is included in [LICENSE](LICENSE).
 
 The Stockfish installer retains COPYING, AUTHORS and README with release tag, source URL and SHA-256
 provenance in each installed version directory. When distributing a binary or container, preserve those

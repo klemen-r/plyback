@@ -39,7 +39,7 @@ function Menu({ trigger, children, align = 'left', label }: { trigger: (open: bo
   return (
     <div className="relative" ref={ref}>
       <button type="button" aria-haspopup="menu" aria-expanded={open} aria-label={label} onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-2 rounded-md px-1.5 py-1 text-[14px] transition-colors hover:bg-hover">
+        className="flex h-10 min-w-10 items-center justify-center gap-2 rounded-md px-1.5 text-[14px] transition-colors hover:bg-hover sm:h-auto sm:min-w-0 sm:py-1">
         {trigger(open)}
       </button>
       {open && (
@@ -98,10 +98,10 @@ function EngineStatus() {
     idle: 'Up to date',
   }[state]
   return (
-    <Link to="/activity" className="hidden items-center gap-2 rounded-md px-2 py-1 text-[13px] text-fg-2 transition-colors hover:bg-hover hover:text-fg md:flex" title={data.engine.name ?? 'Stockfish'}>
+    <Link to="/activity" aria-label={text} className="flex h-10 min-w-10 items-center justify-center gap-2 rounded-md px-2 text-[13px] text-fg-2 transition-colors hover:bg-hover hover:text-fg md:h-auto md:min-w-0 md:py-1" title={data.engine.name ?? 'Stockfish'}>
       <span className={clsx('h-2 w-2 rounded-full', state === 'error' && 'bg-bad', state === 'paused' && 'bg-warn',
         state === 'busy' && 'animate-pulse bg-accent-ink', state === 'idle' && 'bg-good')} />
-      <span className="tnum">{text}</span>
+      <span className="tnum max-md:hidden">{text}</span>
     </Link>
   )
 }
@@ -136,7 +136,15 @@ export default function Layout({ children, onLogout }: { children: ReactNode; on
   const { error: accountError } = useAccount()
   const [palette, setPalette] = useState(false)
   const loc = useLocation()
-  useEffect(() => { window.scrollTo(0, 0) }, [loc.pathname])
+  const nav = useRef<HTMLElement>(null)
+  useEffect(() => {
+    window.scrollTo(0, 0)
+    // On narrow screens the tab strip scrolls; keep the current tab visible.
+    const active = nav.current?.querySelector<HTMLElement>('[aria-current=page]')
+    if (active && nav.current && nav.current.scrollWidth > nav.current.clientWidth) {
+      nav.current.scrollTo({ left: active.offsetLeft - (nav.current.clientWidth - active.offsetWidth) / 2 })
+    }
+  }, [loc.pathname])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette(p => !p) }
@@ -158,7 +166,7 @@ export default function Layout({ children, onLogout }: { children: ReactNode; on
           <AccountMenu />
           <div className="ml-auto flex items-center gap-1">
             <button type="button" onClick={() => setPalette(true)} aria-label="Search"
-              className="mr-1 flex h-8 items-center gap-2 rounded-md border border-line bg-subtle px-2.5 text-[13px] text-fg-3 transition-colors hover:border-line-strong hover:text-fg-2 sm:w-56">
+              className="mr-1 flex h-10 w-10 items-center justify-center gap-2 rounded-md border border-line bg-subtle text-[13px] text-fg-3 transition-colors hover:border-line-strong hover:text-fg-2 sm:h-8 sm:w-56 sm:justify-start sm:px-2.5">
               <Search className="h-3.5 w-3.5" /><span className="hidden sm:inline">Search games…</span>
               <span className="ml-auto hidden sm:inline"><Kbd>{isMac ? '⌘' : 'Ctrl'} K</Kbd></span>
             </button>
@@ -166,7 +174,7 @@ export default function Layout({ children, onLogout }: { children: ReactNode; on
             <UserMenu onLogout={onLogout} />
           </div>
         </div>
-        <nav aria-label="Main" className="mx-auto max-w-[1280px] overflow-x-auto px-2 sm:px-4 [scrollbar-width:none]">
+        <nav ref={nav} aria-label="Main" className="mx-auto max-w-[1280px] overflow-x-auto px-2 sm:px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <div className="flex min-w-max">
             {TABS.map(t => (
               <NavLink key={t.to} to={t.to} end={t.end}
@@ -178,7 +186,7 @@ export default function Layout({ children, onLogout }: { children: ReactNode; on
           </div>
         </nav>
       </header>
-      <main id="main" className="mx-auto w-full max-w-[1280px] px-4 pb-20 pt-8 sm:px-6 sm:pt-10">
+      <main id="main" className="mx-auto w-full max-w-[1280px] px-4 pb-20 pt-6 sm:px-6 sm:pt-7">
         {!!accountError && <div className="mb-4"><ErrorNote error={accountError} /></div>}{children}
       </main>
       {palette && <CommandPalette onClose={() => setPalette(false)} />}

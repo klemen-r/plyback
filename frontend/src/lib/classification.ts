@@ -25,7 +25,8 @@ export const CLASS_ORDER: Classification[] = [
   'brilliant', 'great', 'best', 'excellent', 'good', 'book', 'inaccuracy', 'mistake', 'miss', 'blunder',
 ]
 
-export const ERROR_CLASSES: Classification[] = ['inaccuracy', 'mistake', 'miss', 'blunder']
+/** Error labels, most severe first. */
+export const ERROR_CLASSES = ['blunder', 'mistake', 'miss', 'inaccuracy'] as const satisfies readonly Classification[]
 
 /** SVG badge placed in the corner of a board square (chessground customSvg, 100×100 viewBox). */
 export function classBadgeSvg(c: Classification): string {

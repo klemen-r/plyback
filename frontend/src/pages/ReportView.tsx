@@ -30,7 +30,7 @@ export default function ReportView() {
             <Cpu className="h-6 w-6 animate-pulse text-accent" />
             <div className="min-w-[240px] flex-1">
               <div className="flex justify-between text-sm"><span>Analysing games in scope…</span>
-                <span className="tabular text-fg-2">{r.analyzed_games}/{r.total_games}{perGame ? ` · ~${fmtDuration((remaining * perGame) / workers)} left` : ''}</span></div>
+                <span className="tnum text-fg-2">{r.analyzed_games}/{r.total_games}{perGame ? ` · ~${fmtDuration((remaining * perGame) / workers)} left` : ''}</span></div>
               <Progress value={r.analyzed_games} max={r.total_games} className="mt-2" />
               <p className="mt-2 text-xs text-fg-3">You can leave this page — the report is built automatically when analysis finishes. Already-analysed games are reused.</p>
             </div>

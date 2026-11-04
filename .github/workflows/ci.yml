@@ -14,15 +14,67 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  native:
+    name: Native backend (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      PLYBACK_REQUIRE_STOCKFISH: '1'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy
+      - run: rustup default 1.97.1
+      - run: node scripts/install_stockfish.mjs
+      - name: Select the verified engine for isolated test data directories
+        run: node -e "const fs=require('node:fs'); fs.appendFileSync(process.env.GITHUB_ENV, 'PLYBACK_STOCKFISH='+fs.readFileSync('data/engine/stockfish.path','utf8').trim()+'\n')"
+      - run: node --test scripts/install_stockfish.test.mjs
+      - run: cargo fmt --manifest-path rust/Cargo.toml --check
+      - run: cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --release --locked --manifest-path rust/Cargo.toml
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          python-version: '3.12'
+      - name: Reproduce baseline and native benchmarks on the same runner
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r backend/requirements-dev.txt
+          mkdir -p benchmark-output
+          python scripts/seed_benchmark.py benchmark-output/fixture.db
+          python scripts/seed_benchmark.py benchmark-output/scale100.db --scale 100
+          python backend/bench/run.py --source benchmark-output/fixture.db --scale 100 --repeat 5 --out benchmark-output/python-insights.json
+          PLYBACK_INSIGHT_BENCH_SOURCE="$PWD/benchmark-output/scale100.db" PLYBACK_INSIGHT_BENCH_OUTPUT="$PWD/benchmark-output/rust-insights.json" cargo test --release --locked --manifest-path rust/Cargo.toml --test insights benchmark_insights -- --ignored --nocapture
+          PLYBACK_DATA="$PWD/benchmark-output/engine-data" python backend/bench/analysis.py --out benchmark-output/python-engine.json --record benchmark-output/evaluations.json
+          PLYBACK_BENCH_INPUT="$PWD/benchmark-output/evaluations.json" PLYBACK_BENCH_OUTPUT="$PWD/benchmark-output/rust-engine.json" cargo test --release --locked --manifest-path rust/Cargo.toml --test engine_review benchmark_reference_fixture_cold_and_warm -- --ignored --nocapture
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && matrix.os == 'ubuntu-latest'
+        with:
+          name: native-performance
+          path: benchmark-output/*.json
+      - name: Audit Rust dependency lock
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cargo install cargo-audit --locked --version 0.22.2
+          cargo audit --file rust/Cargo.lock --deny warnings
+
   backend:
-    name: Backend (${{ matrix.os }}, Python ${{ matrix.python }})
+    name: Preserved baseline (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {os: ubuntu-latest, python: '3.10'}
+          - {os: ubuntu-latest, python: '3.11'}
           - {os: ubuntu-latest, python: '3.12'}
           - {os: windows-latest, python: '3.12'}
     steps:
@@ -73,9 +125,6 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: '3.12'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
@@ -83,9 +132,10 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Set up isolated servers and browser
         run: |
-          python -m venv .venv
-          .venv/bin/python -m pip install --require-hashes -r backend/requirements.txt
-          .venv/bin/python scripts/install_stockfish.py
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+          cargo build --release --locked --manifest-path rust/Cargo.toml
+          node scripts/install_stockfish.mjs
           cd frontend
           npm ci
           npm run build
@@ -101,7 +151,7 @@ jobs:
 
   container:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build and verify hardened container
@@ -119,3 +169,5 @@ jobs:
           test "$(curl --silent -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/accounts)" = 401
           curl --fail --silent -c /tmp/plyback-cookies -H 'Content-Type: application/json' -H 'X-Requested-With: plyback' -d '{"password":"ci-access-password"}' http://127.0.0.1:8000/api/auth/login
           curl --fail --silent -b /tmp/plyback-cookies http://127.0.0.1:8000/api/accounts | grep -q '\[\]'
+          docker exec plyback-ci sh -c '! command -v python && ! command -v python3 && ! command -v node'
+          docker exec plyback-ci plyback healthcheck
