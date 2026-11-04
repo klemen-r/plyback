@@ -32,7 +32,7 @@ pub fn hash_password(password: &str) -> anyhow::Result<String> {
     scrypt::scrypt(
         password.as_bytes(),
         &salt,
-        &scrypt::Params::new(14, 8, 1, 32)?,
+        &scrypt::Params::new(14, 8, 1)?,
         &mut digest,
     )?;
     Ok(format!(
@@ -59,7 +59,7 @@ pub fn verify_password(password: &str, stored: &str) -> bool {
         return false;
     }
     let mut actual = [0; 32];
-    let Ok(params) = scrypt::Params::new(14, 8, 1, 32) else {
+    let Ok(params) = scrypt::Params::new(14, 8, 1) else {
         return false;
     };
     if scrypt::scrypt(password.as_bytes(), &salt, &params, &mut actual).is_err() {
@@ -289,6 +289,18 @@ pub const RATE_RULES: &[(&str, &str, u32)] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn verifies_a_hash_made_independently_by_python_hashlib() {
+        // hashlib.scrypt(b"correct horse battery", salt=bytes(range(16)), n=16384, r=8, p=1, dklen=32)
+        let stored = "scrypt$16384$8$1$AAECAwQFBgcICQoLDA0ODw==$6W7GuoxjojaYIg83x/wEKSXUMMf+reyc6wSvA8q7ny8=";
+        assert!(verify_password("correct horse battery", stored));
+        assert!(!verify_password("correct horse batterz", stored));
+        let fresh = hash_password("correct horse battery").unwrap();
+        assert!(
+            fresh.starts_with("scrypt$16384$8$1$")
+                && verify_password("correct horse battery", &fresh)
+        );
+    }
     #[test]
     fn password_rotation_rejects_in_flight_old_credentials() -> anyhow::Result<()> {
         let db = Database::open(":memory:")?;
