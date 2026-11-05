@@ -12,7 +12,7 @@ let identityBytes = 0
 let brotliBytes = 0
 let gzipBytes = 0
 for (const name of await readdir(dist, { recursive: true })) {
-  if (!/\.(?:html|js|css|svg|json)$/.test(name)) continue
+  if (!/\.(?:html|js|css|svg|json|webmanifest)$/.test(name)) continue
   const file = path.join(dist, name)
   const source = await readFile(file)
   if (source.length < 1024) continue

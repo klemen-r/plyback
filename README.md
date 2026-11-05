@@ -88,6 +88,13 @@ The non-root container stores data in `plyback-data`, has a read-only root files
 port 8000. Changing the environment password after initial setup does not replace a saved password;
 use Settings or the password command. The image is built for the host architecture.
 
+### On your phone
+
+Once the server is reachable from your phone (for example over Tailscale with `tailscale serve`, or on your LAN),
+open it in the browser and add it to the home screen: **Share → Add to Home Screen** in Safari, or **Install app**
+in Chrome's menu. Plyback then opens full screen with its own icon. Chrome only offers installing over HTTPS.
+It is still the same server, so the phone needs a connection to it.
+
 ## What it does
 
 - Incremental Chess.com imports with conditional requests, bounded retries and adaptive polling.

@@ -748,6 +748,7 @@ fn static_file(root: &Path, encoded: &str, accept_encoding: &str) -> anyhow::Res
         "css" => "text/css; charset=utf-8",
         "svg" => "image/svg+xml",
         "json" => "application/json",
+        "webmanifest" => "application/manifest+json",
         "woff2" => "font/woff2",
         "woff" => "font/woff",
         "ico" => "image/x-icon",

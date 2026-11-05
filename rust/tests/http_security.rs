@@ -75,6 +75,25 @@ impl Drop for TestApp {
 }
 
 #[test]
+fn install_manifest_and_icons_load_without_signing_in() {
+    // Browsers fetch the manifest without the session cookie, so a password must not hide it.
+    let test = TestApp::new();
+    security::set_password(&test.app.db, Some("test-password")).unwrap();
+    let root = &test.app.config.frontend;
+    std::fs::write(root.join("manifest.webmanifest"), r#"{"name":"Plyback"}"#).unwrap();
+    std::fs::write(root.join("icon-192.png"), b"PNG").unwrap();
+    let (status, headers, body) = test.request("GET", "/manifest.webmanifest", json!({}), &[]);
+    assert_eq!(status, 200);
+    assert_eq!(headers["content-type"], "application/manifest+json");
+    assert_eq!(body, br#"{"name":"Plyback"}"#);
+    let (status, headers, _) = test.request("GET", "/icon-192.png", json!({}), &[]);
+    assert_eq!(status, 200);
+    assert_eq!(headers["content-type"], "image/png");
+    let (status, _, _) = test.request("GET", "/api/accounts", json!({}), &[]);
+    assert_eq!(status, 401);
+}
+
+#[test]
 fn static_compression_preserves_headers_and_never_compresses_api_responses() {
     let test = TestApp::new();
     let assets = test.app.config.frontend.join("assets");
