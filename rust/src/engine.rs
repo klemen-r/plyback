@@ -220,11 +220,22 @@ pub fn terminal_eval(board: &Chess, repetitions: usize) -> Option<i32> {
     }
 }
 
+/// The data directory the server was started with (`--data` or `PLYBACK_DATA`), so
+/// `data/engine/` is searched there rather than in the build's default location.
+static DATA_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Record the configured data directory. The first call wins; later calls are ignored.
+pub fn set_data_dir(data: PathBuf) {
+    let _ = DATA_DIR.set(data);
+}
+
 pub fn locate_stockfish() -> Result<PathBuf> {
-    let data = std::env::var_os("PLYBACK_DATA")
-        .or_else(|| std::env::var_os("CHESS_INSIGHT_DATA"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../data"));
+    let data = DATA_DIR.get().cloned().unwrap_or_else(|| {
+        std::env::var_os("PLYBACK_DATA")
+            .or_else(|| std::env::var_os("CHESS_INSIGHT_DATA"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../data"))
+    });
     let mut candidates = Vec::new();
     if let Some(path) =
         std::env::var_os("PLYBACK_STOCKFISH").or_else(|| std::env::var_os("STOCKFISH_PATH"))

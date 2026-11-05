@@ -190,6 +190,8 @@ fn main() -> anyhow::Result<()> {
     if cli.no_background {
         config.background = false;
     }
+    // The engine looks for data/engine/stockfish* in the same data directory.
+    plyback::engine::set_data_dir(config.data.clone());
     if matches!(cli.command, Some(Command::Healthcheck)) {
         reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(4))
