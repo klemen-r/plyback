@@ -124,6 +124,47 @@ test('An active Practice batch survives review updates and an empty batch replen
   expect(errors).toEqual([])
 })
 
+async function playOnBoard(page: Page, from: string, to: string) {
+  await page.locator('cg-board').evaluate(el => el.scrollIntoView({ block: 'center' }))
+  const board = await page.locator('cg-board').boundingBox()
+  if (!board) throw new Error('Chessboard is not visible')
+  for (const square of [from, to]) {
+    await page.mouse.click(board.x + (square.charCodeAt(0) - 97 + 0.5) * board.width / 8,
+      board.y + (8 - Number(square[1]) + 0.5) * board.height / 8)
+  }
+}
+
+test('An accepted alternative continues the puzzle with the engine line', async ({ page }) => {
+  const engineLine = (uci: string[], san: string[], win: number) => ({ cp: 30, eval: '+0.3', win_white: win, uci, san, depth: 14 })
+  const errors = await fixture(page, async (route, url) => {
+    if (url.pathname === '/api/engine/analyse') {
+      const { fen } = route.request().postDataJSON() as { fen: string }
+      const afterE5 = fen.startsWith('rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w')
+      await route.fulfill({ json: { fen, lines: afterE5
+        ? [engineLine(['g1f3', 'b8c6'], ['Nf3', 'Nc6'], 56), engineLine(['f1c4', 'g8f6', 'd2d3', 'f8c5'], ['Bc4', 'Nf6', 'd3', 'Bc5'], 54)]
+        : [engineLine(['d2d3'], ['d3'], 55)] } })
+    } else if (route.request().method() === 'POST') {
+      await route.fulfill({ json: { ...answer, correct: true, uci: 'e2e4', san: 'e4', line_san: ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5', 'a6'] } })
+    } else {
+      await route.fulfill({ json: { stats, items: [item] } })
+    }
+  })
+  await page.goto('/practice')
+  await expect(page.getByRole('switch', { name: 'Play out the line' })).toHaveAttribute('aria-checked', 'true')
+  await playOnBoard(page, 'e2', 'e4')
+  await expect(page.getByText('Good. Find the next move (2 of 3).')).toBeVisible()
+  // Bc4 isn't in the stored line, but the engine rates it about as well as Nf3.
+  await playOnBoard(page, 'f1', 'c4')
+  await expect(page.getByText(/Bc4 works too/)).toBeVisible()
+  await expect(page.getByText('Good. Find the next move (3 of 3).')).toBeVisible()
+  // The opponent replied with the engine's Nf6, so the next move is checked against that line.
+  await playOnBoard(page, 'd2', 'd3')
+  await expect(page.getByText('Solved the line on the first try')).toBeVisible()
+  await expect(page.getByText('Engine line, with your alternative')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Nf6', exact: true })).toBeVisible()
+  expect(errors).toEqual([])
+})
+
 test('Openings depth preserves the line and distinguishes a depth boundary from missing games', async ({ page }) => {
   const sans = ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5', 'a6', 'Ba4', 'Nf6', 'O-O', 'Be7', 'Re1', 'b5', 'Bb3', 'd6', 'c3', 'O-O', 'h3']
   const requestedDepths: number[] = []

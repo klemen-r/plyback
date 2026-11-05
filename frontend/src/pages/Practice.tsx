@@ -101,6 +101,8 @@ function PracticeSession() {
   const [wrong, setWrong] = useState<string | null>(null)
   const [hint, setHint] = useState(false)
   const [note, setNote] = useState<string | null>(null)
+  /** After an accepted alternative: the moves so far followed by the engine's line from there. */
+  const [liveLine, setLiveLine] = useState<string[] | null>(null)
   const [nonce, setNonce] = useState(0)
   const [step, setStep] = useState<number | null>(null)
   const [score, setScore] = useState({ right: 0, done: 0 })
@@ -115,7 +117,11 @@ function PracticeSession() {
     queryFn: () => api.practice(account!.id, kind === 'all' ? undefined : kind, range === 'all' ? 10 : 30, since(range), phase === 'all' ? undefined : phase),
     enabled: !!account,
     staleTime: Infinity,
+    // Finished reviews mark queues stale. Refetch only on purpose (a new round, an empty batch),
+    // never on remount or reconnect, so the batch can't be reordered under a puzzle in progress.
     refetchOnWindowFocus: false,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
   })
   const items = queue.data?.items ?? []
   const item: PracticeItem | undefined = items[index]
@@ -144,7 +150,7 @@ function PracticeSession() {
     cancelCheck()
     resetAnswer()
     setSolution(null); setPlayed([]); setStatus('solving'); setTries(0); setWrong(null); setHint(false)
-    setNote(null); setStep(null); setPromotion(null); setCheckError(null)
+    setNote(null); setLiveLine(null); setStep(null); setPromotion(null); setCheckError(null)
   }, [cancelCheck, resetAnswer])
   const restart = () => {
     resetPuzzle(); setIndex(0); setScore({ right: 0, done: 0 }); setStats(null)
@@ -155,6 +161,12 @@ function PracticeSession() {
   }
   const next = useCallback(() => { resetPuzzle(); setIndex(i => i + 1) }, [resetPuzzle])
   useEffect(() => () => { generation.current++; window.clearTimeout(reply.current); cancelCheck() }, [cancelCheck])
+  // If the position under the board changes for any other reason, start it fresh.
+  const itemKey = item ? `${item.game_id}:${item.ply}` : ''
+  const shownKey = useRef(itemKey)
+  useEffect(() => {
+    if (shownKey.current !== itemKey) { shownKey.current = itemKey; resetPuzzle() }
+  }, [itemKey, resetPuzzle])
 
   // Background review completion marks queues stale centrally. An empty batch can become ready;
   // active and completed batches stay in place until the user chooses the next round.
@@ -177,7 +189,7 @@ function PracticeSession() {
       .catch(() => { /* Keep the last known stats; the answer and schedule were already saved. */ })
   }
 
-  const line = useMemo(() => solution?.line_san ?? [], [solution])
+  const line = useMemo(() => liveLine ?? solution?.line_san ?? [], [liveLine, solution])
   const ownTarget = fullLine ? Math.min(MAX_OWN_MOVES, Math.ceil(line.length / 2)) : 1
   const done = status === 'solved' || status === 'revealed'
   const firstTry = !!solution && solution.correct
@@ -188,17 +200,17 @@ function PracticeSession() {
   }
 
   /** Accept the expected move, then play the opponent's reply from the line. */
-  const advance = (san: string, result: PracticeResult) => {
+  const advance = (san: string, result: PracticeResult, path: string[] = line) => {
     const moves = [...played, san]
     setPlayed(moves); setWrong(null); setHint(false)
     const own = Math.ceil(moves.length / 2)
-    const target = fullLine ? Math.min(MAX_OWN_MOVES, Math.ceil(result.line_san.length / 2)) : 1
-    if (own >= target || moves.length >= result.line_san.length) { finish('solved', result); return }
-    const opponent = result.line_san[moves.length]
+    const target = fullLine ? Math.min(MAX_OWN_MOVES, Math.ceil(path.length / 2)) : 1
+    if (own >= target || moves.length >= path.length) { finish('solved', result); return }
+    const opponent = path[moves.length]
     reply.current = window.setTimeout(() => {
       const after = [...moves, opponent]
       setPlayed(after)
-      if (after.length >= result.line_san.length) finish('solved', result)
+      if (after.length >= path.length) finish('solved', result)
     }, 450)
   }
 
@@ -220,7 +232,7 @@ function PracticeSession() {
       if (!r) { setNonce(n => n + 1); return }
       updateStats(r, current)
       setSolution(r)
-      if (r.correct) advance(mv.san, r)
+      if (r.correct) advance(mv.san, r, r.line_san)
       else reject(mv.san)
       return
     }
@@ -240,9 +252,11 @@ function PracticeSession() {
       const best = r.lines[0]
       const mine = r.lines.find(l => l.uci[0] === uci)
       if (best && mine && side(best.win_white) - side(mine.win_white) <= ALT_MARGIN) {
-        setPlayed(p => [...p, mv.san])
-        setNote(`${mv.san} works too: the engine rates it about as well as ${line[played.length]}.`)
-        finish('solved')
+        // The stored line no longer applies, so continue with the engine's line after this move.
+        const continued = mine.san[0] === mv.san ? [...played, ...mine.san] : [...played, mv.san]
+        setLiveLine(continued); setStatus('solving')
+        setNote(`${mv.san} works too: the engine rates it about as well as ${line[played.length]}.${continued.length > played.length + 1 && fullLine ? ' The line continues from the engine’s analysis.' : ''}`)
+        advance(mv.san, solution, continued)
       } else { setStatus('solving'); reject(mv.san) }
     } catch (error) {
       if (generation.current !== current) return
@@ -418,6 +432,7 @@ function PracticeSession() {
                     <Button variant="ghost" onClick={next}>Skip</Button>
                   </div>
                 )}
+                {!done && note && <p className="mt-2 text-[13px] text-fg-2">{note}</p>}
                 {answer.error && <div className="mt-3"><ErrorNote error={answer.error} /></div>}
                 {!!checkError && <div className="mt-3"><ErrorNote error={checkError} /><p className="mt-2 text-[13px] text-fg-2">The move wasn’t counted as wrong. Try it again, or use a hint to follow the stored line.</p></div>}
               </Card>
@@ -436,7 +451,7 @@ function PracticeSession() {
                   {positions.length > 0 && (
                     <div className="mt-4">
                       <div className="mb-2 flex items-center justify-between">
-                        <span className="text-[13px] font-medium">Engine line</span>
+                        <span className="text-[13px] font-medium">{liveLine ? 'Engine line, with your alternative' : 'Engine line'}</span>
                         <div className="flex gap-1">
                           <Button size="icon" variant="ghost" aria-label="Previous move in line" disabled={at === 0} onClick={() => setStep(Math.max(0, at - 1))}><ChevronLeft className="h-4 w-4" /></Button>
                           <Button size="icon" variant="ghost" aria-label="Next move in line" disabled={at >= positions.length} onClick={() => setStep(Math.min(positions.length, at + 1))}><ChevronRight className="h-4 w-4" /></Button>
