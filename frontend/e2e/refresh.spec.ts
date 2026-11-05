@@ -28,7 +28,7 @@ test('Openings refreshes after a revision change even when account counts stay t
   await mockPages(page, async route => {
     reads++
     await route.fulfill({ json: { color: 'white', plies: 16, total_games: 1, games: revision - 1,
-      wins: revision - 1, draws: 0, losses: 0, nodes: [], problems: [] } })
+      wins: revision - 1, draws: 0, losses: 0, nodes: [], problems: [], merged: false, root: 0 } })
   }, () => revision)
   await page.goto('/openings')
   await expect(page.getByText('No reviewed games as White yet')).toBeVisible()

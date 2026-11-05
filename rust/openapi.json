@@ -12,7 +12,7 @@
           "openings"
         ],
         "summary": "Opening repertoire",
-        "description": "The account’s reviewed games for one colour as a move tree from the standard start: games, score, book and left-book counts per move, and error counts for the account’s own moves, the named opening and up to three recent game IDs per move, plus up to eight problem moves.",
+        "description": "The account’s reviewed games for one colour as a move tree from the standard start: games, score, book and left-book counts per move, and error counts for the account’s own moves, the named opening and up to three recent game IDs (and plies) per move, plus up to eight problem moves. Each node has `from` and `to` position ids (`root` is the start), so a client can walk the tree in either mode.",
         "operationId": "repertoire",
         "parameters": [
           {
@@ -46,6 +46,16 @@
               "minimum": 2,
               "maximum": 30,
               "default": 16
+            }
+          },
+          {
+            "name": "merge",
+            "in": "query",
+            "required": false,
+            "description": "Group moves by the position they were played from, so move orders that transpose share statistics. Each node is listed under its most common move order.",
+            "schema": {
+              "type": "boolean",
+              "default": false
             }
           },
           {

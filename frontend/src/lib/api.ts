@@ -100,7 +100,7 @@ export const api = {
 
   practice: (account_id: number, kind?: PracticeKind, limit = 10, since?: number, phase?: PracticePhase) =>
     request<PracticeQueue>('GET', `/accounts/${account_id}/practice${qs({ kind, limit, since, phase })}`),
-  repertoire: (account_id: number, q: { color: 'white' | 'black'; time_class?: string; plies?: number }) =>
+  repertoire: (account_id: number, q: { color: 'white' | 'black'; time_class?: string; plies?: number; merge?: boolean }) =>
     request<Repertoire>('GET', `/accounts/${account_id}/repertoire${qs(q)}`),
   answerPractice: (account_id: number, game_id: number, ply: number, answer: { uci: string } | { reveal: true }) =>
     request<PracticeResult>('POST', `/accounts/${account_id}/practice/${game_id}/${ply}`, answer),

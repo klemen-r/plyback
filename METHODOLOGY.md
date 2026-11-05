@@ -157,6 +157,9 @@ default. Choose *First 15 moves* to explore up to 30 plies; the depth and curren
 
 - **Nodes** are move sequences from the standard starting position, kept apart even when they transpose, so the tree
   follows the order the moves were played in. Chess960 and games from a set-up position are left out.
+- **Merge transpositions** groups moves by the position they were played from (its EPD: pieces, side to move, castling
+  and en passant), so every move order that reaches a position shares its statistics. Each move is listed under its
+  most common move order. A game that repeats a position counts once for a move played from it.
 - For every move: the number of games, your score and win/draw/loss split afterwards, and how often the move was
   book. *Leaves book* marks where the first non-book move of a game was played. For your own moves, the page also
   shows how often the move was an inaccuracy, mistake, miss or blunder.

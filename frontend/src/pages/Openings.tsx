@@ -44,11 +44,12 @@ function scoreTone(n: RepertoireNode) {
   return n.score >= 0.55 ? 'text-good' : n.score <= 0.45 ? 'text-bad' : 'text-fg'
 }
 
-function MoveRow({ node, focus, opening, onClick }: { node: RepertoireNode; focus: boolean; opening: string | null; onClick: () => void }) {
+function MoveRow({ node, focus, opening, merged, onClick }: { node: RepertoireNode; focus: boolean; opening: string | null; merged: boolean; onClick: () => void }) {
   const errorRate = node.mine && node.errors ? node.errors / node.games : 0
   const notes = [
     node.book === node.games ? 'Book' : node.left_book ? `Leaves book${node.left_book < node.games ? ` in ${node.left_book} of ${node.games}` : ''}` : null,
     node.opening && node.opening !== opening ? node.opening : null,
+    merged && node.orders > 1 ? `${node.orders} move orders` : null,
   ].filter(Boolean)
   return (
     <button type="button" onClick={onClick}
@@ -74,6 +75,7 @@ export default function Openings() {
   const color: Side = params.get('color') === 'black' ? 'black' : 'white'
   const timeClass = params.get('tc') ?? 'all'
   const plies = params.get('plies') === '30' ? 30 : 16
+  const merge = params.get('merge') === '1'
   const requested = useMemo(() => (params.get('line') ?? '').split(' ').filter(Boolean), [params])
   const focus = params.get('focus')
   const [notice, setNotice] = useState<string | null>(null)
@@ -89,31 +91,45 @@ export default function Openings() {
   const go = (moves: string[], highlight: string | null = null) => update({ line: moves.join(' ') || null, focus: highlight })
 
   const q = useQuery({
-    queryKey: ['repertoire', account?.id, color, timeClass, plies],
-    queryFn: () => api.repertoire(account!.id, { color, time_class: timeClass === 'all' ? undefined : timeClass, plies }),
+    queryKey: ['repertoire', account?.id, color, timeClass, plies, merge],
+    queryFn: () => api.repertoire(account!.id, { color, time_class: timeClass === 'all' ? undefined : timeClass, plies, merge: merge || undefined }),
     enabled: !!account,
   })
-  // A filter change can leave the requested line without games: show the deepest position that has some.
-  const line = useMemo(() => {
-    const nodes = q.data?.nodes
-    if (!nodes) return requested
-    let keep = requested.length
-    while (keep > 0 && !nodes.some(n => n.path === requested.slice(0, keep).join(' '))) keep--
-    return requested.slice(0, keep)
-  }, [q.data, requested])
-
-  const path = line.join(' ')
-  const children = useMemo(() => {
-    const nodes = q.data?.nodes ?? []
-    return nodes.filter(n => n.ply === line.length + 1 && (line.length === 0 ? true : n.path.startsWith(path + ' ')))
-      .sort((a, b) => b.games - a.games || a.san.localeCompare(b.san))
-  }, [q.data, line.length, path])
-  const current = q.data?.nodes.find(n => n.path === path)
+  // Moves are edges between positions; with merged move orders, several lines share a position.
+  const byFrom = useMemo(() => {
+    const map = new Map<number, RepertoireNode[]>()
+    for (const n of q.data?.nodes ?? []) map.set(n.from, [...(map.get(n.from) ?? []), n])
+    for (const list of map.values()) list.sort((a, b) => b.games - a.games || a.san.localeCompare(b.san))
+    return map
+  }, [q.data])
+  // Follow the requested line. A filter change can leave it without games: stop at the deepest
+  // position that has some.
+  const trail = useMemo(() => {
+    const out: RepertoireNode[] = []
+    if (!q.data) return out
+    let at = q.data.root
+    for (const san of requested) {
+      const n = byFrom.get(at)?.find(x => x.san === san)
+      if (!n) break
+      out.push(n); at = n.to
+    }
+    return out
+  }, [q.data, byFrom, requested])
+  const line = useMemo(() => (q.data ? requested.slice(0, trail.length) : requested), [q.data, requested, trail])
+  const current = trail.at(-1)
+  // With merged move orders a position can be entered by several moves: count all of them.
+  const reached = useMemo(() => {
+    if (!current || !q.data?.merged) return current && { games: current.games, wins: current.wins, draws: current.draws, orders: 1 }
+    const into = q.data.nodes.filter(n => n.to === current.to)
+    return into.reduce((a, n) => ({ games: a.games + n.games, wins: a.wins + n.wins, draws: a.draws + n.draws, orders: a.orders + n.orders }),
+      { games: 0, wins: 0, draws: 0, orders: 0 })
+  }, [current, q.data])
+  const children = (q.data && byFrom.get(current ? current.to : q.data.root)) ?? []
   // The opening is named by the deepest position along this line that the dataset names.
   let opening: { name: string; eco: string | null } | null = null
-  for (let k = line.length; k > 0 && !opening; k--) {
-    const n = q.data?.nodes.find(x => x.path === line.slice(0, k).join(' '))
-    if (n?.opening) opening = { name: n.opening, eco: n.eco }
+  for (let k = trail.length - 1; k >= 0 && !opening; k--) {
+    const n = trail[k]
+    if (n.opening) opening = { name: n.opening, eco: n.eco }
   }
   const { fen, last } = useMemo(() => position(line), [line])
   const yourTurn = (line.length % 2 === 0) === (color === 'white')
@@ -159,6 +175,10 @@ export default function Openings() {
       <PageHeader title="Openings"
         description="Your reviewed games as a move tree: how each line went for you, where you leave theory, and which of your moves to fix."
         actions={<>
+          <Select label="Move orders" value={merge ? '1' : '0'} onChange={v => update({ merge: v === '1' ? '1' : null })}>
+            <option value="0">As played</option>
+            <option value="1">Merge transpositions</option>
+          </Select>
           <Select label="Tree depth" value={String(plies)} onChange={v => update({ plies: v === '16' ? null : v })}>
             <option value="16">First 8 moves</option>
             <option value="30">First 15 moves</option>
@@ -197,8 +217,8 @@ export default function Openings() {
           <div className="flex min-w-0 flex-col gap-4">
             <Card padded={false}
               title={opening ? <>{opening.name}{opening.eco && <span className="ml-2 font-normal text-fg-3">{opening.eco}</span>}</> : line.length ? 'Unnamed position' : 'Starting position'}
-              subtitle={current
-                ? `${current.games} of your games reached this position · you scored ${pct(current.score * 100)}`
+              subtitle={reached
+                ? `${reached.games} of your games reached this position${reached.orders > 1 ? ` by ${reached.orders} move orders` : ''} · you scored ${pct(((reached.wins + reached.draws / 2) / reached.games) * 100)}`
                 : `${d.games} reviewed games as ${color === 'white' ? 'White' : 'Black'} · you scored ${pct(((d.wins + d.draws / 2) / d.games) * 100)}`}>
               <p className="border-b border-line px-4 py-2.5 text-[13px] text-fg-2">
                 {yourTurn ? 'Your moves from here.' : 'What your opponents played here.'} Pick one, or play it on the board.
@@ -208,7 +228,7 @@ export default function Openings() {
                   <span>Move</span><span className="text-right">Games</span><span>Won · drawn · lost</span><span className="text-right">Score</span>
                 </div>
                 <div className="divide-y divide-line">
-                  {children.map(n => <MoveRow key={n.path} node={n} opening={opening?.name ?? null} focus={focus === n.san} onClick={() => go([...line, n.san])} />)}
+                  {children.map(n => <MoveRow key={`${n.from}:${n.san}`} node={n} opening={opening?.name ?? null} merged={merge} focus={focus === n.san} onClick={() => go([...line, n.san])} />)}
                 </div>
               </>) : <div className="space-y-2 px-4 py-4 text-[13.5px] text-fg-2">
                 <p>{line.length >= d.plies ? `The tree covers the first ${d.plies / 2} moves.` : 'None of your games continued from here.'}</p>
@@ -218,7 +238,7 @@ export default function Openings() {
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line px-4 py-2.5 text-[13px]">
                   <span className="text-fg-2">See it in your games:</span>
                   {current.recent_games.map((id, i) => (
-                    <Link key={id} to={`/games/${id}?ply=${line.length}`} className="text-fg-2 underline-offset-2 hover:text-fg hover:underline">
+                    <Link key={id} to={`/games/${id}?ply=${current.recent_plies?.[i] ?? line.length}`} className="text-fg-2 underline-offset-2 hover:text-fg hover:underline">
                       {i === 0 ? 'Latest game' : `Game ${i + 1}`}
                     </Link>
                   ))}

@@ -4,14 +4,16 @@
 //! results of the games that followed it, how often the move was book, and,
 //! for the account's own moves, how often it was an error. Only reviewed games
 //! contribute (the tree is built from stored move rows), and coverage is
-//! reported. Move sequences are kept apart even when they transpose, so the
-//! tree matches the order the moves were played in.
+//! reported. By default move sequences are kept apart even when they
+//! transpose, so the tree matches the order the moves were played in. With
+//! `merge`, moves are grouped by the position they were played from, so every
+//! move order that reaches a position shares its statistics.
 use crate::{ApiResult, Query, api_error, db::Database};
 use anyhow::Result;
 use rusqlite::{OptionalExtension, params};
 use serde_json::{Value, json};
 use shakmaty::{Chess, Position, san::San};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 pub const DEFAULT_PLIES: i64 = 16;
 const STANDARD_START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -46,8 +48,15 @@ struct Node {
     left_book: i64,
     /// Named opening at the position after this move, if the dataset names it.
     opening: Option<(String, String)>,
-    /// The most recent games through this move: (end time, game id).
-    recent: Vec<(i64, i64)>,
+    /// The most recent games through this move: (end time, game id, ply).
+    recent: Vec<(i64, i64, i64)>,
+    /// Position ids before and after the move (see `compute`).
+    from: usize,
+    to: usize,
+    /// Games per move order that led here; the most common one is shown.
+    paths: BTreeMap<String, i64>,
+    /// A game repeating a position counts once per move.
+    last_game: i64,
 }
 /// How many recent games each move links to.
 const RECENT_GAMES: usize = 3;
@@ -80,6 +89,7 @@ pub fn compute(
     plies: i64,
     time_class: Option<&str>,
     since: Option<i64>,
+    merge: bool,
 ) -> Result<Value> {
     let mine = if color == "white" { "w" } else { "b" };
     let (rows, total) = db.read(|c| {
@@ -130,7 +140,19 @@ pub fn compute(
         Ok((rows, total))
     })?;
 
-    let mut nodes: BTreeMap<String, Node> = BTreeMap::new();
+    // Moves are edges between positions. A position is identified by its move
+    // sequence, or with `merge` by its EPD; ids are small integers, 0 is the start.
+    let mut ids: HashMap<String, usize> = HashMap::new();
+    let mut id_of = |key: String| {
+        let next = ids.len();
+        *ids.entry(key).or_insert(next)
+    };
+    let root = id_of(if merge {
+        crate::pgn::epd(&Chess::default())
+    } else {
+        String::new()
+    });
+    let mut nodes: HashMap<(usize, String), Node> = HashMap::new();
     let (mut games, mut wins, mut draws, mut losses) = (0, 0, 0, 0);
     let mut start = 0;
     while start < rows.len() {
@@ -159,6 +181,7 @@ pub fn compute(
         let mut path = String::new();
         let mut in_book = true;
         let mut position = Chess::default();
+        let mut at = root;
         for m in moves {
             // Follow the game on a board to name the positions; stop at anything unreadable.
             let Some(played) = m
@@ -174,15 +197,24 @@ pub fn compute(
                 path.push(' ');
             }
             path.push_str(&m.san);
-            let node = nodes.entry(path.clone()).or_default();
-            if node.games == 0 {
-                node.opening = crate::analysis::opening_at(&crate::pgn::epd(&position));
+            let epd = crate::pgn::epd(&position);
+            let to = id_of(if merge { epd.clone() } else { path.clone() });
+            let from = std::mem::replace(&mut at, to);
+            let node = nodes.entry((from, m.san.clone())).or_default();
+            if node.games > 0 && node.last_game == m.game {
+                continue;
             }
-            node.recent.push((m.end_time, m.game));
+            if node.games == 0 {
+                node.opening = crate::analysis::opening_at(&epd);
+                node.from = from;
+                node.to = to;
+            }
+            node.last_game = m.game;
+            *node.paths.entry(path.clone()).or_default() += 1;
+            node.recent.push((m.end_time, m.game, m.ply));
             node.recent.sort_unstable_by(|a, b| b.cmp(a));
             node.recent.truncate(RECENT_GAMES);
             node.san.clone_from(&m.san);
-            node.ply = m.ply;
             node.games += 1;
             match score {
                 s if s >= 1.0 => node.wins += 1,
@@ -217,6 +249,26 @@ pub fn compute(
         }
     }
 
+    // Each move is shown under its most common move order (the shortest on a tie),
+    // and listed in that order for stable output.
+    let mut nodes: Vec<(String, Node)> = nodes
+        .into_values()
+        .map(|mut n| {
+            let path = n
+                .paths
+                .iter()
+                .max_by(|a, b| {
+                    a.1.cmp(b.1)
+                        .then_with(|| b.0.len().cmp(&a.0.len()))
+                        .then_with(|| b.0.cmp(a.0))
+                })
+                .map(|(p, _)| p.clone())
+                .unwrap_or_default();
+            n.ply = path.split(' ').count() as i64;
+            (path, n)
+        })
+        .collect();
+    nodes.sort_by(|a, b| a.0.cmp(&b.0));
     let score = |n: &Node| (n.wins as f64 + 0.5 * n.draws as f64) / n.games.max(1) as f64;
     let own = |n: &Node| (n.ply % 2 == 1) == (mine == "w");
     let public = |path: &str, n: &Node| {
@@ -236,6 +288,10 @@ pub fn compute(
             "eco": n.opening.as_ref().map(|o| o.0.clone()),
             "opening": n.opening.as_ref().map(|o| o.1.clone()),
             "recent_games": n.recent.iter().map(|r| r.1).collect::<Vec<_>>(),
+            "recent_plies": n.recent.iter().map(|r| r.2).collect::<Vec<_>>(),
+            "from": n.from,
+            "to": n.to,
+            "orders": n.paths.len(),
             "errors": if own(n) { json!(n.errors) } else { Value::Null },
             "blunders": if own(n) { json!(n.blunders) } else { Value::Null },
             "misses": if own(n) { json!(n.misses) } else { Value::Null },
@@ -244,7 +300,7 @@ pub fn compute(
     };
     // Own moves that went wrong repeatedly: an error in at least half of the
     // games, or a score of 35% or less over four or more games.
-    let mut problems: Vec<(&String, &Node)> = nodes
+    let mut problems: Vec<&(String, Node)> = nodes
         .iter()
         .filter(|(_, n)| {
             own(n)
@@ -255,18 +311,20 @@ pub fn compute(
     problems.sort_by(|a, b| {
         (b.1.errors, b.1.losses, b.1.games)
             .cmp(&(a.1.errors, a.1.losses, a.1.games))
-            .then_with(|| a.0.cmp(b.0))
+            .then_with(|| a.0.cmp(&b.0))
     });
     Ok(json!({
         "color": color,
         "plies": plies,
+        "merged": merge,
+        "root": root,
         "games": games,
         "total_games": total,
         "wins": wins,
         "draws": draws,
         "losses": losses,
         "nodes": nodes.iter().map(|(p, n)| public(p, n)).collect::<Vec<_>>(),
-        "problems": problems.iter().take(8).map(|(p, n)| public(p, n)).collect::<Vec<_>>(),
+        "problems": problems.iter().take(8).map(|e| public(&e.0, &e.1)).collect::<Vec<_>>(),
     }))
 }
 
@@ -316,6 +374,14 @@ pub fn handle(db: &Database, method: &str, path: &str, q: &Query) -> Option<ApiR
                     .map_err(|_| api_error(422, "since must be a Unix timestamp"))?,
             ),
         };
-        Ok((200, compute(db, account, color, plies, time_class, since)?))
+        let merge = match q.get("merge").map(String::as_str) {
+            None | Some("") | Some("false") | Some("0") => false,
+            Some("true") | Some("1") => true,
+            Some(_) => return Err(api_error(422, "merge must be true or false")),
+        };
+        Ok((
+            200,
+            compute(db, account, color, plies, time_class, since, merge)?,
+        ))
     })())
 }

@@ -64,7 +64,7 @@ export default function Methodology() {
         <p><i>Today’s games</i> and the 7- and 30-day ranges go through every position from those games in random order. Filter by mistake type or game phase to focus on opening, middlegame or endgame positions; progress counts use the same selection.</p>
       </Block>
       <Block title="Openings">
-        <p>The Openings page shows your reviewed games for one colour as a move tree over the first 8 moves, with an option to explore the first 15. The depth and current line are saved in the URL. Moves stay in the order they were played (transpositions stay apart). Each move shows your score afterwards, how often it was book, where games left book and, for your own moves, how often it was an error.</p>
+        <p>The Openings page shows your reviewed games for one colour as a move tree over the first 8 moves, with an option to explore the first 15. The depth and current line are saved in the URL. Moves stay in the order they were played unless you choose to merge transpositions: then every move order that reaches a position shares its statistics, and each move is listed under its most common order. Each move shows your score afterwards, how often it was book, where games left book and, for your own moves, how often it was an error.</p>
         <p>Positions are named from the same Lichess opening dataset used in reviews, and each line links to your latest games through it. <i>Moves to fix</i> lists your moves from at least three games that were an error in half of them or more, or after which you scored 35% or less over four or more games. These are patterns in your games, not proof that a move is unsound.</p>
       </Block>
       <Block title="Limitations">

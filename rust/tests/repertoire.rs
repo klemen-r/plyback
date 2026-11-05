@@ -186,6 +186,95 @@ fn repeated_errors_are_listed_as_problems() {
 }
 
 #[test]
+fn merging_groups_move_orders_that_reach_the_same_position() {
+    const QGD: &[(&str, bool, &str)] = &[
+        ("d4", true, "book"),
+        ("Nf6", true, "book"),
+        ("c4", true, "book"),
+        ("e6", true, "book"),
+        ("Nc3", false, "mistake"),
+    ];
+    const ENGLISH: &[(&str, bool, &str)] = &[
+        ("c4", true, "book"),
+        ("e6", true, "book"),
+        ("d4", true, "book"),
+        ("Nf6", true, "book"),
+        ("Nc3", false, "mistake"),
+    ];
+    // Knights out and back: the start position repeats within one game.
+    const SHUFFLE: &[(&str, bool, &str)] = &[
+        ("Nf3", true, "book"),
+        ("Nf6", true, "book"),
+        ("Ng1", false, "inaccuracy"),
+        ("Ng8", false, "best"),
+        ("Nf3", false, "best"),
+    ];
+    let db = fixture(&[
+        (1, "white", "win", "resigned", 100, "chess", QGD),
+        (2, "white", "resigned", "win", 200, "chess", QGD),
+        (3, "white", "win", "resigned", 300, "chess", ENGLISH),
+        (4, "white", "agreed", "agreed", 400, "chess", SHUFFLE),
+    ]);
+    // Kept apart by default: one Nc3 per move order.
+    let tree = get(&db, &[]);
+    assert_eq!(tree["merged"], false);
+    assert_eq!(node(&tree, "d4 Nf6 c4 e6 Nc3")["games"], 2);
+    assert_eq!(node(&tree, "c4 e6 d4 Nf6 Nc3")["games"], 1);
+    assert_eq!(node(&tree, "Nf3 Nf6 Ng1 Ng8 Nf3")["games"], 1);
+    // Every node links to its parent, and the root has no parent.
+    let nodes = tree["nodes"].as_array().unwrap();
+    for n in nodes {
+        let parent = n["path"].as_str().unwrap().rsplit_once(' ').map(|(p, _)| p);
+        match parent {
+            None => assert_eq!(n["from"], tree["root"]),
+            Some(p) => assert_eq!(n["from"], node(&tree, p)["to"]),
+        }
+    }
+
+    let merged = get(&db, &[("merge", "true")]);
+    assert_eq!(merged["merged"], true);
+    let nc3 = merged["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["san"] == "Nc3")
+        .unwrap();
+    // One move with all three games, shown under the more common order.
+    assert_eq!(nc3["path"], "d4 Nf6 c4 e6 Nc3");
+    assert_eq!(
+        (nc3["games"].as_i64(), nc3["orders"].as_i64()),
+        (Some(3), Some(2))
+    );
+    assert_eq!(
+        (nc3["wins"].as_i64(), nc3["losses"].as_i64()),
+        (Some(2), Some(1))
+    );
+    assert_eq!(nc3["errors"], 3);
+    assert_eq!(nc3["recent_games"], serde_json::json!([3, 2, 1]));
+    assert_eq!(nc3["recent_plies"], serde_json::json!([5, 5, 5]));
+    // Both orders lead into the same position, so it has a single parent id.
+    let d4_line = node(&merged, "d4 Nf6 c4 e6");
+    let english = merged["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["path"] == "c4 e6 d4 Nf6")
+        .unwrap();
+    assert_eq!(d4_line["to"], english["to"]);
+    assert_eq!(nc3["from"], d4_line["to"]);
+    // A game that returns to a position counts once for a move played from it twice.
+    let nf3: Vec<_> = merged["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|n| n["san"] == "Nf3" && n["from"] == merged["root"])
+        .collect();
+    assert_eq!(nf3.len(), 1);
+    assert_eq!(nf3[0]["games"], 1);
+    assert_eq!(get(&db, &[("merge", "false")])["merged"], false);
+}
+
+#[test]
 fn invalid_requests_are_rejected() {
     let db = fixture(&[]);
     for q in [
@@ -193,6 +282,7 @@ fn invalid_requests_are_rejected() {
         [("plies", "99")],
         [("time_class", "classical")],
         [("since", "soon")],
+        [("merge", "maybe")],
     ] {
         let q: Query = q
             .iter()

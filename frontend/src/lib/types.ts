@@ -326,9 +326,11 @@ export interface RepertoireNode {
   path: string; san: string; ply: number; mine: boolean
   games: number; wins: number; draws: number; losses: number; score: number; last_played: number
   book: number; left_book: number; errors: number | null; blunders: number | null; misses: number | null; avg_loss: number | null
-  eco: string | null; opening: string | null; recent_games: number[]
+  eco: string | null; opening: string | null; recent_games: number[]; recent_plies: number[]
+  /** Position ids before and after the move; `orders` is how many move orders reached it. */
+  from: number; to: number; orders: number
 }
 export interface Repertoire {
-  color: Color; plies: number; games: number; total_games: number; wins: number; draws: number; losses: number
+  color: Color; plies: number; merged: boolean; root: number; games: number; total_games: number; wins: number; draws: number; losses: number
   nodes: RepertoireNode[]; problems: RepertoireNode[]
 }
