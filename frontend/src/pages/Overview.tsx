@@ -131,7 +131,7 @@ export default function Overview() {
       {mainRating && (
         <Section title={`${mainTc![0].toUpperCase()}${mainTc!.slice(1)} rating`} description={`${mainRating.games} rated games · peak ${mainRating.peak}`}>
           <Card>
-            <LineChart data={mainRating.points} x="t" height={200} xFormat={v => fmtDate(Number(v), false, true)} series={[{ key: 'rating', name: 'Rating', color: SERIES.you }]} />
+            <LineChart data={mainRating.points} x="t" height={200} xFormat={v => fmtDate(Number(v), false, true)} series={[{ key: 'rating', name: 'Rating', color: SERIES.you }]} zoomable unitLabel="games" />
           </Card>
         </Section>
       )}

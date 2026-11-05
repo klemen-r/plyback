@@ -191,6 +191,35 @@ test.describe.serial('Plyback end to end', () => {
     await expect(page.getByText(/games analysed/)).toBeVisible()
   })
 
+  test('overview rating chart zooms, pans and resets', async ({ page }) => {
+    await page.goto('/')
+    const range = page.getByText(/^All \d+ games$/)
+    await expect(range).toBeVisible()
+    const total = Number((await range.textContent())!.match(/\d+/)![0])
+    const chart = page.getByLabel(/^Chart: \+ and − zoom/)
+    // Plain wheel scrolling is left to the page; Ctrl + wheel (and trackpad pinch) zooms.
+    await chart.scrollIntoViewIfNeeded()
+    const box = (await chart.boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.keyboard.down('Control')
+    await page.mouse.wheel(0, -400)
+    await page.keyboard.up('Control')
+    await expect(page.getByText(new RegExp(` · \\d+ of ${total} games$`))).toBeVisible()
+    await expect(page.getByRole('scrollbar', { name: 'Visible range' })).toBeVisible()
+    await page.getByRole('button', { name: 'Show everything' }).click()
+    await expect(range).toBeVisible()
+    await expect(page.getByRole('scrollbar', { name: 'Visible range' })).toHaveCount(0)
+    // Buttons and keys do the same.
+    await page.getByRole('button', { name: 'Zoom in' }).click()
+    const scrollbar = page.getByRole('scrollbar', { name: 'Visible range' })
+    await expect(scrollbar).toHaveAttribute('aria-valuenow', /\d+/)
+    await chart.focus()
+    for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowLeft')
+    await expect(scrollbar).toHaveAttribute('aria-valuenow', '0')
+    await page.keyboard.press('0')
+    await expect(range).toBeVisible()
+  })
+
   test('report: full account analysis snapshot', async ({ page }) => {
     await page.goto('/reports')
     await page.getByLabel('Report title').fill('E2E report')

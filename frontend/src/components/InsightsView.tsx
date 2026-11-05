@@ -493,7 +493,7 @@ function Trend({ data }: { data: Insights }) {
     <div className="grid gap-4 lg:grid-cols-2">
       <Card title="Rating" subtitle={rating ? `${rating.start} → ${rating.end} (${rating.change >= 0 ? '+' : ''}${rating.change}) · peak ${rating.peak}` : 'No rated games'}
         actions={tcs.length > 1 ? <Tabs value={tc} onChange={setTc} options={tcs.map(t => ({ value: t, label: cap(t) }))} /> : undefined}>
-        {rating ? <LineChart data={rating.points} x="t" xFormat={v => fmtDate(Number(v))} series={[{ key: 'rating', name: 'Rating', color: SERIES.you }]} /> : <Empty title="No rated games in this selection" />}
+        {rating ? <LineChart data={rating.points} x="t" xFormat={v => fmtDate(Number(v))} series={[{ key: 'rating', name: 'Rating', color: SERIES.you }]} zoomable unitLabel="games" /> : <Empty title="No rated games in this selection" />}
       </Card>
       <Card title="Accuracy & results over time" subtitle="Per week or month. Accuracy uses analysed games only.">
         <LineChart data={data.trend} x="period" yUnit="%" yDomain={[0, 100]}
