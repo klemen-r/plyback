@@ -13,6 +13,7 @@ const Games = lazy(() => import('./pages/Games'))
 const GameReview = lazy(() => import('./pages/GameReview'))
 const InsightsPage = lazy(() => import('./pages/Insights'))
 const Practice = lazy(() => import('./pages/Practice'))
+const Openings = lazy(() => import('./pages/Openings'))
 const Compare = lazy(() => import('./pages/Compare'))
 const Reports = lazy(() => import('./pages/Reports'))
 const ReportView = lazy(() => import('./pages/ReportView'))
@@ -57,6 +58,7 @@ export default function App() {
           <Route path="/games/:id" element={<GameReview />} />
           <Route path="/insights" element={<InsightsPage />} />
           <Route path="/practice" element={<Practice />} />
+          <Route path="/openings" element={<Openings />} />
           <Route path="/compare" element={<Compare />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/reports/:id" element={<ReportView />} />

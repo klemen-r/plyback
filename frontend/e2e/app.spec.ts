@@ -147,6 +147,31 @@ test.describe.serial('Plyback end to end', () => {
     await expect(page.getByLabel('Which games')).toHaveValue('30')
   })
 
+  test('openings: move tree by colour with results and navigation', async ({ page }) => {
+    await page.goto('/openings')
+    await expect(page.getByRole('heading', { name: 'Openings' })).toBeVisible()
+    await expect(page.getByText(/reviewed games as White/)).toBeVisible()
+    const first = page.locator('main button.grid').first()
+    const san = (await first.locator('span').first().textContent())!.trim()
+    await first.click()
+    await expect(page).toHaveURL(/line=/)
+    await expect(page.getByLabel('Current line')).toContainText(san)
+    await expect(page.getByText(/games? reached this position/)).toBeVisible()
+    await page.getByRole('button', { name: 'Back to the start' }).click()
+    await expect(page.getByLabel('Current line')).toHaveText('Starting position')
+    // Moves on the board follow the tree; a move no game played bounces back with a note.
+    await playOnBoard(page, 'h2', 'h4')
+    await expect(page.getByText('No game continued with h4 here.')).toBeVisible()
+    await expect(page.getByLabel('Current line')).toHaveText('Starting position')
+    // Switching colour never shows the other colour's tree, and a filter with no games says so.
+    await page.getByRole('tab', { name: 'As Black' }).click()
+    await expect(page).toHaveURL(/color=black/)
+    await expect(page.getByText(/reviewed games as White/)).toHaveCount(0)
+    await expect(page.getByText(/reviewed games as Black|No reviewed games as Black/)).toBeVisible()
+    await page.getByLabel('Time control').selectOption('daily')
+    await expect(page.getByText(/No reviewed daily games as Black|reviewed games as Black/)).toBeVisible()
+  })
+
   test('insights dashboard with evidence and filters', async ({ page }) => {
     await page.goto('/insights')
     await expect(page.getByRole('heading', { name: 'Account insights' })).toBeVisible()

@@ -9,6 +9,7 @@ import { PageHeader, Button, Empty, ErrorNote, Loading, Progress } from '../comp
 import { useAccount } from '../lib/account-context'
 import { api } from '../lib/api'
 import { timeAgo } from '../lib/format'
+import { insightPollInterval } from '../lib/insight-query'
 
 const KEY = 'ci.insightFilters'
 function loadFilters(): FilterState {
@@ -28,7 +29,7 @@ export default function InsightsPage() {
     queryKey: ['insights', account?.id, filters],
     queryFn: () => api.insights(account!.id, filters),
     enabled: !!account,
-    refetchInterval: query => query.state.data?.stale ? 2000 : 15000,
+    refetchInterval: insightPollInterval,
     placeholderData: (prev, query) => query?.queryKey[1] === account?.id ? prev : undefined,
   })
   const analyze = useMutation({

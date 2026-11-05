@@ -75,6 +75,95 @@ impl Drop for TestApp {
 }
 
 #[test]
+fn static_compression_preserves_headers_and_never_compresses_api_responses() {
+    let test = TestApp::new();
+    let assets = test.app.config.frontend.join("assets");
+    std::fs::create_dir(&assets).unwrap();
+    std::fs::write(assets.join("app.js"), "identity").unwrap();
+    std::fs::write(assets.join("app.js.br"), "brotli").unwrap();
+    let (status, headers, body) = test.request(
+        "GET",
+        "/assets/app.js",
+        json!({}),
+        &[("accept-encoding", "br")],
+    );
+    assert_eq!(status, 200);
+    assert_eq!(body, b"brotli");
+    assert_eq!(headers["content-encoding"], "br");
+    assert_eq!(headers["vary"], "Accept-Encoding");
+    assert_eq!(headers["content-type"], "text/javascript; charset=utf-8");
+    assert_eq!(headers["content-security-policy"], security::CSP);
+    assert_eq!(
+        headers["cache-control"],
+        "public, max-age=31536000, immutable"
+    );
+    let (_, headers, body) = test.request(
+        "HEAD",
+        "/assets/app.js",
+        json!({}),
+        &[("accept-encoding", "br")],
+    );
+    assert!(body.is_empty());
+    assert_eq!(headers["content-encoding"], "br");
+    let (_, headers, _) = test.request(
+        "GET",
+        "/api/health",
+        json!({}),
+        &[("accept-encoding", "br")],
+    );
+    assert!(!headers.contains_key("content-encoding"));
+    assert_eq!(headers["cache-control"], "no-store");
+    let (_, headers, _) = test.request("GET", "/games", json!({}), &[("accept-encoding", "br")]);
+    assert_eq!(headers["cache-control"], "no-cache");
+    let (status, headers, _) = test.request(
+        "GET",
+        "/games",
+        json!({}),
+        &[("accept-encoding", "identity;q=0")],
+    );
+    assert_eq!(status, 406);
+    assert_eq!(headers["content-security-policy"], security::CSP);
+    for (path, expected) in [("/assets/app.js", 406), ("/assets/missing.js", 404)] {
+        let (status, headers, _) = test.request(
+            "GET",
+            path,
+            json!({}),
+            &[("accept-encoding", "br;q=0,gzip;q=0,identity;q=0")],
+        );
+        assert_eq!(status, expected);
+        assert_eq!(headers["cache-control"], "no-store");
+        assert_eq!(headers["vary"], "Accept-Encoding");
+    }
+}
+
+#[test]
+fn status_revision_observes_changes_even_when_counts_do_not_change() {
+    let test = TestApp::new();
+    test.app
+        .db
+        .execute(
+            "INSERT INTO games(uuid,pgn,imported_at) VALUES ('revision-test','1. e4 *',0)",
+            &[],
+        )
+        .unwrap();
+    let read = || {
+        let (status, _, body) = test.request("GET", "/api/status", json!({}), &[]);
+        assert_eq!(status, 200);
+        serde_json::from_slice::<Value>(&body).unwrap()
+    };
+    let before = read();
+    test.app
+        .db
+        .execute("UPDATE games SET opening_name='Updated opening'", &[])
+        .unwrap();
+    let after = read();
+    assert_eq!(before["games"], after["games"]);
+    assert_eq!(before["analyzed"], after["analyzed"]);
+    assert!(after["data_revision"].as_u64().unwrap() > before["data_revision"].as_u64().unwrap());
+    assert_eq!(after["data_revision"], read()["data_revision"]);
+}
+
+#[test]
 fn shutdown_during_body_upload_cannot_start_late_work() {
     use std::io::{BufRead, BufReader, Write};
     let test = TestApp::new();

@@ -103,6 +103,66 @@ test('metadata and license requests cannot redirect to release assets or unrelat
   }
 })
 
+test('GITHUB_TOKEN authenticates only the exact release API and never archive or license requests', async t => {
+  const previous = process.env.GITHUB_TOKEN
+  process.env.GITHUB_TOKEN = 'fixture-github-token'
+  t.after(() => {
+    if (previous === undefined) delete process.env.GITHUB_TOKEN
+    else process.env.GITHUB_TOKEN = previous
+  })
+  const seen = []
+  const cdn = 'https://release-assets.githubusercontent.com/signed?token=fixture'
+  const fetchImpl = async (url, options) => {
+    seen.push([url, options.headers.Authorization])
+    return url === assetURL
+      ? new Response('', { status: 302, headers: { location: cdn } })
+      : new Response('source')
+  }
+  await response(metadataURL, false, { fetchImpl })
+  await response(licenseURL, false, { fetchImpl })
+  await response(assetURL, true, { fetchImpl })
+  await response(metadataURL, false, { fetchImpl, githubToken: '' })
+  assert.deepEqual(seen, [
+    [metadataURL, 'Bearer fixture-github-token'],
+    [licenseURL, undefined],
+    [assetURL, undefined],
+    [cdn, undefined],
+    [metadataURL, undefined],
+  ])
+})
+
+test('metadata redirects cannot forward credentials to another endpoint', async () => {
+  const token = 'fixture-github-token'
+  for (const target of [licenseURL, assetURL, metadataURL + '/other', 'https://api.github.com.evil.invalid/']) {
+    let calls = 0
+    await assert.rejects(response(metadataURL, false, { githubToken: token, fetchImpl: async (_url, options) => {
+      calls++
+      assert.equal(options.headers.Authorization, `Bearer ${token}`)
+      return new Response('', { status: 302, headers: { location: target } })
+    } }), /Unexpected release redirect/)
+    assert.equal(calls, 1)
+  }
+  const target = metadataURL + '?redirected=1'
+  const seen = []
+  await response(metadataURL, false, { githubToken: token, fetchImpl: async (url, options) => {
+    seen.push(options.headers.Authorization)
+    return url === metadataURL ? new Response('', { status: 302, headers: { location: target } }) : new Response('release')
+  } })
+  assert.deepEqual(seen, [`Bearer ${token}`, undefined])
+})
+
+test('invalid tokens and API errors do not include credentials in diagnostics', async () => {
+  await assert.rejects(response(metadataURL, false, { githubToken: 'fixture-secret\ninvalid', fetchImpl: async () => assert.fail('Unexpected fetch') }), error => {
+    assert.match(error.message, /GITHUB_TOKEN/)
+    assert.ok(!error.message.includes('fixture-secret'))
+    return true
+  })
+  await assert.rejects(response(metadataURL, false, { githubToken: 'fixture-secret', fetchImpl: async () => new Response('fixture-secret', { status: 403 }) }), error => {
+    assert.equal(error.message, 'Official release request returned 403')
+    return true
+  })
+})
+
 test('redirect loops, missing locations and HTTP failures terminate without extra requests', async () => {
   let calls = 0
   await assert.rejects(response(assetURL, true, { fetchImpl: async () => {

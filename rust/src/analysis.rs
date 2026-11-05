@@ -145,6 +145,15 @@ fn openings() -> &'static OpeningIndex {
     })
 }
 
+/// The named opening (ECO code, name) for a position given as EPD (placement,
+/// side to move, castling, en passant), from the same CC0 Lichess dataset.
+pub fn opening_at(epd: &str) -> Option<(String, String)> {
+    openings()
+        .named
+        .get(epd)
+        .map(|(eco, name, _)| (eco.clone(), name.clone()))
+}
+
 /// Matches verified positions from the preserved CC0 Lichess opening dataset.
 /// Leading book coverage stops at the first unknown position; transpositions
 /// can still identify a later named opening but never relabel the intervening play.
@@ -229,6 +238,7 @@ pub fn analyze(
                 elapsed_us = started.elapsed().as_micros() as u64,
                 searches = after.searches - before.searches,
                 cache_hits = after.cache_hits - before.cache_hits,
+                shared_search_hits = after.shared_search_hits - before.shared_search_hits,
                 depth = result.as_ref().ok().and_then(|lines| lines.first()).map(|line| line.depth),
                 nodes = result.as_ref().ok().and_then(|lines| lines.last()).map(|line| line.nodes),
             );

@@ -134,6 +134,7 @@ export interface QueueStats {
 export interface Status {
   version: string
   analysis_version: number
+  data_revision?: number
   engine: { name: string | null; path: string | null; error: string | null }
   queue: QueueStats
   sync: { current_account: number | null }
@@ -306,6 +307,7 @@ export interface Session {
 }
 
 export type PracticeKind = 'blunder' | 'mistake' | 'miss'
+export type PracticePhase = 'opening' | 'middlegame' | 'endgame'
 export interface PracticeStats { total: number; new: number; due: number; learning: number; mastered: number; next_due_at: number | null }
 export interface PracticeItem {
   game_id: number; ply: number; fen: string; color: Color; move_number: number
@@ -318,4 +320,15 @@ export interface PracticeQueue { stats: PracticeStats; items: PracticeItem[] }
 export interface PracticeResult {
   correct: boolean; uci: string | null; san: string | null; best_uci: string; best_san: string
   line_san: string[]; game_san: string; explanation: string | null; box: number; due_at: number; stats: PracticeStats
+}
+
+export interface RepertoireNode {
+  path: string; san: string; ply: number; mine: boolean
+  games: number; wins: number; draws: number; losses: number; score: number; last_played: number
+  book: number; left_book: number; errors: number | null; blunders: number | null; misses: number | null; avg_loss: number | null
+  eco: string | null; opening: string | null; recent_games: number[]
+}
+export interface Repertoire {
+  color: Color; plies: number; games: number; total_games: number; wins: number; draws: number; losses: number
+  nodes: RepertoireNode[]; problems: RepertoireNode[]
 }

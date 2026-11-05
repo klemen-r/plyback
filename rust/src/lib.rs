@@ -6,6 +6,7 @@ pub mod http;
 pub mod insights;
 pub mod pgn;
 pub mod practice;
+pub mod repertoire;
 pub mod security;
 pub mod services;
 

@@ -1,7 +1,7 @@
 import { SERIES } from '../lib/charts'
 import clsx from 'clsx'
 import { AlertTriangle, ChevronDown, ChevronRight, ExternalLink, Target, TrendingDown, TrendingUp } from 'lucide-react'
-import { useMemo, useState, type ReactNode } from 'react'
+import { memo, useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { PHASE_LABEL, REASON_LABEL } from '../lib/classification'
 import { cap, fmtDate, num, pct } from '../lib/format'
@@ -520,7 +520,7 @@ export function KPIs({ data }: { data: Insights }) {
   )
 }
 
-export default function InsightsView({ data, header }: { data: Insights; header?: ReactNode }) {
+export default memo(function InsightsView({ data, header }: { data: Insights; header?: ReactNode }) {
   const dq = data.data_quality
   if (!dq.games) return <Card><Empty title="No games in this selection">Try a wider time period or remove some filters.</Empty></Card>
   return (
@@ -551,7 +551,7 @@ export default function InsightsView({ data, header }: { data: Insights; header?
       <Section id="results" title="Results & habits"><Results data={data} /></Section>
     </div>
   )
-}
+})
 
 function Section({ id, title, sub, children }: { id: string; title: string; sub?: string; children: ReactNode }) {
   return (

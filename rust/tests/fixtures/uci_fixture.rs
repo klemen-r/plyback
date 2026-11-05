@@ -30,6 +30,16 @@ fn main() {
                 .parse::<usize>()
                 .unwrap();
         } else if command.starts_with("go ") {
+            if mode.contains("gate") {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                while !executable.with_extension("release").exists() {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "fixture was not released"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            }
             if mode.contains("exit") {
                 std::process::exit(3);
             }
@@ -42,10 +52,18 @@ fn main() {
                 vec!["e2e4", "d2d4", "g1f3", "c2c4", "b1c3"]
             };
             for (rank, mv) in roots.iter().take(multipv).enumerate() {
+                // Different workers deliberately disagree, just as Stockfish
+                // can with different hash histories. Shared-key tests must
+                // prove one search/result, not coincidentally equal replies.
+                let score = if mode.contains("gate") {
+                    std::process::id() as i32 % 10_000
+                } else {
+                    20
+                };
                 println!(
                     "info depth 8 multipv {} score cp {} nodes 100 pv {mv}",
                     rank + 1,
-                    20 - rank as i32
+                    score - rank as i32
                 );
             }
             if mode.contains("partial") {

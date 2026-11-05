@@ -1,5 +1,6 @@
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import { ArrowUpRight } from 'lucide-react'
+import { memo } from 'react'
 import { Link } from 'react-router-dom'
 import { sanToSquares } from '../lib/chess'
 import { fmtDate, moveLabel } from '../lib/format'
@@ -7,14 +8,14 @@ import type { Example } from '../lib/types'
 import Board from './Board'
 import ClassIcon from './ClassIcon'
 
-export function MiniBoard({ fen, orientation, played, best }: { fen: string; orientation: 'white' | 'black'; played?: string | null; best?: string | null }) {
+export const MiniBoard = memo(function MiniBoard({ fen, orientation, played, best }: { fen: string; orientation: 'white' | 'black'; played?: string | null; best?: string | null }) {
   const shapes: DrawShape[] = []
   const p = sanToSquares(fen, played)
   const b = sanToSquares(fen, best)
   if (p) shapes.push({ orig: p[0], dest: p[1], brush: 'red' })
   if (b && (!p || b[0] !== p[0] || b[1] !== p[1])) shapes.push({ orig: b[0], dest: b[1], brush: 'green' })
   return <Board fen={fen} orientation={orientation} shapes={shapes} mini />
-}
+})
 
 /** A concrete position from the player's games that supports a finding. */
 export default function PositionCard({ ex }: { ex: Example }) {

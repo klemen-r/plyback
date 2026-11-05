@@ -86,7 +86,7 @@ function AccountMenu() {
 }
 
 function EngineStatus() {
-  const { data } = useQuery({ queryKey: ['status'], queryFn: api.status, refetchInterval: 5000 })
+  const { data } = useQuery({ queryKey: ['status'], queryFn: api.status })
   if (!data) return null
   const q = data.queue
   const busy = q.running > 0 || q.queued > 0

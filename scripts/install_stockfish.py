@@ -57,13 +57,55 @@ def _asset_candidates() -> list[str]:
     ]
 
 
+def _official_license_url(url: str) -> bool:
+    parsed = urllib.parse.urlsplit(url)
+    decoded_path = urllib.parse.unquote(parsed.path)
+    return (
+        parsed.scheme == "https"
+        and parsed.netloc == "raw.githubusercontent.com"
+        and not parsed.query
+        and not parsed.fragment
+        and parsed.path.startswith("/official-stockfish/Stockfish/")
+        and parsed.path.endswith("/Copying.txt")
+        and ".." not in decoded_path.split("/")
+        and "\\" not in decoded_path
+        and not any(ord(char) < 32 or ord(char) == 127 for char in decoded_path)
+    )
+
+
+class _SourceRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Keep metadata and license requests at their validated source path."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        original = urllib.parse.urlsplit(req.full_url)
+        target = urllib.parse.urlsplit(newurl)
+        if (
+            (target.scheme, target.netloc, target.path) != (original.scheme, original.netloc, original.path)
+            or target.fragment
+        ):
+            raise RuntimeError("Unexpected release metadata or license redirect")
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        # urllib omits unredirected headers by default. Reattach only for the
+        # exact API endpoint, never a license URL or modified redirect URL.
+        token = req.get_header("Authorization")
+        if redirected is not None and newurl == RELEASE_API and token:
+            redirected.add_unredirected_header("Authorization", token)
+        return redirected
+
+
 def _fetch(url: str) -> bytes:
-    if url != RELEASE_API:
-        raise RuntimeError("Metadata URL is outside the official Stockfish release API")
+    if url != RELEASE_API and not _official_license_url(url):
+        raise RuntimeError("Metadata URL is outside official Stockfish sources")
     req = urllib.request.Request(  # noqa: S310 - exact official HTTPS endpoint checked above
         url, headers={"User-Agent": "plyback-installer", "Accept": "application/octet-stream, application/json"}
     )
-    with urllib.request.urlopen(req, timeout=120) as r:  # noqa: S310
+    token = os.environ.get("GITHUB_TOKEN") if url == RELEASE_API else None
+    if token:
+        if any(ord(char) < 33 or ord(char) > 126 for char in token):
+            raise RuntimeError("GITHUB_TOKEN must contain only visible ASCII characters")
+        req.add_unredirected_header("Authorization", f"Bearer {token}")
+    opener = urllib.request.build_opener(_SourceRedirectHandler())
+    with opener.open(req, timeout=120) as r:
         data = r.read(MAX_NOTICE_BYTES + 1)
     if len(data) > MAX_NOTICE_BYTES:
         raise RuntimeError("Release metadata or notice exceeds the size limit")

@@ -12,6 +12,7 @@ import { useAccount } from '../lib/account-context'
 import { api } from '../lib/api'
 import { DAY, fmtDate, fmtDuration, nowTs, num, pct, timeAgo } from '../lib/format'
 import { AddAccountForm } from './Accounts'
+import { insightPollInterval } from '../lib/insight-query'
 
 function Welcome() {
   return (
@@ -44,9 +45,9 @@ export default function Overview() {
     queryFn: () => api.games({ account_id: account!.id, page_size: 10 }),
     enabled: !!account, refetchInterval: 15000,
   })
-  const window_ = useQuery({ queryKey: ['insights', account?.id, { since }], queryFn: () => api.insights(account!.id, since ? { since } : {}), enabled: !!account, refetchInterval: 30000 })
-  const all = useQuery({ queryKey: ['insights', account?.id, {}], queryFn: () => api.insights(account!.id, {}), enabled: !!account, refetchInterval: 60000 })
-  const status = useQuery({ queryKey: ['status'], queryFn: api.status, refetchInterval: 5000 })
+  const window_ = useQuery({ queryKey: ['insights', account?.id, { since }], queryFn: () => api.insights(account!.id, since ? { since } : {}), enabled: !!account, refetchInterval: insightPollInterval })
+  const all = useQuery({ queryKey: ['insights', account?.id, {}], queryFn: () => api.insights(account!.id, {}), enabled: !!account, refetchInterval: insightPollInterval })
+  const status = useQuery({ queryKey: ['status'], queryFn: api.status })
   const sync = useMutation({ mutationFn: () => api.syncAccount(account!.id), onSuccess: () => qc.invalidateQueries({ queryKey: ['accounts'] }) })
 
   if (loading) return <Loading />

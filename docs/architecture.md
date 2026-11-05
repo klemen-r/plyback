@@ -59,10 +59,15 @@ One mutex owns each database connection. Queries return owned rows; no network o
 holds the connection. Short, immediate write transactions serialize changes. Engine position-cache
 reads and writes retry short lock attempts (25 ms SQLite budget each) for up to 2 seconds and check
 cancellation every 10 ms. Brief contention between workers therefore no longer drops completed
-searches. Concurrent cold workers can still complete different engine responses for the same cache
-key because their hash histories differ; a later write replaces the cached response, so a warm
-re-review is not guaranteed to reproduce every concurrent cold result. A connection held longer
-than the retry budget is treated as a cache miss, and cancellation never waits behind it. The response cache has 64 entries and a 32 MiB serialized-payload
+searches. Workers sharing a database also share in-flight searches by the complete cache key
+(including history, engine identity, threads, hash size and all search limits). A follower receives
+the leader's exact result without running another engine search. Cancelling a follower leaves the
+leader running; a cancelled or failed leader releases its followers to retry with their own engines.
+This prevents different worker hash histories from overwriting a simultaneously searched key.
+Warm replay still depends on successful persistence and retained cache entries: a connection held
+longer than the retry budget is treated as a cache miss, and cancellation never waits behind it.
+Coordination is scoped to one `Database` instance, not separate application processes.
+The response cache has 64 entries and a 32 MiB serialized-payload
 limit, two concurrent refresh computations and a 120-second maximum age for stale responses.
 
 Worker database waits poll cancellation with short lock attempts; cancelled writes roll back. If a
@@ -95,3 +100,16 @@ Backups use SQLite's backup API, verify integrity and publish without overwritin
 
 The interface follows design study A, Vercel tabs, chosen on 2026-11-03. Appearance (light/dark/system,
 cover colour, board colours) is stored per browser in `frontend/src/lib/theme.ts`.
+
+The shell polls status once per 5 seconds while reviews/sync are active and once per 15 seconds
+while idle. The existing committed `data_revision` invalidates active account, game, insight and
+opening queries, including re-reviews that finish between polls without changing game counts.
+Insights poll only while stale or recovering from an error. Practice marks its queue stale without
+replacing an active puzzle; an empty queue refreshes when newly reviewed positions become available.
+Delayed answers and engine checks cannot update a skipped puzzle or a different account.
+
+Public build assets have pre-generated Brotli/gzip variants. Encoding negotiation retains MIME,
+containment checks and CSP; stale or escaped variants are ignored. `Vary: Accept-Encoding` applies
+to static responses, and errors are never cached as immutable assets. API responses stay uncompressed
+and `no-store`. CI sends its read-only token only to the official release metadata API; container
+builds receive it as an ephemeral BuildKit secret. Download checksums remain mandatory.

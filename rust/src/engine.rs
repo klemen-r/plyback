@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{
-        Arc,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError},
     },
@@ -38,6 +38,102 @@ pub struct Line {
     pub depth: u32,
     #[serde(default)]
     pub nodes: u64,
+}
+
+/// Coordination belongs to the same Database as the durable cache. Only active
+/// searches live here; neither engine results nor database handles are retained
+/// globally. Registry/state locks are never held during database or UCI work.
+#[derive(Default)]
+pub(crate) struct SearchFlights {
+    active: Mutex<HashMap<String, Arc<SearchFlight>>>,
+}
+
+#[derive(Default)]
+enum FlightState {
+    #[default]
+    Running,
+    Complete(Vec<Line>),
+    Abandoned,
+}
+
+#[derive(Default)]
+struct SearchFlight {
+    state: Mutex<FlightState>,
+    changed: Condvar,
+}
+
+enum FlightClaim<'a> {
+    Leader(FlightLeader<'a>),
+    Follower(Arc<SearchFlight>),
+}
+
+struct FlightLeader<'a> {
+    owner: &'a SearchFlights,
+    key: String,
+    flight: Arc<SearchFlight>,
+}
+
+impl SearchFlights {
+    fn claim(&self, key: &str) -> FlightClaim<'_> {
+        let mut active = self.active.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(flight) = active.get(key) {
+            return FlightClaim::Follower(Arc::clone(flight));
+        }
+        let flight = Arc::new(SearchFlight::default());
+        active.insert(key.to_owned(), Arc::clone(&flight));
+        FlightClaim::Leader(FlightLeader {
+            owner: self,
+            key: key.to_owned(),
+            flight,
+        })
+    }
+}
+
+impl SearchFlight {
+    fn wait(&self, cancel: &AtomicBool) -> Result<Option<Vec<Line>>> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(api_error(499, "Analysis request was cancelled"));
+            }
+            match &*state {
+                FlightState::Complete(lines) => return Ok(Some(lines.clone())),
+                // A failed/cancelled leader must not poison the other jobs. One
+                // waiter will claim a new flight and use its own healthy engine.
+                FlightState::Abandoned => return Ok(None),
+                FlightState::Running => {
+                    (state, _) = self
+                        .changed
+                        .wait_timeout(state, Duration::from_millis(20))
+                        .unwrap_or_else(|e| e.into_inner());
+                }
+            }
+        }
+    }
+}
+
+impl FlightLeader<'_> {
+    fn complete(&self, lines: &[Line]) {
+        *self.flight.state.lock().unwrap_or_else(|e| e.into_inner()) =
+            FlightState::Complete(lines.to_vec());
+    }
+}
+
+impl Drop for FlightLeader<'_> {
+    fn drop(&mut self) {
+        // Remove before waking failed followers so their retry cannot rejoin
+        // this abandoned flight. The guard also releases them during unwinding.
+        self.owner
+            .active
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.key);
+        let mut state = self.flight.state.lock().unwrap_or_else(|e| e.into_inner());
+        if matches!(*state, FlightState::Running) {
+            *state = FlightState::Abandoned;
+        }
+        self.flight.changed.notify_all();
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -295,6 +391,7 @@ pub struct EngineMetrics {
     pub process_starts: u64,
     pub searches: u64,
     pub cache_hits: u64,
+    pub shared_search_hits: u64,
 }
 
 impl Engine {
@@ -432,6 +529,43 @@ impl Engine {
             request.root_moves.len()
         });
         let key = self.cache_key(request)?;
+        let db = self.db.clone();
+        let leader = if let Some(db) = &db {
+            loop {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(api_error(499, "Analysis request was cancelled"));
+                }
+                match db.position_searches.claim(&key) {
+                    FlightClaim::Leader(leader) => break Some(leader),
+                    FlightClaim::Follower(flight) => {
+                        if let Some(lines) = flight.wait(cancel)? {
+                            self.metrics.shared_search_hits += 1;
+                            return Ok(lines);
+                        }
+                    }
+                }
+            }
+        } else {
+            None
+        };
+        // Claim before reading the durable cache: a follower arriving just as
+        // the previous flight ends must observe its committed result, rather
+        // than act on a miss read before that search completed.
+        let result = self.search_cached(request, &board, expected, cancel, &key);
+        if let (Some(leader), Ok(lines)) = (&leader, &result) {
+            leader.complete(lines);
+        }
+        result
+    }
+
+    fn search_cached(
+        &mut self,
+        request: &Search,
+        board: &Chess,
+        expected: usize,
+        cancel: &AtomicBool,
+        key: &str,
+    ) -> Result<Vec<Line>> {
         let cache_started = Instant::now();
         if let Some(db) = &self.db
             && let Ok(Some(Some(data))) = db.read_until(
@@ -441,14 +575,14 @@ impl Engine {
                     Ok(connection
                         .query_row(
                             "SELECT data FROM position_cache WHERE key=?",
-                            [&key],
+                            [key],
                             |row| row.get::<_, String>(0),
                         )
                         .optional()?)
                 },
             )
             && let Ok(lines) = serde_json::from_str::<Vec<Line>>(&data)
-            && valid_lines(&lines, &board, request, expected)
+            && valid_lines(&lines, board, request, expected)
         {
             if cancel.load(Ordering::Relaxed) {
                 return Err(api_error(499, "Analysis request was cancelled"));
@@ -467,7 +601,7 @@ impl Engine {
                 self.start()?;
             }
             let search_started = Instant::now();
-            let result = self.search_once(request, &board, expected, cancel);
+            let result = self.search_once(request, board, expected, cancel);
             tracing::debug!(target: "plyback::review_timing", event = "uci", elapsed_us = search_started.elapsed().as_micros() as u64);
             match result {
                 Ok(lines) => {

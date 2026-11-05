@@ -5,7 +5,7 @@ import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
 import { Chess } from 'chess.js'
 import clsx from 'clsx'
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { legalDests } from '../lib/chess'
 import { useAppearance } from '../lib/theme'
 
@@ -37,19 +37,23 @@ export default function Board({ fen, orientation, lastMove, shapes, interactive,
   const api = useRef<Api | null>(null)
   const onMoveRef = useRef(onMove)
   onMoveRef.current = onMove
+  // Legal move generation is substantially more expensive than updating an arrow.
+  // Keep it tied to the position, including when a rejected move is reset by nonce.
+  const check = useMemo(() => inCheck(fen), [fen])
+  const dests = useMemo(() => interactive ? legalDests(fen) : new Map<Key, Key[]>(), [fen, interactive])
 
   const config = (): Config => ({
     fen,
     orientation,
     turnColor: turnColor(fen),
     lastMove: lastMove ? (lastMove as Key[]) : undefined,
-    check: inCheck(fen),
+    check,
     coordinates: coordinates && !mini,
     viewOnly: !interactive,
     animation: { enabled: !mini, duration: 160 },
     highlight: { lastMove: true, check: true },
     movable: interactive
-      ? { free: false, color: turnColor(fen), dests: legalDests(fen), showDests: true,
+      ? { free: false, color: turnColor(fen), dests: new Map(dests), showDests: true,
           events: { after: (o, d) => onMoveRef.current?.(o, d) } }
       : { free: false, color: undefined, dests: new Map() },
     premovable: { enabled: false },
@@ -74,9 +78,14 @@ export default function Board({ fen, orientation, lastMove, shapes, interactive,
   useEffect(() => {
     if (!api.current) return
     api.current.set(config())
-    api.current.setAutoShapes(shapes ?? [])
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fen, orientation, lastMove?.[0], lastMove?.[1], interactive, JSON.stringify(shapes ?? []), coordinates, nonce])
+  }, [fen, orientation, lastMove?.[0], lastMove?.[1], interactive, coordinates, mini, nonce])
+
+  useEffect(() => {
+    api.current?.setAutoShapes(shapes ?? [])
+    // Compare shape content: callers may create an equivalent array on each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(shapes ?? [])])
 
   return (
     <div data-board={board} className={clsx('board', `orientation-${orientation}`, mini && 'mini', className)}>

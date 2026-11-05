@@ -3,6 +3,9 @@
 These are historical measurements of the preserved Python baseline. The production server is now
 native Rust; see [native migration and current comparisons](native-migration.md).
 
+The [app performance follow-up](app-performance.md) records page API timings, first-load transfer
+sizes and exact concurrent warm replay on generated data for the November 4 improvements.
+
 The separate [Stockfish installer measurement](installer-performance.md) records
 archive-extraction memory, download integrity and installation failure recovery.
 
@@ -133,9 +136,9 @@ as evidence of equivalent-quality acceleration. Full raw results are retained in
 
 ## Native queue workload profiling
 
-The opt-in Rust example reviews the ten most recent eligible games from
-`data/snapshot.db`, ordered by end time. Supply a self-contained SQLite snapshot
-without a WAL. The example only reads and copies that file; all database changes
+The opt-in Rust example reviews the ten most recent eligible games from an explicit
+`--source` backup, ordered by end time. Supply a self-contained SQLite snapshot
+without SQLite sidecars. The example only reads and copies that file; all database changes
 and temporary files stay under the ignored `benchmark-output/` directory.
 It disables accounts and reports in the disposable copy to prevent network sync
 and unrelated jobs. It never discovers or defaults to a live database.
@@ -143,24 +146,26 @@ and unrelated jobs. It never discovers or defaults to a live database.
 Set `PLYBACK_STOCKFISH` to the intended engine executable, then run from `rust/`:
 
 ```powershell
-cargo +1.97.1 run --release --locked --offline --example review_benchmark -- --out benchmark-output/reviews-1.json
+cargo +1.97.1 run --release --locked --offline --example review_benchmark -- --source data/snapshot.db --out benchmark-output/reviews-1.json
 ```
 
 The output path is relative to the checkout root and must be a new file directly
-inside `benchmark-output/`. `--games` overrides the default ten-game sample.
+inside `benchmark-output/`. `--games` overrides the default ten-game sample;
+`--workers` optionally overrides only the worker count in the disposable copy.
 The workload retains stored worker/thread/hash settings and fixes the production
 search budget at depth 16, MultiPV 2, 5 seconds, with depth-10 threat probes and no
 node ceiling. First it clears the position cache, then it uses a SQLite backup of
 the completed disposable database for a warm repeat with fresh workers/engines.
 Cold means an empty persistent position cache, not a cold OS file cache.
 
-Aggregate JSON contains enqueue-to-stored completion latencies, per-request
-timings/depths/cache hits, UCI search counts, PGN/setup time, storage time and
+Aggregate JSON contains enqueue-to-stored completion latencies, grouped request
+timings/cache hits, UCI search counts, PGN/setup time, storage time and
 normalized stored-result digests. It exports no PGNs, player identities, original
 game IDs or result values. Warm equality and differing-field counts are reported
-explicitly rather than assumed: concurrent cold searches can share a cache key
-while carrying different engine hash histories. A warm repeat is not a new-game
-speedup or a guarantee of identical cold results.
+explicitly rather than assumed, and a mismatch fails the benchmark after saving diagnostics.
+Concurrent workers now share in-flight searches for identical cache keys; cache eviction or
+failed persistence can still cause later searches. A warm repeat is not a new-game speedup
+or a guarantee that independent cold runs produce identical results.
 
 The `uci` timing includes engine search, transport, UCI parsing and returned-line
 validation; it is not Stockfish's own reported CPU time. Sum request times across

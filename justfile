@@ -41,7 +41,7 @@ lint:
 # Run backend and frontend unit tests with isolated data; no live Chess.com requests.
 test:
     node --test scripts/install_stockfish.test.mjs
-    cargo test --release --locked --manifest-path rust/Cargo.toml
+    cargo test --release --locked --manifest-path rust/Cargo.toml --all-targets
     cd backend && ../.venv/bin/python -m pytest -m "not live"
     cd frontend && npm test
 

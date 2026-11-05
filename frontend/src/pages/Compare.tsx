@@ -12,12 +12,13 @@ import { useAccount } from '../lib/account-context'
 import { api } from '../lib/api'
 import { PHASE_LABEL } from '../lib/classification'
 import type { Insights } from '../lib/types'
+import { insightPollInterval } from '../lib/insight-query'
 
 interface Segment { accountId: number | null; filters: FilterState }
 
 function useSegment(seg: Segment) {
   const f = toInsightFilters(seg.filters)
-  return useQuery({ queryKey: ['insights', seg.accountId, f], queryFn: () => api.insights(seg.accountId!, f), enabled: !!seg.accountId })
+  return useQuery({ queryKey: ['insights', seg.accountId, f], queryFn: () => api.insights(seg.accountId!, f), enabled: !!seg.accountId, refetchInterval: insightPollInterval })
 }
 
 type Row = { label: string; a: number | null | undefined; b: number | null | undefined; unit?: string; better: 'higher' | 'lower'; digits?: number }

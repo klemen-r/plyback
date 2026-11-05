@@ -140,14 +140,36 @@ Practice turns your own reviewed mistakes into positions to solve.
 - **Play out the line (optional):** after the right move your opponent replies with the engine line and you continue,
   for up to three of your moves. Later in a line more than one move can be good, so a move that differs from the
   line is checked with the live engine and accepted when it keeps within 5 points of winning chance of the best
-  move. The schedule still depends only on the first move.
+  move. An accepted alternative ends the puzzle because the stored continuation no longer applies. If the live
+  engine check fails, the move is not counted as wrong and can be retried. The schedule still depends only on the first move.
+- **Filters:** choose a mistake type and opening, middlegame or endgame positions. These filters apply together
+  with the game range, and the progress counts remain scoped to that selection after an answer.
 - **Schedule:** a small Leitner system. A correct first try moves the position up one box and brings it back after
   1, 3, 7, 16, 35, then 80 days. A wrong first try, or *Show answer*, sends it back to the first box and brings it
   back after 10 minutes. A position counts as mastered after four correct answers in a row.
 - Re-analysing a game updates its positions: the answer always comes from the current review, and positions that no
   longer qualify drop out. Deleting a game or account deletes its schedule.
 
-## 8. Known limitations
+## 8. Openings
+
+The Openings page shows your reviewed games for one colour as a move tree over the first 16 plies (8 moves) by
+default. Choose *First 15 moves* to explore up to 30 plies; the depth and current line are preserved in the URL.
+
+- **Nodes** are move sequences from the standard starting position, kept apart even when they transpose, so the tree
+  follows the order the moves were played in. Chess960 and games from a set-up position are left out.
+- For every move: the number of games, your score and win/draw/loss split afterwards, and how often the move was
+  book. *Leaves book* marks where the first non-book move of a game was played. For your own moves, the page also
+  shows how often the move was an inaccuracy, mistake, miss or blunder.
+- **Opening names** come from the same CC0 Lichess opening dataset used for game reviews: each position is named
+  by the deepest position along the line that the dataset names. Each move also links to up to three of your most
+  recent games through it.
+- **Moves to fix:** your own moves played in at least three games where they were an error in at least
+  half of them, or after which you scored 35% or less over four or more games. Up to eight are listed, most errors
+  first. These are patterns in your sample, not proof that a move is unsound: a move can be rated an inaccuracy
+  because of the review depth.
+- Only reviewed games are in the tree, and the page says how many games are not reviewed yet.
+
+## 9. Known limitations
 
 - Moderate-depth engine analysis can misjudge very deep tactics; re-analyse a game deeper from the review page.
 - The time cap may return a shallower completed iteration. Paired candidate searches and threat tests add engine work;

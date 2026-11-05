@@ -3,6 +3,7 @@ export const TABS = [
   { to: '/games', label: 'Games' },
   { to: '/insights', label: 'Insights' },
   { to: '/practice', label: 'Practice' },
+  { to: '/openings', label: 'Openings' },
   { to: '/compare', label: 'Compare' },
   { to: '/reports', label: 'Reports' },
   { to: '/import', label: 'Import' },

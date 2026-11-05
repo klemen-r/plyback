@@ -3,6 +3,7 @@
 .venv
 rust/target
 data
+benchmark-output
 frontend/node_modules
 frontend/dist
 frontend/test-results

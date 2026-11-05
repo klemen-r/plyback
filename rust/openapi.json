@@ -6,6 +6,92 @@
     "description": "Plyback native server. Password sessions and X-Requested-With: plyback protect API requests."
   },
   "paths": {
+    "/api/accounts/{account_id}/repertoire": {
+      "get": {
+        "tags": [
+          "openings"
+        ],
+        "summary": "Opening repertoire",
+        "description": "The account’s reviewed games for one colour as a move tree from the standard start: games, score, book and left-book counts per move, and error counts for the account’s own moves, the named opening and up to three recent game IDs per move, plus up to eight problem moves.",
+        "operationId": "repertoire",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Account Id"
+            }
+          },
+          {
+            "name": "color",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "white",
+                "black"
+              ],
+              "type": "string",
+              "default": "white"
+            }
+          },
+          {
+            "name": "plies",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 30,
+              "default": 16
+            }
+          },
+          {
+            "name": "time_class",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "all",
+                "bullet",
+                "blitz",
+                "rapid",
+                "daily"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "422": {
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
     "/api/accounts/{account_id}/practice": {
       "get": {
         "tags": [

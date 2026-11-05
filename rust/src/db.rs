@@ -27,6 +27,7 @@ pub const MIGRATIONS: &[&str] = &[
 pub struct Database {
     pub path: PathBuf,
     connection: Mutex<Connection>,
+    pub(crate) position_searches: crate::engine::SearchFlights,
 }
 
 struct ShortConnection<'a> {
@@ -73,6 +74,7 @@ impl Database {
         let db = Self {
             path,
             connection: Mutex::new(connection),
+            position_searches: crate::engine::SearchFlights::default(),
         };
         db.migrate()?;
         Ok(db)

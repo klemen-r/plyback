@@ -13,9 +13,10 @@ import { useAccount } from '../lib/account-context'
 import { api } from '../lib/api'
 import { CLASS_META, PHASE_LABEL } from '../lib/classification'
 import { cap, DAY, fmtDate, fmtDuration, nowTs } from '../lib/format'
-import type { InteractiveResult, PracticeItem, PracticeKind, PracticeResult, PracticeStats } from '../lib/types'
+import type { InteractiveResult, PracticeItem, PracticeKind, PracticePhase, PracticeResult, PracticeStats } from '../lib/types'
 
 type Kind = 'all' | PracticeKind
+type Phase = 'all' | PracticePhase
 type Range = 'all' | 'today' | '7' | '30'
 type Promotion = 'q' | 'r' | 'b' | 'n'
 type Status = 'solving' | 'checking' | 'solved' | 'revealed'
@@ -25,6 +26,7 @@ const KINDS: { value: Kind; label: string }[] = [
   { value: 'mistake', label: 'Mistakes' }, { value: 'miss', label: 'Misses' },
 ]
 const RANGES: [Range, string][] = [['all', 'All games, due first'], ['today', 'Today’s games'], ['7', 'Last 7 days'], ['30', 'Last 30 days']]
+const PHASES: [Phase, string][] = [['all', 'All phases'], ['opening', 'Opening'], ['middlegame', 'Middlegame'], ['endgame', 'Endgame']]
 /** With "Play out the line", a puzzle asks for at most this many of your moves. */
 const MAX_OWN_MOVES = 3
 /** A different continuation is accepted when it keeps this much winning chance (percentage points). */
@@ -79,9 +81,16 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: 
 }
 
 export default function Practice() {
+  const { account } = useAccount()
+  // A different account starts a different session, including pending answers and engine checks.
+  return <PracticeSession key={account?.id ?? 'none'} />
+}
+
+function PracticeSession() {
   const { account, loading } = useAccount()
   const qc = useQueryClient()
   const [kind, setKind] = useState<Kind>(() => stored('ci.practiceKind', ['all', 'blunder', 'mistake', 'miss'], 'all'))
+  const [phase, setPhase] = useState<Phase>(() => stored('ci.practicePhase', ['all', 'opening', 'middlegame', 'endgame'], 'all'))
   const [range, setRange] = useState<Range>(() => stored('ci.practiceRange', ['all', 'today', '7', '30'], 'all'))
   const [fullLine, setFullLine] = useState(() => stored('ci.practiceLine', ['on', 'off'], 'on') === 'on')
   const [index, setIndex] = useState(0)
@@ -97,11 +106,13 @@ export default function Practice() {
   const [score, setScore] = useState({ right: 0, done: 0 })
   const [stats, setStats] = useState<PracticeStats | null>(null)
   const [promotion, setPromotion] = useState<{ orig: string; dest: string } | null>(null)
+  const [checkError, setCheckError] = useState<unknown>(null)
   const reply = useRef<number | undefined>(undefined)
+  const generation = useRef(0)
 
   const queue = useQuery({
-    queryKey: ['practice', account?.id, kind, range],
-    queryFn: () => api.practice(account!.id, kind === 'all' ? undefined : kind, range === 'all' ? 10 : 30, since(range)),
+    queryKey: ['practice', account?.id, kind, range, phase],
+    queryFn: () => api.practice(account!.id, kind === 'all' ? undefined : kind, range === 'all' ? 10 : 30, since(range), phase === 'all' ? undefined : phase),
     enabled: !!account,
     staleTime: Infinity,
     refetchOnWindowFocus: false,
@@ -109,6 +120,10 @@ export default function Practice() {
   const items = queue.data?.items ?? []
   const item: PracticeItem | undefined = items[index]
   const shownStats = stats ?? queue.data?.stats
+  const answer = useMutation({
+    mutationFn: (body: { uci: string } | { reveal: true }) => api.answerPractice(account!.id, item!.game_id, item!.ply, body),
+  })
+  const { reset: resetAnswer } = answer
 
   /** One engine check at a time, started as soon as it is your move in a line. */
   const check = useRef<{ fen: string; result: Promise<InteractiveResult>; abort: AbortController } | null>(null)
@@ -124,11 +139,13 @@ export default function Practice() {
   const cancelCheck = useCallback(() => { check.current?.abort.abort(); check.current = null }, [])
 
   const resetPuzzle = useCallback(() => {
+    generation.current++
     window.clearTimeout(reply.current)
     cancelCheck()
+    resetAnswer()
     setSolution(null); setPlayed([]); setStatus('solving'); setTries(0); setWrong(null); setHint(false)
-    setNote(null); setStep(null); setPromotion(null)
-  }, [cancelCheck])
+    setNote(null); setStep(null); setPromotion(null); setCheckError(null)
+  }, [cancelCheck, resetAnswer])
   const restart = () => {
     resetPuzzle(); setIndex(0); setScore({ right: 0, done: 0 }); setStats(null)
     void qc.invalidateQueries({ queryKey: ['practice', account?.id] })
@@ -137,7 +154,28 @@ export default function Practice() {
     store(key, v); set(v); resetPuzzle(); setIndex(0); setScore({ right: 0, done: 0 }); setStats(null)
   }
   const next = useCallback(() => { resetPuzzle(); setIndex(i => i + 1) }, [resetPuzzle])
-  useEffect(() => () => { window.clearTimeout(reply.current); cancelCheck() }, [cancelCheck])
+  useEffect(() => () => { generation.current++; window.clearTimeout(reply.current); cancelCheck() }, [cancelCheck])
+
+  // Background review completion marks queues stale centrally. An empty batch can become ready;
+  // active and completed batches stay in place until the user chooses the next round.
+  const { data: queueData, isStale, isFetching, isError, refetch } = queue
+  useEffect(() => {
+    if (!queueData || queueData.items.length > 0 || !isStale || isFetching || isError) return
+    const current = generation.current
+    void refetch().then(result => {
+      if (generation.current !== current) return
+      if (!result.error) { resetPuzzle(); setIndex(0); setStats(null) }
+    })
+  }, [queueData, isStale, isFetching, isError, refetch, resetPuzzle])
+
+  const updateStats = (result: PracticeResult, current: number) => {
+    if (kind === 'all' && phase === 'all' && range === 'all') { setStats(result.stats); return }
+    // The answer response contains account totals. Fetch only filtered stats without replacing
+    // the active batch (recent-game queues are shuffled by the server).
+    void api.practice(account!.id, kind === 'all' ? undefined : kind, 1, since(range), phase === 'all' ? undefined : phase)
+      .then(q => { if (generation.current === current) setStats(q.stats) })
+      .catch(() => { /* Keep the last known stats; the answer and schedule were already saved. */ })
+  }
 
   const line = useMemo(() => solution?.line_san ?? [], [solution])
   const ownTarget = fullLine ? Math.min(MAX_OWN_MOVES, Math.ceil(line.length / 2)) : 1
@@ -164,16 +202,13 @@ export default function Practice() {
     }, 450)
   }
 
-  const answer = useMutation({
-    mutationFn: (body: { uci: string } | { reveal: true }) => api.answerPractice(account!.id, item!.game_id, item!.ply, body),
-    onSuccess: r => setStats(r.stats),
-  })
-
   const reject = (san: string) => { setWrong(san); setTries(t => t + 1); setNonce(n => n + 1) }
   const currentFen = () => (item && played.length ? walk(item.fen, played).at(-1)!.fen : item?.fen ?? '')
 
   const onMove = async (orig: string, dest: string, piece?: Promotion) => {
     if (!item || done || answer.isPending || status === 'checking') return
+    const current = generation.current
+    setCheckError(null)
     const fen = currentFen()
     let mv
     try { mv = new Chess(fen).move({ from: orig, to: dest, promotion: piece }) } catch { setNonce(n => n + 1); return }
@@ -181,7 +216,9 @@ export default function Practice() {
     if (!solution) {
       // The first try is recorded for scheduling and returns the solution.
       const r = await answer.mutateAsync({ uci }).catch(() => null)
+      if (generation.current !== current) return
       if (!r) { setNonce(n => n + 1); return }
+      updateStats(r, current)
       setSolution(r)
       if (r.correct) advance(mv.san, r)
       else reject(mv.san)
@@ -197,6 +234,7 @@ export default function Practice() {
     setStatus('checking')
     try {
       const r = await analyse(fen)
+      if (generation.current !== current) return
       const white = fen.split(' ')[1] === 'w'
       const side = (w: number) => (white ? w : 100 - w)
       const best = r.lines[0]
@@ -206,7 +244,11 @@ export default function Practice() {
         setNote(`${mv.san} works too: the engine rates it about as well as ${line[played.length]}.`)
         finish('solved')
       } else { setStatus('solving'); reject(mv.san) }
-    } catch { setStatus('solving'); reject(mv.san) }
+    } catch (error) {
+      if (generation.current !== current) return
+      cancelCheck()
+      setStatus('solving'); setCheckError(error); setNonce(n => n + 1)
+    }
   }
 
   const onBoardMove = (orig: string, dest: string) => {
@@ -217,9 +259,17 @@ export default function Practice() {
   }
 
   const reveal = async () => {
+    const current = ++generation.current
     window.clearTimeout(reply.current)
+    cancelCheck()
+    setCheckError(null)
     let r = solution
-    if (!r) { r = await answer.mutateAsync({ reveal: true }).catch(() => null); if (!r) return; setSolution(r) }
+    if (!r) {
+      r = await answer.mutateAsync({ reveal: true }).catch(() => null)
+      if (!r || generation.current !== current) return
+      updateStats(r, current)
+      setSolution(r)
+    }
     setStep(0)
     finish('revealed', r)
   }
@@ -258,6 +308,9 @@ export default function Practice() {
     <PageHeader title="Practice"
       description="Positions from your games where a clearly better move was there. Find it; the ones you miss come back."
       actions={<>
+        <Select label="Game phase" value={phase} onChange={v => choose<Phase>('ci.practicePhase', setPhase)(v as Phase)}>
+          {PHASES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+        </Select>
         <Select label="Which games" value={range} onChange={v => choose<Range>('ci.practiceRange', setRange)(v as Range)}>
           {RANGES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
         </Select>
@@ -307,8 +360,8 @@ export default function Practice() {
         : !item ? (
           <div className="space-y-4">{progress}<Card>
             {shownStats?.total === 0
-              ? <Empty title={range === 'all' ? 'No practice positions yet' : 'No positions from these games'}>
-                  {range === 'all' ? 'Positions appear once your games are reviewed. Only moves with one clearly best answer are used, so every puzzle has a fair solution.' : 'Pick a longer range, or wait until your latest games are reviewed.'}
+              ? <Empty title={kind !== 'all' || phase !== 'all' ? 'No positions match these filters' : range === 'all' ? 'No practice positions yet' : 'No positions from these games'}>
+                  {kind !== 'all' || phase !== 'all' ? 'Try another game phase or mistake type, or a longer range of games.' : range === 'all' ? 'Positions appear once your games are reviewed. Only moves with one clearly best answer are used, so every puzzle has a fair solution.' : 'Pick a longer range, or wait until your latest games are reviewed.'}
                 </Empty>
               : <Empty title={score.done ? `Done: ${score.right} of ${score.done} on the first try` : 'Nothing due right now'}
                   action={<Button variant="primary" onClick={restart}><RotateCcw className="h-3.5 w-3.5" />{range !== 'all' || shownStats?.due || shownStats?.new ? 'Keep going' : 'Check again'}</Button>}>
@@ -366,6 +419,7 @@ export default function Practice() {
                   </div>
                 )}
                 {answer.error && <div className="mt-3"><ErrorNote error={answer.error} /></div>}
+                {!!checkError && <div className="mt-3"><ErrorNote error={checkError} /><p className="mt-2 text-[13px] text-fg-2">The move wasn’t counted as wrong. Try it again, or use a hint to follow the stored line.</p></div>}
               </Card>
 
               {done && solution && (

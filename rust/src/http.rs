@@ -249,6 +249,7 @@ impl App {
             ("GET", "/api/status") => {
                 return ok(json!({
                     "version":APP_VERSION,"analysis_version":ANALYSIS_VERSION,
+                    "data_revision":self.db.scalar("SELECT revision FROM data_revision WHERE id=1",&[])?,
                     "engine":self.services.engine_status(),"queue":self.services.stats(),"sync":self.services.sync_status(),
                     "accounts":self.db.scalar("SELECT COUNT(*) FROM accounts",&[])?,
                     "games":self.db.scalar("SELECT COUNT(*) FROM games",&[])?,
@@ -331,6 +332,7 @@ impl App {
             .insights
             .handle(method, &meta.path, &meta.query, body)
             .or_else(|| crate::practice::handle(&self.db, method, &meta.path, &meta.query, body))
+            .or_else(|| crate::repertoire::handle(&self.db, method, &meta.path, &meta.query))
             .or_else(|| self.services.handle(method, &meta.path, &meta.query, body));
         let (status, value) = result.unwrap_or_else(|| Err(api_error(404, "Not found")))?;
         Ok((status, value, None))
@@ -451,14 +453,23 @@ async fn handle_inner(app: Arc<App>, request: Request<Body>) -> Response {
         }
         let path = meta.path.clone();
         let root = app.config.frontend.clone();
+        let encoding = header(request.headers(), "accept-encoding");
         return match tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            static_file(&root, &path)
+            static_file(&root, &path, &encoding)
         })
         .await
         {
-            Ok(Ok((mime, data, is_index))) => {
+            Ok(Ok((mime, data, is_index, encoding))) => {
                 let mut response = (StatusCode::OK, [("content-type", mime)], data).into_response();
+                response
+                    .headers_mut()
+                    .insert("vary", HeaderValue::from_static("Accept-Encoding"));
+                if let Some(encoding) = encoding {
+                    response
+                        .headers_mut()
+                        .insert("content-encoding", HeaderValue::from_static(encoding));
+                }
                 if is_index {
                     response
                         .headers_mut()
@@ -544,6 +555,7 @@ fn failure(error: anyhow::Error) -> Response {
 }
 
 fn secure_headers(response: &mut Response, path: &str) {
+    let success = response.status().is_success();
     let headers = response.headers_mut();
     for (name, value) in [
         ("content-security-policy", security::CSP),
@@ -559,7 +571,12 @@ fn secure_headers(response: &mut Response, path: &str) {
     ] {
         headers.insert(name, HeaderValue::from_static(value));
     }
-    if path.starts_with("/api") {
+    if !path.starts_with("/api") {
+        headers.insert("vary", HeaderValue::from_static("Accept-Encoding"));
+    }
+    // Never pin a transient error (including an encoding-specific 406) in a
+    // browser or intermediary cache under an otherwise immutable asset URL.
+    if path.starts_with("/api") || !success {
         headers.insert("cache-control", HeaderValue::from_static("no-store"));
     } else if path.starts_with("/assets/") {
         headers
@@ -623,7 +640,59 @@ fn query_integer(
     Ok(value)
 }
 
-fn static_file(root: &Path, encoded: &str) -> anyhow::Result<(&'static str, Vec<u8>, bool)> {
+type StaticFile = (&'static str, Vec<u8>, bool, Option<&'static str>);
+
+// Only public, prebuilt assets are compressed. API responses (including anything
+// involving credentials) retain their existing no-store, uncompressed behavior.
+fn accepted_encodings(header: &str) -> (Vec<&'static str>, bool) {
+    let mut br = None;
+    let mut gzip = None;
+    let mut identity = None;
+    let mut wildcard = None;
+    for item in header.split(',') {
+        let mut parts = item.split(';');
+        let name = parts.next().unwrap_or_default().trim();
+        let quality = parts
+            .find_map(|part| {
+                let (key, value) = part.trim().split_once('=')?;
+                key.trim().eq_ignore_ascii_case("q").then(|| {
+                    value
+                        .trim()
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|q| (0.0..=1.0).contains(q))
+                        .unwrap_or(0.0)
+                })
+            })
+            .unwrap_or(1.0);
+        if name.eq_ignore_ascii_case("br") {
+            br = Some(quality);
+        } else if name.eq_ignore_ascii_case("gzip") {
+            gzip = Some(quality);
+        } else if name.eq_ignore_ascii_case("identity") {
+            identity = Some(quality);
+        } else if name == "*" {
+            wildcard = Some(quality);
+        }
+    }
+    let mut options = [
+        ("br", br.or(wildcard).unwrap_or(0.0)),
+        ("gzip", gzip.or(wildcard).unwrap_or(0.0)),
+        // Honor an explicit preference for identity. Otherwise it remains the
+        // fallback when none of the client's accepted compressed files exists.
+        ("identity", identity.unwrap_or(0.0)),
+    ];
+    options.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let compressed = options
+        .into_iter()
+        .filter(|(_, q)| *q > 0.0)
+        .map(|(name, _)| name)
+        .collect();
+    let identity = identity.unwrap_or(if wildcard == Some(0.0) { 0.0 } else { 1.0 }) > 0.0;
+    (compressed, identity)
+}
+
+fn static_file(root: &Path, encoded: &str, accept_encoding: &str) -> anyhow::Result<StaticFile> {
     let mut decoded = Vec::new();
     let bytes = encoded.as_bytes();
     let mut i = 0;
@@ -669,7 +738,8 @@ fn static_file(root: &Path, encoded: &str) -> anyhow::Result<(&'static str, Vec<
     if !file.starts_with(&root) {
         return Err(api_error(404, "Not found"));
     }
-    if std::fs::metadata(&file)?.len() > 20 * 1024 * 1024 {
+    let metadata = std::fs::metadata(&file)?;
+    if metadata.len() > 20 * 1024 * 1024 {
         return Err(api_error(413, "Asset is too large"));
     }
     let mime = match file.extension().and_then(|e| e.to_str()).unwrap_or("") {
@@ -686,12 +756,113 @@ fn static_file(root: &Path, encoded: &str) -> anyhow::Result<(&'static str, Vec<
         "webp" => "image/webp",
         _ => "application/octet-stream",
     };
-    Ok((mime, std::fs::read(file)?, index))
+    let (encodings, identity) = accepted_encodings(accept_encoding);
+    for encoding in encodings {
+        if encoding == "identity" {
+            return Ok((mime, std::fs::read(file)?, index, None));
+        }
+        let mut sibling = file.as_os_str().to_os_string();
+        sibling.push(if encoding == "br" { ".br" } else { ".gz" });
+        // Apply the same canonical containment check to compressed siblings.
+        // An absent, stale, oversized or escaped variant falls back to identity.
+        if let Ok(compressed) = Path::new(&sibling).canonicalize()
+            && compressed.starts_with(&root)
+            && let Ok(compressed_metadata) = std::fs::metadata(&compressed)
+            && compressed_metadata.is_file()
+            && compressed_metadata.len() <= 20 * 1024 * 1024
+            && compressed_metadata
+                .modified()
+                .ok()
+                .zip(metadata.modified().ok())
+                .is_some_and(|(variant, original)| variant >= original)
+        {
+            return Ok((mime, std::fs::read(compressed)?, index, Some(encoding)));
+        }
+    }
+    if !identity {
+        return Err(api_error(406, "No acceptable asset encoding is available."));
+    }
+    Ok((mime, std::fs::read(file)?, index, None))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn static_variants_negotiate_without_changing_mime_or_spa_fallback() {
+        assert_eq!(accepted_encodings("gzip, br").0, ["br", "gzip"]);
+        assert_eq!(accepted_encodings("br;q=0, gzip;Q=0.8, *;q=1").0, ["gzip"]);
+        assert_eq!(
+            accepted_encodings("br;q=NaN, gzip;q=2").0,
+            Vec::<&str>::new()
+        );
+        assert!(accepted_encodings("").0.is_empty());
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        std::fs::create_dir(root.join("assets")).unwrap();
+        std::fs::write(root.join("index.html"), "index").unwrap();
+        std::fs::write(root.join("assets/app.js"), "identity").unwrap();
+        std::fs::write(root.join("assets/app.js.br"), "brotli").unwrap();
+        std::fs::write(root.join("assets/app.js.gz"), "gzip").unwrap();
+        let (mime, data, index, encoding) =
+            static_file(root, "/assets/app.js", "gzip, br").unwrap();
+        assert_eq!(mime, "text/javascript; charset=utf-8");
+        assert_eq!(data, b"brotli");
+        assert!(!index);
+        assert_eq!(encoding, Some("br"));
+        assert_eq!(
+            static_file(root, "/assets/app.js", "gzip").unwrap().1,
+            b"gzip"
+        );
+        assert_eq!(
+            static_file(root, "/assets/app.js", "br;q=0.5,identity;q=1")
+                .unwrap()
+                .1,
+            b"identity"
+        );
+        assert_eq!(
+            static_file(root, "/assets/app.js", "br;q=0,gzip;q=0")
+                .unwrap()
+                .1,
+            b"identity"
+        );
+        assert_eq!(
+            static_file(root, "/games/1", "br").unwrap(),
+            ("text/html; charset=utf-8", b"index".to_vec(), true, None)
+        );
+        assert!(static_file(root, "/assets/missing.js", "br").is_err());
+        assert!(static_file(root, "/%2e%2e/secret", "br").is_err());
+        assert!(static_file(root, "/", "identity;q=0").is_err());
+        assert!(static_file(root, "/", "br,identity;q=0").is_err());
+        assert!(static_file(root, "/", "*;q=0").is_err());
+        assert!(static_file(root, "/", "*;q=0,identity;q=1").is_ok());
+        // A deployment replacing an original without rebuilding its variants must
+        // serve the new original rather than stale JavaScript.
+        std::fs::File::options()
+            .write(true)
+            .open(root.join("assets/app.js.br"))
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH))
+            .unwrap();
+        assert_eq!(
+            static_file(root, "/assets/app.js", "br").unwrap().1,
+            b"identity"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn compressed_variant_cannot_escape_frontend_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("web");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("index.html"), "index").unwrap();
+        std::fs::write(directory.path().join("secret"), "private").unwrap();
+        std::os::unix::fs::symlink(directory.path().join("secret"), root.join("index.html.br"))
+            .unwrap();
+        assert_eq!(static_file(&root, "/", "br").unwrap().1, b"index");
+    }
 
     #[test]
     fn terminal_positions_bypass_a_busy_engine() {

@@ -1,0 +1,833 @@
+{
+  "baseline_commit": "239bdd8f2bd8687b4c480a119e1ed61c1aa17b1c",
+  "platform": "Darwin",
+  "architecture": "arm64",
+  "logical_cpus": 12,
+  "source": "scripts/seed_benchmark.py --scale 100; committed fixtures with synthetic scores",
+  "method": "Three sequential alternating before/after runs, each with one first request and 15 warm samples; first_load measured in round 3 with a fresh Chromium context per route.",
+  "output_equality": "All 14 endpoint payload hashes agree across all six runs after removing generated_at and operational status data_revision/db_size.",
+  "runs": {
+    "before": [
+      {
+        "startup_ms": 23.144,
+        "workload": {
+          "accounts": 1,
+          "games": 1100,
+          "moves": 60500
+        },
+        "repeat": 15,
+        "endpoints": {
+          "session": {
+            "first_ms": 0.246,
+            "median_ms": 0.118,
+            "p95_ms": 0.173,
+            "bytes": 65,
+            "sha256": "ef1997bfcfaf0e7aa5b41ec2dd9c3504c8a17a0bbc1fe33effd414ae1b5fb4d6"
+          },
+          "status": {
+            "first_ms": 0.681,
+            "median_ms": 0.227,
+            "p95_ms": 0.285,
+            "bytes": 468,
+            "sha256": "9eb61c38c099c8f47c5b1b06b4821709f217cacfdaccd0ac7cff11074d6c9ade"
+          },
+          "events": {
+            "first_ms": 0.155,
+            "median_ms": 0.153,
+            "p95_ms": 0.211,
+            "bytes": 2,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "accounts": {
+            "first_ms": 0.819,
+            "median_ms": 0.269,
+            "p95_ms": 0.304,
+            "bytes": 386,
+            "sha256": "2ec501b99311c7d9da89f965d9133aa2a2d324ca968439fd2d4ce32d6025d6ef"
+          },
+          "queue": {
+            "first_ms": 0.422,
+            "median_ms": 0.157,
+            "p95_ms": 0.19,
+            "bytes": 183,
+            "sha256": "fc1ed8c562f6e957810394bd55eafaf647e11e9b874230e22d891261be8d755e"
+          },
+          "games": {
+            "first_ms": 2.246,
+            "median_ms": 1.829,
+            "p95_ms": 1.935,
+            "bytes": 40943,
+            "sha256": "673ac259a16f28f8275654258b369329dbc376828c6feeabc5be0060291c03ea"
+          },
+          "game": {
+            "first_ms": 2.59,
+            "median_ms": 0.998,
+            "p95_ms": 1.079,
+            "bytes": 78988,
+            "sha256": "94159d28b7a36382309f3f1546e7deaf40737abf40b767f57bf87de6feba3786"
+          },
+          "opening_filters": {
+            "first_ms": 0.969,
+            "median_ms": 0.641,
+            "p95_ms": 0.672,
+            "bytes": 231,
+            "sha256": "af144b26ed8b45b5e63b1b1f28f63f890deff2f3e678303f0f62fbf3939b19ab"
+          },
+          "insights": {
+            "first_ms": 125.997,
+            "median_ms": 0.525,
+            "p95_ms": 0.593,
+            "bytes": 132201,
+            "sha256": "d27e84c61c69830e54e0da96553a4ece9b60c9fd9ddfea8584d2d95db60d589b"
+          },
+          "practice": {
+            "first_ms": 52.082,
+            "median_ms": 54.574,
+            "p95_ms": 57.493,
+            "bytes": 3722,
+            "sha256": "127355f4d5a1e41e4595f7894a7bc4c484a40226dc33a173ca73cd6e68dec971"
+          },
+          "repertoire_white": {
+            "first_ms": 8.9,
+            "median_ms": 4.551,
+            "p95_ms": 4.797,
+            "bytes": 20900,
+            "sha256": "3cb0e797c9a113dcb3db829e4b397248c6a6b955e812a8d81b164785c2ea4dc9"
+          },
+          "repertoire_black": {
+            "first_ms": 7.975,
+            "median_ms": 7.988,
+            "p95_ms": 8.548,
+            "bytes": 32273,
+            "sha256": "c3b9c917f8d2c91d8b15ab0f584e840c5715c235e6f35b847eab9e2fbd895c7f"
+          },
+          "reports": {
+            "first_ms": 0.366,
+            "median_ms": 0.152,
+            "p95_ms": 0.183,
+            "bytes": 2,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "settings": {
+            "first_ms": 0.17,
+            "median_ms": 0.14,
+            "p95_ms": 0.173,
+            "bytes": 266,
+            "sha256": "51a8361ef7f01a91b21ad75bc210eb548d4d298b7229a6f45a73b4184773c002"
+          }
+        },
+        "concurrent": {
+          "median_ms": 63.98,
+          "max_ms": 132.49
+        },
+        "snapshot_unchanged": true
+      },
+      {
+        "startup_ms": 19.009,
+        "workload": {
+          "accounts": 1,
+          "games": 1100,
+          "moves": 60500
+        },
+        "repeat": 15,
+        "endpoints": {
+          "session": {
+            "first_ms": 0.198,
+            "median_ms": 0.146,
+            "p95_ms": 0.169,
+            "bytes": 65,
+            "sha256": "ef1997bfcfaf0e7aa5b41ec2dd9c3504c8a17a0bbc1fe33effd414ae1b5fb4d6"
+          },
+          "status": {
+            "first_ms": 0.352,
+            "median_ms": 0.208,
+            "p95_ms": 0.247,
+            "bytes": 468,
+            "sha256": "9eb61c38c099c8f47c5b1b06b4821709f217cacfdaccd0ac7cff11074d6c9ade"
+          },
+          "events": {
+            "first_ms": 0.165,
+            "median_ms": 0.135,
+            "p95_ms": 0.159,
+            "bytes": 2,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "accounts": {
+            "first_ms": 0.409,
+            "median_ms": 0.223,
+            "p95_ms": 0.258,
+            "bytes": 386,
+            "sha256": "2ec501b99311c7d9da89f965d9133aa2a2d324ca968439fd2d4ce32d6025d6ef"
+          },
+          "queue": {
+            "first_ms": 0.211,
+            "median_ms": 0.164,
+            "p95_ms": 0.181,
+            "bytes": 183,
+            "sha256": "fc1ed8c562f6e957810394bd55eafaf647e11e9b874230e22d891261be8d755e"
+          },
+          "games": {
+            "first_ms": 1.903,
+            "median_ms": 1.597,
+            "p95_ms": 1.635,
+            "bytes": 40943,
+            "sha256": "673ac259a16f28f8275654258b369329dbc376828c6feeabc5be0060291c03ea"
+          },
+          "game": {
+            "first_ms": 1.13,
+            "median_ms": 0.918,
+            "p95_ms": 0.977,
+            "bytes": 78988,
+            "sha256": "94159d28b7a36382309f3f1546e7deaf40737abf40b767f57bf87de6feba3786"
+          },
+          "opening_filters": {
+            "first_ms": 0.741,
+            "median_ms": 0.633,
+            "p95_ms": 0.764,
+            "bytes": 231,
+            "sha256": "af144b26ed8b45b5e63b1b1f28f63f890deff2f3e678303f0f62fbf3939b19ab"
+          },
+          "insights": {
+            "first_ms": 114.805,
+            "median_ms": 0.511,
+            "p95_ms": 0.558,
+            "bytes": 132201,
+            "sha256": "d27e84c61c69830e54e0da96553a4ece9b60c9fd9ddfea8584d2d95db60d589b"
+          },
+          "practice": {
+            "first_ms": 50.187,
+            "median_ms": 47.988,
+            "p95_ms": 49.054,
+            "bytes": 3722,
+            "sha256": "127355f4d5a1e41e4595f7894a7bc4c484a40226dc33a173ca73cd6e68dec971"
+          },
+          "repertoire_white": {
+            "first_ms": 6.206,
+            "median_ms": 4.18,
+            "p95_ms": 4.308,
+            "bytes": 20900,
+            "sha256": "3cb0e797c9a113dcb3db829e4b397248c6a6b955e812a8d81b164785c2ea4dc9"
+          },
+          "repertoire_black": {
+            "first_ms": 7.464,
+            "median_ms": 7.097,
+            "p95_ms": 7.242,
+            "bytes": 32273,
+            "sha256": "c3b9c917f8d2c91d8b15ab0f584e840c5715c235e6f35b847eab9e2fbd895c7f"
+          },
+          "reports": {
+            "first_ms": 0.209,
+            "median_ms": 0.159,
+            "p95_ms": 0.178,
+            "bytes": 2,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "settings": {
+            "first_ms": 0.143,
+            "median_ms": 0.141,
+            "p95_ms": 0.162,
+            "bytes": 266,
+            "sha256": "51a8361ef7f01a91b21ad75bc210eb548d4d298b7229a6f45a73b4184773c002"
+          }
+        },
+        "concurrent": {
+          "median_ms": 53.722,
+          "max_ms": 106.909
+        },
+        "snapshot_unchanged": true
+      },
+      {
+        "startup_ms": 15.983,
+        "workload": {
+          "accounts": 1,
+          "games": 1100,
+          "moves": 60500
+        },
+        "repeat": 15,
+        "endpoints": {
+          "session": {
+            "first_ms": 0.172,
+            "median_ms": 0.122,
+            "p95_ms": 0.143,
+            "bytes": 65,
+            "sha256": "ef1997bfcfaf0e7aa5b41ec2dd9c3504c8a17a0bbc1fe33effd414ae1b5fb4d6"
+          },
+          "status": {
+            "first_ms": 0.265,
+            "median_ms": 0.147,
+            "p95_ms": 0.17,
+            "bytes": 468,
+            "sha256": "9eb61c38c099c8f47c5b1b06b4821709f217cacfdaccd0ac7cff11074d6c9ade"
+          },
+          "events": {
+            "first_ms": 0.163,
+            "median_ms": 0.136,
+            "p95_ms": 0.15,
+            "bytes": 2,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "accounts": {
+            "first_ms": 0.43,
+            "median_ms": 0.218,
+            "p95_ms": 0.231,
+            "bytes": 386,
+            "sha256": "2ec501b99311c7d9da89f965d9133aa2a2d324ca968439fd2d4ce32d6025d6ef"
+          },
+          "queue": {
+            "first_ms": 0.192,
+            "median_ms": 0.172,
+            "p95_ms": 0.204,
+            "bytes": 183,
+            "sha256": "fc1ed8c562f6e957810394bd55eafaf647e11e9b874230e22d891261be8d755e"
+          },
+          "games": {
+            "first_ms": 1.938,
+            "median_ms": 1.586,
+            "p95_ms": 1.623,
+            "bytes": 40943,
+            "sha256": "673ac259a16f28f8275654258b369329dbc376828c6feeabc5be0060291c03ea"
+          },
+          "game": {
+            "first_ms": 1.108,
+            "median_ms": 0.927,
+            "p95_ms": 0.95,
+            "bytes": 78988,
+            "sha256": "94159d28b7a36382309f3f1546e7deaf40737abf40b767f57bf87de6feba3786"
+          },
+          "opening_filters": {
+            "first_ms": 0.684,
+            "median_ms": 0.599,
+            "p95_ms": 0.625,
+            "bytes": 231,
+            "sha256": "af144b26ed8b45b5e63b1b1f28f63f890deff2f3e678303f0f62fbf3939b19ab"
+          },
+          "insights": {
+            "first_ms": 115.41,
+            "median_ms": 0.531,
+            "p95_ms": 0.568,
+            "bytes": 132201,
+            "sha256": "d27e84c61c69830e54e0da96553a4ece9b60c9fd9ddfea8584d2d95db60d589b"
+          },
+          "practice": {
+            "first_ms": 51.137,
+            "median_ms": 48.286,
+            "p95_ms": 49.081,
+            "bytes": 3722,
+            "sha256": "127355f4d5a1e41e4595f7894a7bc4c484a40226dc33a173ca73cd6e68dec971"
+          },
+          "repertoire_white": {
+            "first_ms": 6.174,
+            "median_ms": 4.155,
+            "p95_ms": 4.29,
+            "bytes": 20900,
+            "sha256": "3cb0e797c9a113dcb3db829e4b397248c6a6b955e812a8d81b164785c2ea4dc9"
+          },
+          "repertoire_black": {
+            "first_ms": 7.537,
+            "median_ms": 7.185,
+            "p95_ms": 7.625,
+            "bytes": 32273,
+            "sha256": "c3b9c917f8d2c91d8b15ab0f584e840c5715c235e6f35b847eab9e2fbd895c7f"
+          },
+          "reports": {
+            "first_ms": 0.253,
+            "median_ms": 0.159,
+            "p95_ms": 0.173,
+            "bytes": 2,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "settings": {
+            "first_ms": 0.145,
+            "median_ms": 0.132,
+            "p95_ms": 0.139,
+            "bytes": 266,
+            "sha256": "51a8361ef7f01a91b21ad75bc210eb548d4d298b7229a6f45a73b4184773c002"
+          }
+        },
+        "concurrent": {
+          "median_ms": 53.502,
+          "max_ms": 107.714
+        },
+        "first_load": {
+          "overview": {
+            "requests": 18,
+            "encoded_body_bytes": 565838,
+            "decoded_body_bytes": 565838
+          },
+          "games": {
+            "requests": 18,
+            "encoded_body_bytes": 549868,
+            "decoded_body_bytes": 549868
+          },
+          "review": {
+            "requests": 19,
+            "encoded_body_bytes": 563816,
+            "decoded_body_bytes": 563816
+          },
+          "insights": {
+            "requests": 20,
+            "encoded_body_bytes": 582697,
+            "decoded_body_bytes": 582697
+          },
+          "practice": {
+            "requests": 17,
+            "encoded_body_bytes": 550518,
+            "decoded_body_bytes": 550518
+          },
+          "openings": {
+            "requests": 12,
+            "encoded_body_bytes": 549959,
+            "decoded_body_bytes": 549959
+          },
+          "compare": {
+            "requests": 11,
+            "encoded_body_bytes": 481258,
+            "decoded_body_bytes": 481258
+          },
+          "reports": {
+            "requests": 11,
+            "encoded_body_bytes": 469615,
+            "decoded_body_bytes": 469615
+          },
+          "accounts": {
+            "requests": 10,
+            "encoded_body_bytes": 469381,
+            "decoded_body_bytes": 469381
+          },
+          "activity": {
+            "requests": 10,
+            "encoded_body_bytes": 467641,
+            "decoded_body_bytes": 467641
+          },
+          "settings": {
+            "requests": 8,
+            "encoded_body_bytes": 472711,
+            "decoded_body_bytes": 472711
+          },
+          "methodology": {
+            "requests": 10,
+            "encoded_body_bytes": 475465,
+            "decoded_body_bytes": 475465
+          },
+          "import": {
+            "requests": 8,
+            "encoded_body_bytes": 465995,
+            "decoded_body_bytes": 465995
+          }
+        },
+        "snapshot_unchanged": true
+      }
+    ],
+    "after": [
+      {
+        "startup_ms": 19.764,
+        "workload": {
+          "accounts": 1,
+          "games": 1100,
+          "moves": 60500
+        },
+        "repeat": 15,
+        "endpoints": {
+          "session": {
+            "first_ms": 0.251,
+            "median_ms": 0.147,
+            "p95_ms": 0.187,
+            "bytes": 65,
+            "sha256": "ef1997bfcfaf0e7aa5b41ec2dd9c3504c8a17a0bbc1fe33effd414ae1b5fb4d6"
+          },
+          "status": {
+            "first_ms": 0.339,
+            "median_ms": 0.245,
+            "p95_ms": 0.318,
+            "bytes": 489,
+            "sha256": "9eb61c38c099c8f47c5b1b06b4821709f217cacfdaccd0ac7cff11074d6c9ade"
+          },
+          "events": {
+            "first_ms": 0.23,
+            "median_ms": 0.208,
+            "p95_ms": 0.335,
+            "bytes": 2,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "accounts": {
+            "first_ms": 0.823,
+            "median_ms": 0.319,
+            "p95_ms": 0.448,
+            "bytes": 386,
+            "sha256": "2ec501b99311c7d9da89f965d9133aa2a2d324ca968439fd2d4ce32d6025d6ef"
+          },
+          "queue": {
+            "first_ms": 0.263,
+            "median_ms": 0.186,
+            "p95_ms": 0.208,
+            "bytes": 183,
+            "sha256": "fc1ed8c562f6e957810394bd55eafaf647e11e9b874230e22d891261be8d755e"
+          },
+          "games": {
+            "first_ms": 2.022,
+            "median_ms": 1.914,
+            "p95_ms": 2.081,
+            "bytes": 40943,
+            "sha256": "673ac259a16f28f8275654258b369329dbc376828c6feeabc5be0060291c03ea"
+          },
+          "game": {
+            "first_ms": 3.351,
+            "median_ms": 1.295,
+            "p95_ms": 1.735,
+            "bytes": 78988,
+            "sha256": "94159d28b7a36382309f3f1546e7deaf40737abf40b767f57bf87de6feba3786"
+          },
+          "opening_filters": {
+            "first_ms": 1.029,
+            "median_ms": 0.784,
+            "p95_ms": 0.956,
+            "bytes": 231,
+            "sha256": "af144b26ed8b45b5e63b1b1f28f63f890deff2f3e678303f0f62fbf3939b19ab"
+          },
+          "insights": {
+            "first_ms": 92.326,
+            "median_ms": 0.531,
+            "p95_ms": 0.687,
+            "bytes": 132201,
+            "sha256": "d27e84c61c69830e54e0da96553a4ece9b60c9fd9ddfea8584d2d95db60d589b"
+          },
+          "practice": {
+            "first_ms": 60.484,
+            "median_ms": 53.996,
+            "p95_ms": 64.377,
+            "bytes": 3722,
+            "sha256": "127355f4d5a1e41e4595f7894a7bc4c484a40226dc33a173ca73cd6e68dec971"
+          },
+          "repertoire_white": {
+            "first_ms": 8.576,
+            "median_ms": 5.32,
+            "p95_ms": 8.992,
+            "bytes": 20900,
+            "sha256": "3cb0e797c9a113dcb3db829e4b397248c6a6b955e812a8d81b164785c2ea4dc9"
+          },
+          "repertoire_black": {
+            "first_ms": 9.67,
+            "median_ms": 7.626,
+            "p95_ms": 8.117,
+            "bytes": 32273,
+            "sha256": "c3b9c917f8d2c91d8b15ab0f584e840c5715c235e6f35b847eab9e2fbd895c7f"
+          },
+          "reports": {
+            "first_ms": 0.222,
+            "median_ms": 0.152,
+            "p95_ms": 0.177,
+            "bytes": 2,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "settings": {
+            "first_ms": 0.153,
+            "median_ms": 0.135,
+            "p95_ms": 0.201,
+            "bytes": 266,
+            "sha256": "51a8361ef7f01a91b21ad75bc210eb548d4d298b7229a6f45a73b4184773c002"
+          }
+        },
+        "concurrent": {
+          "median_ms": 54.959,
+          "max_ms": 118.403
+        },
+        "snapshot_unchanged": true
+      },
+      {
+        "startup_ms": 14.834,
+        "workload": {
+          "accounts": 1,
+          "games": 1100,
+          "moves": 60500
+        },
+        "repeat": 15,
+        "endpoints": {
+          "session": {
+            "first_ms": 0.197,
+            "median_ms": 0.151,
+            "p95_ms": 0.16,
+            "bytes": 65,
+            "sha256": "ef1997bfcfaf0e7aa5b41ec2dd9c3504c8a17a0bbc1fe33effd414ae1b5fb4d6"
+          },
+          "status": {
+            "first_ms": 0.274,
+            "median_ms": 0.175,
+            "p95_ms": 0.191,
+            "bytes": 489,
+            "sha256": "9eb61c38c099c8f47c5b1b06b4821709f217cacfdaccd0ac7cff11074d6c9ade"
+          },
+          "events": {
+            "first_ms": 0.136,
+            "median_ms": 0.12,
+            "p95_ms": 0.129,
+            "bytes": 2,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "accounts": {
+            "first_ms": 0.412,
+            "median_ms": 0.216,
+            "p95_ms": 0.239,
+            "bytes": 386,
+            "sha256": "2ec501b99311c7d9da89f965d9133aa2a2d324ca968439fd2d4ce32d6025d6ef"
+          },
+          "queue": {
+            "first_ms": 0.206,
+            "median_ms": 0.164,
+            "p95_ms": 0.18,
+            "bytes": 183,
+            "sha256": "fc1ed8c562f6e957810394bd55eafaf647e11e9b874230e22d891261be8d755e"
+          },
+          "games": {
+            "first_ms": 1.845,
+            "median_ms": 1.604,
+            "p95_ms": 1.63,
+            "bytes": 40943,
+            "sha256": "673ac259a16f28f8275654258b369329dbc376828c6feeabc5be0060291c03ea"
+          },
+          "game": {
+            "first_ms": 1.166,
+            "median_ms": 0.959,
+            "p95_ms": 1.039,
+            "bytes": 78988,
+            "sha256": "94159d28b7a36382309f3f1546e7deaf40737abf40b767f57bf87de6feba3786"
+          },
+          "opening_filters": {
+            "first_ms": 0.694,
+            "median_ms": 0.628,
+            "p95_ms": 0.644,
+            "bytes": 231,
+            "sha256": "af144b26ed8b45b5e63b1b1f28f63f890deff2f3e678303f0f62fbf3939b19ab"
+          },
+          "insights": {
+            "first_ms": 71.528,
+            "median_ms": 0.541,
+            "p95_ms": 0.637,
+            "bytes": 132201,
+            "sha256": "d27e84c61c69830e54e0da96553a4ece9b60c9fd9ddfea8584d2d95db60d589b"
+          },
+          "practice": {
+            "first_ms": 50.719,
+            "median_ms": 49.211,
+            "p95_ms": 50.63,
+            "bytes": 3722,
+            "sha256": "127355f4d5a1e41e4595f7894a7bc4c484a40226dc33a173ca73cd6e68dec971"
+          },
+          "repertoire_white": {
+            "first_ms": 5.885,
+            "median_ms": 4.155,
+            "p95_ms": 4.304,
+            "bytes": 20900,
+            "sha256": "3cb0e797c9a113dcb3db829e4b397248c6a6b955e812a8d81b164785c2ea4dc9"
+          },
+          "repertoire_black": {
+            "first_ms": 7.165,
+            "median_ms": 6.999,
+            "p95_ms": 7.139,
+            "bytes": 32273,
+            "sha256": "c3b9c917f8d2c91d8b15ab0f584e840c5715c235e6f35b847eab9e2fbd895c7f"
+          },
+          "reports": {
+            "first_ms": 0.212,
+            "median_ms": 0.163,
+            "p95_ms": 0.194,
+            "bytes": 2,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "settings": {
+            "first_ms": 0.169,
+            "median_ms": 0.14,
+            "p95_ms": 0.156,
+            "bytes": 266,
+            "sha256": "51a8361ef7f01a91b21ad75bc210eb548d4d298b7229a6f45a73b4184773c002"
+          }
+        },
+        "concurrent": {
+          "median_ms": 54.182,
+          "max_ms": 107.268
+        },
+        "snapshot_unchanged": true
+      },
+      {
+        "startup_ms": 16.146,
+        "workload": {
+          "accounts": 1,
+          "games": 1100,
+          "moves": 60500
+        },
+        "repeat": 15,
+        "endpoints": {
+          "session": {
+            "first_ms": 0.201,
+            "median_ms": 0.147,
+            "p95_ms": 0.171,
+            "bytes": 65,
+            "sha256": "ef1997bfcfaf0e7aa5b41ec2dd9c3504c8a17a0bbc1fe33effd414ae1b5fb4d6"
+          },
+          "status": {
+            "first_ms": 0.279,
+            "median_ms": 0.183,
+            "p95_ms": 0.231,
+            "bytes": 489,
+            "sha256": "9eb61c38c099c8f47c5b1b06b4821709f217cacfdaccd0ac7cff11074d6c9ade"
+          },
+          "events": {
+            "first_ms": 0.138,
+            "median_ms": 0.132,
+            "p95_ms": 0.157,
+            "bytes": 2,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "accounts": {
+            "first_ms": 0.391,
+            "median_ms": 0.213,
+            "p95_ms": 0.228,
+            "bytes": 386,
+            "sha256": "2ec501b99311c7d9da89f965d9133aa2a2d324ca968439fd2d4ce32d6025d6ef"
+          },
+          "queue": {
+            "first_ms": 0.193,
+            "median_ms": 0.165,
+            "p95_ms": 0.179,
+            "bytes": 183,
+            "sha256": "fc1ed8c562f6e957810394bd55eafaf647e11e9b874230e22d891261be8d755e"
+          },
+          "games": {
+            "first_ms": 1.863,
+            "median_ms": 1.586,
+            "p95_ms": 1.611,
+            "bytes": 40943,
+            "sha256": "673ac259a16f28f8275654258b369329dbc376828c6feeabc5be0060291c03ea"
+          },
+          "game": {
+            "first_ms": 1.108,
+            "median_ms": 0.915,
+            "p95_ms": 0.977,
+            "bytes": 78988,
+            "sha256": "94159d28b7a36382309f3f1546e7deaf40737abf40b767f57bf87de6feba3786"
+          },
+          "opening_filters": {
+            "first_ms": 0.633,
+            "median_ms": 0.579,
+            "p95_ms": 0.605,
+            "bytes": 231,
+            "sha256": "af144b26ed8b45b5e63b1b1f28f63f890deff2f3e678303f0f62fbf3939b19ab"
+          },
+          "insights": {
+            "first_ms": 70.64,
+            "median_ms": 0.504,
+            "p95_ms": 0.524,
+            "bytes": 132201,
+            "sha256": "d27e84c61c69830e54e0da96553a4ece9b60c9fd9ddfea8584d2d95db60d589b"
+          },
+          "practice": {
+            "first_ms": 48.154,
+            "median_ms": 47.445,
+            "p95_ms": 48.049,
+            "bytes": 3722,
+            "sha256": "127355f4d5a1e41e4595f7894a7bc4c484a40226dc33a173ca73cd6e68dec971"
+          },
+          "repertoire_white": {
+            "first_ms": 6.028,
+            "median_ms": 4.067,
+            "p95_ms": 4.241,
+            "bytes": 20900,
+            "sha256": "3cb0e797c9a113dcb3db829e4b397248c6a6b955e812a8d81b164785c2ea4dc9"
+          },
+          "repertoire_black": {
+            "first_ms": 7.365,
+            "median_ms": 6.955,
+            "p95_ms": 7.1,
+            "bytes": 32273,
+            "sha256": "c3b9c917f8d2c91d8b15ab0f584e840c5715c235e6f35b847eab9e2fbd895c7f"
+          },
+          "reports": {
+            "first_ms": 0.234,
+            "median_ms": 0.152,
+            "p95_ms": 0.176,
+            "bytes": 2,
+            "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "settings": {
+            "first_ms": 0.165,
+            "median_ms": 0.141,
+            "p95_ms": 0.153,
+            "bytes": 266,
+            "sha256": "51a8361ef7f01a91b21ad75bc210eb548d4d298b7229a6f45a73b4184773c002"
+          }
+        },
+        "concurrent": {
+          "median_ms": 53.457,
+          "max_ms": 154.503
+        },
+        "first_load": {
+          "overview": {
+            "requests": 19,
+            "encoded_body_bytes": 203965,
+            "decoded_body_bytes": 566649
+          },
+          "games": {
+            "requests": 18,
+            "encoded_body_bytes": 198313,
+            "decoded_body_bytes": 550573
+          },
+          "review": {
+            "requests": 19,
+            "encoded_body_bytes": 203431,
+            "decoded_body_bytes": 564483
+          },
+          "insights": {
+            "requests": 21,
+            "encoded_body_bytes": 208170,
+            "decoded_body_bytes": 583519
+          },
+          "practice": {
+            "requests": 17,
+            "encoded_body_bytes": 199464,
+            "decoded_body_bytes": 552663
+          },
+          "openings": {
+            "requests": 12,
+            "encoded_body_bytes": 197629,
+            "decoded_body_bytes": 551135
+          },
+          "compare": {
+            "requests": 12,
+            "encoded_body_bytes": 174720,
+            "decoded_body_bytes": 481969
+          },
+          "reports": {
+            "requests": 11,
+            "encoded_body_bytes": 171148,
+            "decoded_body_bytes": 470178
+          },
+          "accounts": {
+            "requests": 10,
+            "encoded_body_bytes": 170547,
+            "decoded_body_bytes": 469944
+          },
+          "activity": {
+            "requests": 10,
+            "encoded_body_bytes": 170129,
+            "decoded_body_bytes": 468204
+          },
+          "settings": {
+            "requests": 8,
+            "encoded_body_bytes": 171195,
+            "decoded_body_bytes": 473274
+          },
+          "methodology": {
+            "requests": 10,
+            "encoded_body_bytes": 173383,
+            "decoded_body_bytes": 476431
+          },
+          "import": {
+            "requests": 8,
+            "encoded_body_bytes": 169425,
+            "decoded_body_bytes": 466558
+          }
+        },
+        "snapshot_unchanged": true
+      }
+    ]
+  }
+}

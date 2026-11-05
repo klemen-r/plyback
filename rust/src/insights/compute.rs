@@ -1,6 +1,10 @@
 use crate::{api_error, db::Database};
 use anyhow::Result;
 use chrono::{DateTime, Datelike, Timelike, Utc};
+use serde::{
+    Deserialize,
+    de::{MapAccess, SeqAccess, Visitor},
+};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::OnceLock;
@@ -279,6 +283,120 @@ pub fn scope_game_ids(db: &Database, account: i64, filters: &Value) -> Result<Ve
     Ok(db.query(&format!("SELECT g.id FROM account_games ag JOIN games g ON g.id=ag.game_id WHERE {} ORDER BY g.end_time,g.id",clauses.join(" AND ")),&params)?.iter().map(|r|integer(&r["id"])).collect())
 }
 
+// Insights only needs tag presence and the hanging-piece name. Skip the nested
+// engine explanation payloads instead of retaining a JSON tree for every move.
+#[derive(Debug, Default)]
+struct Tags {
+    present: u16,
+    hanging_piece: Option<String>,
+}
+fn tag_bit(key: &str) -> u16 {
+    match key {
+        "hanging_piece" => 1 << 0,
+        "threat_ignored" => 1 << 1,
+        "allowed_mate" => 1 << 2,
+        "back_rank" => 1 << 3,
+        "allows_fork" => 1 << 4,
+        "loses_material" => 1 << 5,
+        "missed_punish" => 1 << 6,
+        "missed_material" => 1 << 7,
+        "missed_fork" => 1 << 8,
+        "missed_mate" => 1 << 9,
+        "self_inflicted" => 1 << 10,
+        "positional" => 1 << 11,
+        "tactical" => 1 << 12,
+        "in_check" => 1 << 13,
+        "time_pressure" => 1 << 14,
+        _ => 0,
+    }
+}
+// Use the same recursive deserializer path as Value: IgnoredAny alone skips
+// serde_json's number-range and nesting checks for discarded payloads.
+struct DiscardValue;
+impl<'de> Deserialize<'de> for DiscardValue {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        struct DiscardVisitor;
+        impl<'de> Visitor<'de> for DiscardVisitor {
+            type Value = DiscardValue;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a JSON value")
+            }
+            fn visit_unit<E: serde::de::Error>(self) -> std::result::Result<Self::Value, E> {
+                Ok(DiscardValue)
+            }
+            fn visit_bool<E: serde::de::Error>(
+                self,
+                _: bool,
+            ) -> std::result::Result<Self::Value, E> {
+                Ok(DiscardValue)
+            }
+            fn visit_i64<E: serde::de::Error>(self, _: i64) -> std::result::Result<Self::Value, E> {
+                Ok(DiscardValue)
+            }
+            fn visit_u64<E: serde::de::Error>(self, _: u64) -> std::result::Result<Self::Value, E> {
+                Ok(DiscardValue)
+            }
+            fn visit_f64<E: serde::de::Error>(self, _: f64) -> std::result::Result<Self::Value, E> {
+                Ok(DiscardValue)
+            }
+            fn visit_str<E: serde::de::Error>(
+                self,
+                _: &str,
+            ) -> std::result::Result<Self::Value, E> {
+                Ok(DiscardValue)
+            }
+            fn visit_seq<S: SeqAccess<'de>>(
+                self,
+                mut seq: S,
+            ) -> std::result::Result<Self::Value, S::Error> {
+                while seq.next_element::<DiscardValue>()?.is_some() {}
+                Ok(DiscardValue)
+            }
+            fn visit_map<M: MapAccess<'de>>(
+                self,
+                mut map: M,
+            ) -> std::result::Result<Self::Value, M::Error> {
+                while map.next_entry::<String, DiscardValue>()?.is_some() {}
+                Ok(DiscardValue)
+            }
+        }
+        deserializer.deserialize_any(DiscardVisitor)
+    }
+}
+
+impl<'de> Deserialize<'de> for Tags {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        struct TagsVisitor;
+        impl<'de> Visitor<'de> for TagsVisitor {
+            type Value = Tags;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a move tags object")
+            }
+            fn visit_map<M: MapAccess<'de>>(
+                self,
+                mut map: M,
+            ) -> std::result::Result<Tags, M::Error> {
+                let mut tags = Tags::default();
+                while let Some(key) = map.next_key::<String>()? {
+                    tags.present |= tag_bit(&key);
+                    if key == "hanging_piece" {
+                        let value = map.next_value::<Value>()?;
+                        tags.hanging_piece = value["piece"].as_str().map(str::to_owned);
+                    } else {
+                        map.next_value::<DiscardValue>()?;
+                    }
+                }
+                Ok(tags)
+            }
+        }
+        deserializer.deserialize_map(TagsVisitor)
+    }
+}
+
 #[derive(Debug)]
 struct Move {
     ply: i64,
@@ -294,14 +412,14 @@ struct Move {
     clock: Option<f64>,
     spent: Option<f64>,
     book: bool,
-    tags: Value,
+    tags: Tags,
     epd: String,
     best: Value,
     endgame: String,
 }
 impl Move {
     fn tag(&self, key: &str) -> bool {
-        self.tags.get(key).is_some()
+        self.tags.present & tag_bit(key) != 0
     }
     fn error(&self) -> bool {
         ERRORS.contains(&self.class.as_str())
@@ -446,7 +564,7 @@ fn load(db: &Database, account: i64, filters: &Value, report_id: Option<i64>) ->
                         .as_str()
                         .ok()
                         .and_then(|s| serde_json::from_str(s).ok())
-                        .unwrap_or_else(|| json!({}));
+                        .unwrap_or_default();
                     Ok((
                         r.get::<_, i64>(0)?,
                         Move {
@@ -947,12 +1065,7 @@ fn errors(analyzed: &[&Game]) -> Value {
         for m in &g.user {
             if m.error() && m.tag("hanging_piece") {
                 *hung
-                    .entry(
-                        m.tags["hanging_piece"]["piece"]
-                            .as_str()
-                            .unwrap_or("?")
-                            .into(),
-                    )
+                    .entry(m.tags.hanging_piece.as_deref().unwrap_or("?").into())
                     .or_default() += 1;
             }
         }
@@ -1617,6 +1730,58 @@ fn compute_once(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn compact_tags_match_json_presence_and_piece_semantics() {
+        for raw in [
+            r#"{}"#,
+            r#"{"hanging_piece":{"piece":"queen","extra":[1,2]},"tactical":true}"#,
+            r#"{"hanging_piece":null,"positional":null,"back_rank":false}"#,
+            r#"{"hanging_piece":{"piece":42},"unknown":{"deep":[null,true,{}]}}"#,
+            r#"{"hanging_piece":{"piece":"rook"},"hanging_piece":{"piece":"pawn"}}"#,
+            r#"{"tactical":true,"tactical":null}"#,
+            r#"[]"#,
+            r#"null"#,
+            r#"42"#,
+            r#"{"tactical":true,"broken":]}"#,
+            r#"{"tactical":true,"unknown":1e999}"#,
+            r#"{"tactical":true,"unknown":{"\uD800":0}}"#,
+            r#"{"tactical":true,"unknown":"\uD800"}"#,
+            r#"{"tactical":true,"unknown":{"\uD83D\uDE00":"valid pair"}}"#,
+        ] {
+            let original = serde_json::from_str::<Value>(raw).unwrap_or_else(|_| json!({}));
+            let compact = serde_json::from_str::<Tags>(raw).unwrap_or_default();
+            for &(key, _) in TAG_LABELS {
+                assert_ne!(
+                    tag_bit(key),
+                    0,
+                    "tag missing from compact representation: {key}"
+                );
+                assert_eq!(
+                    compact.present & tag_bit(key) != 0,
+                    original.get(key).is_some(),
+                    "{raw}: {key}"
+                );
+            }
+            assert_eq!(
+                compact.hanging_piece.as_deref(),
+                original["hanging_piece"]["piece"].as_str(),
+                "{raw}"
+            );
+        }
+    }
+    #[test]
+    fn compact_tags_preserve_json_nesting_limit() {
+        for depth in [125, 126, 127, 128, 129, 256] {
+            let raw = format!(
+                r#"{{"tactical":true,"unknown":{}0{}}}"#,
+                "[".repeat(depth),
+                "]".repeat(depth)
+            );
+            let original = serde_json::from_str::<Value>(&raw);
+            let compact = serde_json::from_str::<Tags>(&raw);
+            assert_eq!(compact.is_ok(), original.is_ok(), "depth {depth}");
+        }
+    }
     #[test]
     fn strict_filters() {
         for bad in [

@@ -25,7 +25,7 @@ function candidates() {
   return [`${os}-x86-64-universal`, 'linux-x86-64-universal', `${os}-x86-64-avx2`, `${os}-x86-64-sse41-popcnt`, `${os}-x86-64`]
 }
 
-export async function response(url, asset = false, { fetchImpl = globalThis.fetch } = {}) {
+export async function response(url, asset = false, { fetchImpl = globalThis.fetch, githubToken = process.env.GITHUB_TOKEN } = {}) {
   const original = new URL(url)
   const safe = target => {
     try {
@@ -39,7 +39,14 @@ export async function response(url, asset = false, { fetchImpl = globalThis.fetc
   if (asset && !officialAsset(original)) throw new Error('Asset is outside official Stockfish releases')
   if (!asset && url !== metadataURL && !(original.hostname === 'raw.githubusercontent.com' && original.pathname.startsWith('/official-stockfish/Stockfish/'))) throw new Error('Metadata is outside official Stockfish sources')
   for (let redirects = 0; redirects <= 5; redirects++) {
-    const reply = await fetchImpl(url, { redirect: 'manual', signal: AbortSignal.timeout(120_000), headers: { 'User-Agent': 'plyback-installer', Accept: 'application/json, application/octet-stream' } })
+    const headers = { 'User-Agent': 'plyback-installer', Accept: 'application/json, application/octet-stream' }
+    // Rebuild headers for every hop. Credentials belong only to the exact
+    // release API, never to archive CDNs, license sources or redirect targets.
+    if (url === metadataURL && githubToken) {
+      if (!/^[\x21-\x7e]+$/.test(githubToken)) throw new Error('GITHUB_TOKEN must contain only visible ASCII characters')
+      headers.Authorization = `Bearer ${githubToken}`
+    }
+    const reply = await fetchImpl(url, { redirect: 'manual', signal: AbortSignal.timeout(120_000), headers })
     if ([301, 302, 303, 307, 308].includes(reply.status)) {
       await reply.body?.cancel()
       const location = reply.headers.get('location')

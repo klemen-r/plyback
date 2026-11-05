@@ -6,7 +6,10 @@ RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 COPY scripts/install_stockfish.mjs /tmp/install_stockfish.mjs
-RUN node /tmp/install_stockfish.mjs --dest /opt/stockfish
+# CI supplies an optional BuildKit secret; it is never stored in image layers.
+RUN --mount=type=secret,id=github_token \
+    GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
+    node /tmp/install_stockfish.mjs --dest /opt/stockfish
 
 FROM rust:1.97-bookworm AS native
 WORKDIR /src
