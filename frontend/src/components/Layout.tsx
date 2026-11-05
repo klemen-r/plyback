@@ -61,7 +61,9 @@ function MenuItem({ children, onClick, to, active }: { children: ReactNode; onCl
 }
 
 function AccountMenu() {
-  const { accounts, account, select } = useAccount()
+  const { accounts, account, select, loading } = useAccount()
+  // Hold the space while accounts load, so the header doesn't flash "Connect account".
+  if (!account && loading) return <span className="skeleton h-6 w-24 rounded-md" aria-hidden />
   if (!account) {
     return <Link to="/accounts" className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[14px] text-fg-2 hover:bg-hover hover:text-fg"><Plus className="h-4 w-4" />Connect account</Link>
   }

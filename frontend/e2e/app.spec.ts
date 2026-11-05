@@ -64,6 +64,13 @@ test.describe.serial('Plyback end to end', () => {
     await expect(page.getByText('11 games played by klemen_r')).toBeVisible()
     await page.getByLabel('Result').selectOption('loss')
     await expect(page).toHaveURL(/outcome=loss/)
+    // How each game ended is listed, and can be filtered.
+    await page.getByLabel('Result').selectOption('')
+    await expect(page.getByRole('cell', { name: /^(Won|Lost) by checkmate$/ }).first()).toBeVisible()
+    await page.getByLabel('Ending').selectOption('time')
+    await expect(page).toHaveURL(/ending=time/)
+    await expect(page.getByRole('cell', { name: /^(Won|Lost) on time$/ }).first()).toBeVisible()
+    await expect(page.getByRole('cell', { name: /checkmate|resign/ })).toHaveCount(0)
   })
 
   test('game review: board, classifications, navigation, engine', async ({ page }) => {

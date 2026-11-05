@@ -837,6 +837,16 @@
             }
           },
           {
+            "name": "ending",
+            "in": "query",
+            "required": false,
+            "description": "How a decisive game ended: checkmate, resignation, time or abandoned.",
+            "schema": {
+              "type": "string",
+              "enum": ["checkmate", "resignation", "time", "abandoned"]
+            }
+          },
+          {
             "name": "color",
             "in": "query",
             "required": false,

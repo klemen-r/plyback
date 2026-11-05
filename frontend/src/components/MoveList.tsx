@@ -6,7 +6,7 @@ import ClassIcon from './ClassIcon'
 
 const NOTABLE = new Set(['brilliant', 'great', 'inaccuracy', 'mistake', 'miss', 'blunder'])
 
-export default function MoveList({ moves, current, onSelect, className = 'max-h-[340px]' }: { moves: MoveRow[]; current: number; onSelect: (ply: number) => void; className?: string }) {
+export default function MoveList({ moves, current, onSelect, result, className = 'max-h-[340px]' }: { moves: MoveRow[]; current: number; onSelect: (ply: number) => void; result?: string | null; className?: string }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const el = ref.current?.querySelector<HTMLElement>(`[data-ply="${current}"]`)
@@ -50,6 +50,7 @@ export default function MoveList({ moves, current, onSelect, className = 'max-h-
           </div>
         ))}
       </div>
+      {result && <p className="mt-2 border-t border-line px-2 pt-2 text-center text-[12.5px] text-fg-2">{result}</p>}
     </div>
   )
 }

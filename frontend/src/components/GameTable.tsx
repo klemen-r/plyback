@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { fmtDate, fmtTimeControl } from '../lib/format'
 import type { Classification, GameSummary } from '../lib/types'
 import ClassIcon from './ClassIcon'
+import { endingOf } from '../lib/ending'
 import { ResultMark, Spinner } from './ui'
 
 const SHOWN: Classification[] = ['brilliant', 'great', 'mistake', 'blunder']
@@ -42,6 +43,7 @@ export default function GameTable({ games, compact, selected, onSelect }:
         <tr className="border-b border-line text-left text-[12.5px] text-fg-3">
           <th className="w-8 py-2.5 pl-4 font-normal"><span className="sr-only">Result</span></th>
           <th className="py-2.5 pr-3 font-normal">Opponent</th>
+          <th className={clsx('py-2.5 pr-3 font-normal', compact ? 'hidden xl:table-cell' : 'hidden sm:table-cell')}>Result</th>
           <th className={clsx('py-2.5 pr-3 font-normal', compact ? 'hidden lg:table-cell' : 'hidden md:table-cell')}>Opening</th>
           {!compact && <th className="hidden py-2.5 pr-3 font-normal sm:table-cell">Time</th>}
           {!compact && <th className="hidden py-2.5 pr-3 font-normal lg:table-cell">Notable moves</th>}
@@ -67,6 +69,7 @@ export default function GameTable({ games, compact, selected, onSelect }:
                   {opp?.rating && <span className="tnum text-fg-3">{opp.rating}</span>}
                 </div>
               </td>
+              <td className={clsx('whitespace-nowrap py-2.5 pr-3 text-fg-2', compact ? 'hidden xl:table-cell' : 'hidden sm:table-cell')}>{endingOf(g)?.text ?? '—'}</td>
               <td className={clsx('max-w-[260px] truncate py-2.5 pr-3 text-fg-2', compact ? 'hidden lg:table-cell' : 'hidden md:table-cell')}>{g.opening.name ?? '—'}</td>
               {!compact && <td className="hidden whitespace-nowrap py-2.5 pr-3 text-fg-2 sm:table-cell">{fmtTimeControl(g.time_control)}</td>}
               {!compact && <td className="hidden py-2.5 pr-3 lg:table-cell"><ErrorCounts g={g} /></td>}

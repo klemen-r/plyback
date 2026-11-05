@@ -17,6 +17,7 @@ import { Button, Card, ErrorNote, Loading, Badge, Progress, Tabs, Spinner } from
 import { useAccount } from '../lib/account-context'
 import { api } from '../lib/api'
 import { CLASS_META, CLASS_ORDER, classBadgeSvg, PHASE_LABEL } from '../lib/classification'
+import { endingOf } from '../lib/ending'
 import { fmtClock, fmtDate, fmtTimeControl, formatEval } from '../lib/format'
 import type { Classification, GameDetail, MoveRow } from '../lib/types'
 
@@ -269,6 +270,7 @@ function GameReviewContent() {
   }
   const evalNow = inVar || !analysis ? live.data?.lines?.[0]?.cp ?? (analysis ? analysis.evals[ply] : null) : analysis.evals[ply]
   const job = g.job
+  const ending = endingOf(g)
 
   return (
     <div className="appear max-sm:pb-[calc(1rem+env(safe-area-inset-bottom))]">
@@ -280,7 +282,7 @@ function GameReviewContent() {
             <div className="flex flex-wrap items-center gap-x-3 text-[12.5px] text-fg-2">
               <span>{fmtDate(g.end_time, true)}</span>
               <span>{fmtTimeControl(g.time_control)} {g.time_class}</span>
-              {g.termination && <span className="truncate">{g.termination}</span>}
+              {ending && <span className="truncate text-fg">{ending.text}</span>}
               {(analysis?.opening.name || g.opening.name) && <span className="text-fg/80">{analysis?.opening.eco ?? g.opening.eco} · {analysis?.opening.name ?? g.opening.name}</span>}
             </div>
           </div>
@@ -395,7 +397,7 @@ function GameReviewContent() {
               </div>
             )}
             <div className="p-2 lg:flex lg:min-h-[9rem] lg:flex-col">
-              <MoveList moves={moves} current={inVar ? -1 : ply} onSelect={go} className="max-h-[340px] lg:max-h-none" />
+              <MoveList moves={moves} current={inVar ? -1 : ply} onSelect={go} result={ending ? `${g.result} · ${ending.text}` : g.result !== '*' ? g.result : null} className="max-h-[340px] lg:max-h-none" />
             </div>
           </Card>
 

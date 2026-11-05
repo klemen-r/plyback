@@ -6,6 +6,7 @@ import { fmtDate, fmtTimeControl, moveLabel } from '../lib/format'
 import type { GameSummary } from '../lib/types'
 import ClassIcon from './ClassIcon'
 import { MiniBoard } from './Evidence'
+import { endingOf } from '../lib/ending'
 import { ResultMark } from './ui'
 
 function reviewState(g: GameSummary) {
@@ -26,6 +27,7 @@ export default function LatestGame({ g }: { g: GameSummary }) {
   const errors = mine ? ERROR_CLASSES.filter(c => (mine[c] ?? 0) > 0) : []
   const fen = worst?.fen_before ?? detail.data?.game.final_fen ?? null
   const href = `/games/${g.id}${worst ? `?ply=${worst.ply}` : ''}`
+  const ending = endingOf(g)
   return (
     <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-4 p-4 sm:grid-cols-[148px_minmax(0,1fr)]">
       <Link to={href} aria-label="Open the latest game in review" className="block self-start">
@@ -37,7 +39,7 @@ export default function LatestGame({ g }: { g: GameSummary }) {
           <span className="truncate font-medium">{opp ? `vs ${opp.username}` : `${g.white.username} – ${g.black.username}`}</span>
           {opp?.rating && <span className="shrink-0 text-[13px] text-fg-3 tnum">{opp.rating}</span>}
         </div>
-        <div className="mt-0.5 truncate text-[12.5px] text-fg-3">{fmtDate(g.end_time, true)} · {fmtTimeControl(g.time_control)} {g.time_class} · {g.opening.name ?? 'Unknown opening'}</div>
+        <div className="mt-0.5 truncate text-[12.5px] text-fg-3">{fmtDate(g.end_time, true)}{ending ? ` · ${ending.text}` : ''} · {fmtTimeControl(g.time_control)} {g.time_class} · {g.opening.name ?? 'Unknown opening'}</div>
 
         {g.analyzed ? (
           <>

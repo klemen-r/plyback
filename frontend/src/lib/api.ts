@@ -54,7 +54,7 @@ function qs(params: object): string {
 }
 
 export interface GameQuery {
-  account_id?: number; page?: number; page_size?: number; time_class?: string; outcome?: string; color?: string
+  account_id?: number; page?: number; page_size?: number; time_class?: string; outcome?: string; ending?: string; color?: string
   opening?: string; analyzed?: boolean; q?: string; since?: number; until?: number; rated?: boolean
   classification?: string; sort?: string
 }

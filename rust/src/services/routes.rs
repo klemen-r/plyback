@@ -398,6 +398,23 @@ impl Services {
                 params.push(json!(class));
             }
         }
+        if let Some(ending) = q.get("ending").filter(|e| !e.is_empty()) {
+            // The losing side's result code says how a decisive game ended.
+            let code = match ending.as_str() {
+                "checkmate" => "checkmated",
+                "resignation" => "resigned",
+                "time" => "timeout",
+                "abandoned" => "abandoned",
+                _ => {
+                    return Err(api_error(
+                        422,
+                        "ending must be checkmate, resignation, time or abandoned",
+                    ));
+                }
+            };
+            conditions.push("(g.white_result=? OR g.black_result=?)".into());
+            params.extend([json!(code), json!(code)]);
+        }
         if let Some(opening) = q.get("opening") {
             conditions.push("g.opening_family=?".into());
             params.push(json!(opening));
@@ -683,6 +700,53 @@ mod tests {
             .unwrap();
         assert_eq!(game["moves"].as_array().unwrap().len(), 4);
         assert!(!game["game"]["final_fen"].is_null());
+    }
+    #[test]
+    fn games_filter_by_how_they_ended() {
+        let db = Arc::new(Database::open(":memory:").unwrap());
+        let s = Services::new(Arc::clone(&db)).unwrap();
+        for (id, white, black) in [
+            (1, "win", "checkmated"),
+            (2, "timeout", "win"),
+            (3, "win", "timeout"),
+            (4, "resigned", "win"),
+            (5, "agreed", "agreed"),
+        ] {
+            db.execute(
+                "INSERT INTO games(id,uuid,pgn,white_result,black_result,imported_at) VALUES (?,?,'',?,?,0)",
+                &[json!(id), json!(id.to_string()), json!(white), json!(black)],
+            )
+            .unwrap();
+        }
+        let ids = |ending: &str| {
+            let q: Query = [("ending".to_string(), ending.to_string())]
+                .into_iter()
+                .collect();
+            let (_, v) = s.list_games(&q).unwrap();
+            let mut ids: Vec<i64> = v["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|g| g["id"].as_i64().unwrap())
+                .collect();
+            ids.sort_unstable();
+            ids
+        };
+        assert_eq!(ids("time"), [2, 3]);
+        assert_eq!(ids("checkmate"), [1]);
+        assert_eq!(ids("resignation"), [4]);
+        assert_eq!(ids(""), [1, 2, 3, 4, 5]);
+        let q: Query = [("ending".to_string(), "boredom".to_string())]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            s.list_games(&q)
+                .unwrap_err()
+                .downcast_ref::<crate::ApiError>()
+                .unwrap()
+                .0,
+            422
+        );
     }
     #[test]
     fn queue_reuses_completed_depth_and_bumps_queued_work() {

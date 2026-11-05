@@ -74,7 +74,7 @@ export default function Games() {
 
   const page = Number(get('page') || 1)
   const query: GameQuery = {
-    account_id: account?.id, page, page_size: PAGE, time_class: get('time_class') || undefined, outcome: get('outcome') || undefined,
+    account_id: account?.id, page, page_size: PAGE, time_class: get('time_class') || undefined, outcome: get('outcome') || undefined, ending: get('ending') || undefined,
     color: get('color') || undefined, opening: get('opening') || undefined, q: get('q') || undefined,
     analyzed: get('analyzed') ? get('analyzed') === '1' : undefined, classification: get('classification') || undefined,
     sort: get('sort') || undefined,
@@ -100,6 +100,9 @@ export default function Games() {
         {account && <>
           <Select label="Result" value={get('outcome')} onChange={v => set('outcome', v)} className="w-full sm:w-auto">
             <option value="">All results</option><option value="win">Wins</option><option value="loss">Losses</option><option value="draw">Draws</option>
+          </Select>
+          <Select label="Ending" value={get('ending')} onChange={v => set('ending', v)} className="w-full sm:w-auto">
+            <option value="">Any ending</option><option value="checkmate">Checkmate</option><option value="resignation">Resignation</option><option value="time">On time</option><option value="abandoned">Abandoned</option>
           </Select>
           <Select label="Colour" value={get('color')} onChange={v => set('color', v)} className="w-full sm:w-auto">
             <option value="">Both colours</option><option value="white">White</option><option value="black">Black</option>
