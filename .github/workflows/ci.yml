@@ -31,6 +31,11 @@ jobs:
           node-version: 22
       - run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy
       - run: rustup default 1.97.1
+      # Reuse compiled dependencies. Only main saves the cache, so pull requests read it without churning it.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: rust -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: node scripts/install_stockfish.mjs
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -44,8 +49,9 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         with:
           python-version: '3.12'
+      # Benchmarks only record numbers for comparison, so they run on main and on demand, not on every pull request.
       - name: Reproduce baseline and native benchmarks on the same runner
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && github.event_name != 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
@@ -58,14 +64,17 @@ jobs:
           PLYBACK_DATA="$PWD/benchmark-output/engine-data" python backend/bench/analysis.py --out benchmark-output/python-engine.json --record benchmark-output/evaluations.json
           PLYBACK_BENCH_INPUT="$PWD/benchmark-output/evaluations.json" PLYBACK_BENCH_OUTPUT="$PWD/benchmark-output/rust-engine.json" cargo test --release --locked --manifest-path rust/Cargo.toml --test engine_review benchmark_reference_fixture_cold_and_warm -- --ignored --nocapture
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always() && matrix.os == 'ubuntu-latest'
+        if: always() && matrix.os == 'ubuntu-latest' && github.event_name != 'pull_request'
         with:
           name: native-performance
           path: benchmark-output/*.json
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          tool: cargo-audit@0.22.2
       - name: Audit Rust dependency lock
         if: matrix.os == 'ubuntu-latest'
         run: |
-          cargo install cargo-audit --locked --version 0.22.2
           cargo audit --file rust/Cargo.lock --deny warnings
 
   backend:
@@ -134,10 +143,14 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - run: rustup toolchain install 1.97.1 --profile minimal
+      - run: rustup default 1.97.1
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: rust -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Set up isolated servers and browser
         run: |
-          rustup toolchain install 1.97.1 --profile minimal
-          rustup default 1.97.1
           cargo build --release --locked --manifest-path rust/Cargo.toml
           cd frontend
           npm ci
