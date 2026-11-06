@@ -231,3 +231,126 @@ test('Openings can merge move orders that reach the same position', async ({ pag
   expect(merges).toEqual([null, 'true'])
   expect(errors).toEqual([])
 })
+
+test('A slow first answer says so, and Skip still moves on (#29)', async ({ page }) => {
+  const errors = await fixture(page, async route => {
+    if (route.request().method() === 'POST') return // never answers
+    await route.fulfill({ json: { stats, items: [item, { ...item, game_id: 202, opponent: 'Second opponent' }] } })
+  })
+  await page.clock.install()
+  await page.goto('/practice')
+  await playOnBoard(page, 'e2', 'e4')
+  await expect(page.getByText('Checking your move…')).toBeVisible()
+  await page.clock.fastForward(6_000)
+  await expect(page.getByText(/taking longer than usual/)).toBeVisible()
+  await page.getByRole('button', { name: 'Skip', exact: true }).click()
+  await expect(page.getByText(/against Second opponent/)).toBeVisible()
+  await expect(page.getByText('Find the best move, then keep going.')).toBeVisible()
+  await expect(page.getByText(/taking longer than usual/)).toHaveCount(0)
+  expect(errors).toEqual([])
+})
+
+test('A stuck engine check gives the board back after a timeout (#29)', async ({ page }) => {
+  let checks = 0
+  const errors = await fixture(page, async (route, url) => {
+    if (url.pathname === '/api/engine/analyse') { checks++; return } // never answers
+    if (route.request().method() === 'POST') {
+      await route.fulfill({ json: { ...answer, correct: true, uci: 'e2e4', san: 'e4', line_san: ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5', 'a6'] } })
+      return
+    }
+    await route.fulfill({ json: { stats, items: [item] } })
+  })
+  await page.clock.install()
+  await page.goto('/practice')
+  await playOnBoard(page, 'e2', 'e4')
+  await page.clock.runFor(500)
+  await expect(page.getByText('Good. Find the next move (2 of 3).')).toBeVisible()
+  // Bc4 isn't in the stored line, so the engine is asked, and it never answers.
+  await playOnBoard(page, 'f1', 'c4')
+  await expect(page.getByText('Checking that move with the engine…')).toBeVisible()
+  await page.clock.fastForward(6_000)
+  await expect(page.getByText(/taking longer than usual/)).toBeVisible()
+  await page.clock.fastForward(5_000)
+  await expect(page.getByRole('alert')).toContainText('The engine didn’t answer in time')
+  await expect(page.getByText(/wasn’t counted as wrong/)).toBeVisible()
+  // The board is usable again: the stored move is accepted.
+  await playOnBoard(page, 'g1', 'f3')
+  await page.clock.runFor(500)
+  await expect(page.getByText('Good. Find the next move (3 of 3).')).toBeVisible()
+  expect(checks).toBeGreaterThan(0)
+  expect(errors).toEqual([])
+})
+
+test('The promotion picker sits over the board and can be cancelled (#29)', async ({ page }) => {
+  const posted: unknown[] = []
+  const promo: PracticeItem = { ...item, fen: '4k3/1P6/8/8/8/8/8/4K3 w - - 0 1', phase: 'endgame' }
+  const errors = await fixture(page, async route => {
+    if (route.request().method() === 'POST') {
+      posted.push(route.request().postDataJSON())
+      await route.fulfill({ json: { ...answer, correct: true, uci: 'b7b8q', san: 'b8=Q+', best_uci: 'b7b8q', best_san: 'b8=Q+', line_san: ['b8=Q+'] } })
+      return
+    }
+    await route.fulfill({ json: { stats, items: [promo] } })
+  })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/practice')
+  await playOnBoard(page, 'b7', 'b8')
+  const picker = page.getByRole('group', { name: 'Promote pawn' })
+  await expect(picker).toBeInViewport()
+  await expect(page.getByText('Choose a piece to promote to.')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(picker).toHaveCount(0)
+  expect(posted).toEqual([])
+  await playOnBoard(page, 'b7', 'b8')
+  await picker.getByRole('button', { name: 'Queen' }).click()
+  await expect(page.getByText('Solved on the first try')).toBeVisible()
+  expect(posted).toEqual([{ uci: 'b7b8q' }])
+  expect(errors).toEqual([])
+})
+
+test('The board still takes moves after the page shifts under it (#29)', async ({ page }) => {
+  let posted = 0
+  const errors = await fixture(page, async route => {
+    if (route.request().method() === 'POST') { posted++; await route.fulfill({ json: { ...answer, correct: true, uci: 'e2e4', san: 'e4', line_san: ['e4'] } }); return }
+    await route.fulfill({ json: { stats, items: [item] } })
+  })
+  await page.goto('/practice')
+  const board = page.locator('cg-board')
+  await expect(board).toBeVisible()
+  // Hover the board so the library measures it, then move it down without a scroll or resize,
+  // as a banner or a wrapping header row would.
+  await board.hover()
+  await page.evaluate(() => {
+    const spacer = document.createElement('div')
+    spacer.style.height = '137px'
+    document.querySelector('main')!.prepend(spacer)
+  })
+  const box = (await board.boundingBox())!
+  for (const square of ['e2', 'e4']) {
+    await page.mouse.click(box.x + (square.charCodeAt(0) - 97 + 0.5) * box.width / 8, box.y + (8 - Number(square[1]) + 0.5) * box.height / 8)
+  }
+  await expect(page.getByText('Solved on the first try')).toBeVisible()
+  expect(posted).toBe(1)
+  expect(errors).toEqual([])
+})
+
+test('Turning off "Play out the line" mid-puzzle applies from the next position', async ({ page }) => {
+  const errors = await fixture(page, async route => {
+    if (route.request().method() === 'POST') {
+      await route.fulfill({ json: { ...answer, correct: true, uci: 'e2e4', san: 'e4', line_san: ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5', 'a6'] } })
+      return
+    }
+    await route.fulfill({ json: { stats, items: [item, { ...item, game_id: 202, opponent: 'Second opponent' }] } })
+  })
+  await page.goto('/practice')
+  await playOnBoard(page, 'e2', 'e4')
+  await expect(page.getByText('Good. Find the next move (2 of 3).')).toBeVisible()
+  await page.getByRole('switch', { name: 'Play out the line' }).click()
+  await expect(page.getByText('Good. Find the next move (2 of 3).')).toBeVisible()
+  await expect(page.getByText('“Play out the line” changes from the next position.')).toBeVisible()
+  await page.getByRole('button', { name: 'Skip', exact: true }).click()
+  await expect(page.getByText(/against Second opponent/)).toBeVisible()
+  await expect(page.getByText('Find the best move.', { exact: true })).toBeVisible()
+  await expect(page.getByText(/changes from the next position/)).toHaveCount(0)
+  expect(errors).toEqual([])
+})

@@ -277,7 +277,7 @@ impl RateLimiter {
     }
 }
 
-pub const RATE_RULES: &[(&str, &str, u32)] = &[
+const RATE_RULES: &[(&str, &str, u32)] = &[
     ("POST", "/api/auth/login", 10),
     ("POST", "/api/auth/password", 10),
     ("POST", "/api/engine/", 90),
@@ -286,9 +286,48 @@ pub const RATE_RULES: &[(&str, &str, u32)] = &[
     ("GET", "/api/accounts/", 240),
 ];
 
+/// The rate-limit bucket and per-minute budget for a request, if any. Practice answers are
+/// cheap local writes made at play speed. They get their own budget instead of falling under
+/// the `/api/accounts` rule, which is meant for adding and syncing accounts (#29).
+pub fn rate_rule(method: &str, path: &str) -> Option<(&'static str, u32)> {
+    if method == "POST"
+        && path.starts_with("/api/accounts/")
+        && path.split('/').nth(4) == Some("practice")
+    {
+        return Some(("practice-answer", 600));
+    }
+    RATE_RULES
+        .iter()
+        .find(|(m, prefix, _)| *m == method && path.starts_with(prefix))
+        .map(|&(_, prefix, rate)| (prefix, rate))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn practice_answers_do_not_share_the_account_budget() {
+        assert_eq!(
+            rate_rule("POST", "/api/accounts/1/practice/101/7"),
+            Some(("practice-answer", 600))
+        );
+        assert_eq!(
+            rate_rule("POST", "/api/accounts"),
+            Some(("/api/accounts", 30))
+        );
+        assert_eq!(
+            rate_rule("POST", "/api/accounts/1/sync"),
+            Some(("/api/accounts", 30))
+        );
+        assert_eq!(
+            rate_rule("GET", "/api/accounts/1/practice"),
+            Some(("/api/accounts/", 240))
+        );
+        assert_eq!(rate_rule("GET", "/api/status"), None);
+        let limiter = RateLimiter::default();
+        // A brisk Practice session: well over the old 30 per minute.
+        assert!((0..120).all(|_| limiter.allow("client", "practice-answer", 600)));
+    }
     #[test]
     fn verifies_a_hash_made_independently_by_python_hashlib() {
         // hashlib.scrypt(b"correct horse battery", salt=bytes(range(16)), n=16384, r=8, p=1, dklen=32)

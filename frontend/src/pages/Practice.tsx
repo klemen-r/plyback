@@ -34,6 +34,34 @@ const ALT_MARGIN = 5
 /** Depth and lines for that check: plenty to compare two moves, and fast enough to feel instant. */
 const CHECK_DEPTH = 14
 const CHECK_LINES = 4
+/** An engine check that has not answered by then is abandoned; the move is not counted. */
+const CHECK_TIMEOUT_MS = 10_000
+/** After this long without an answer, say why it is slow and what to do. */
+const SLOW_MS = 5_000
+
+class CheckTimeout extends Error {
+  constructor() { super('The engine didn’t answer in time. Reviews running in the background can slow it down.') }
+}
+
+/** Resolve with the check, or reject once it has taken longer than the user should wait. */
+function withinTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: number | undefined
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => { timer = window.setTimeout(() => reject(new CheckTimeout()), ms) }),
+  ]).finally(() => window.clearTimeout(timer))
+}
+
+/** True once `active` has stayed true for `ms`. */
+function useSlow(active: boolean, ms: number) {
+  const [slow, setSlow] = useState(false)
+  useEffect(() => {
+    if (!active) return
+    const timer = window.setTimeout(() => setSlow(true), ms)
+    return () => { window.clearTimeout(timer); setSlow(false) }
+  }, [active, ms])
+  return slow
+}
 
 function stored<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
   try { const v = localStorage.getItem(key); return allowed.includes(v as T) ? v as T : fallback } catch { return fallback }
@@ -93,6 +121,9 @@ function PracticeSession() {
   const [phase, setPhase] = useState<Phase>(() => stored('ci.practicePhase', ['all', 'opening', 'middlegame', 'endgame'], 'all'))
   const [range, setRange] = useState<Range>(() => stored('ci.practiceRange', ['all', 'today', '7', '30'], 'all'))
   const [fullLine, setFullLine] = useState(() => stored('ci.practiceLine', ['on', 'off'], 'on') === 'on')
+  /** The "Play out the line" setting this puzzle uses. A change mid-puzzle applies from the next one. */
+  const [lineFor, setLineFor] = useState(fullLine)
+  const fullLineRef = useRef(fullLine)
   const [index, setIndex] = useState(0)
   const [solution, setSolution] = useState<PracticeResult | null>(null)
   const [played, setPlayed] = useState<string[]>([])
@@ -151,6 +182,7 @@ function PracticeSession() {
     resetAnswer()
     setSolution(null); setPlayed([]); setStatus('solving'); setTries(0); setWrong(null); setHint(false)
     setNote(null); setLiveLine(null); setStep(null); setPromotion(null); setCheckError(null)
+    setLineFor(fullLineRef.current)
   }, [cancelCheck, resetAnswer])
   const restart = () => {
     resetPuzzle(); setIndex(0); setScore({ right: 0, done: 0 }); setStats(null)
@@ -190,7 +222,7 @@ function PracticeSession() {
   }
 
   const line = useMemo(() => liveLine ?? solution?.line_san ?? [], [liveLine, solution])
-  const ownTarget = fullLine ? Math.min(MAX_OWN_MOVES, Math.ceil(line.length / 2)) : 1
+  const ownTarget = lineFor ? Math.min(MAX_OWN_MOVES, Math.ceil(line.length / 2)) : 1
   const done = status === 'solved' || status === 'revealed'
   const firstTry = !!solution && solution.correct
 
@@ -204,7 +236,7 @@ function PracticeSession() {
     const moves = [...played, san]
     setPlayed(moves); setWrong(null); setHint(false)
     const own = Math.ceil(moves.length / 2)
-    const target = fullLine ? Math.min(MAX_OWN_MOVES, Math.ceil(path.length / 2)) : 1
+    const target = lineFor ? Math.min(MAX_OWN_MOVES, Math.ceil(path.length / 2)) : 1
     if (own >= target || moves.length >= path.length) { finish('solved', result); return }
     const opponent = path[moves.length]
     reply.current = window.setTimeout(() => {
@@ -218,7 +250,9 @@ function PracticeSession() {
   const currentFen = () => (item && played.length ? walk(item.fen, played).at(-1)!.fen : item?.fen ?? '')
 
   const onMove = async (orig: string, dest: string, piece?: Promotion) => {
-    if (!item || done || answer.isPending || status === 'checking') return
+    // Every path out of here changes the position or puts the board back, so the board
+    // never keeps a half-made move with no legal moves left (#29).
+    if (!item || done || answer.isPending || status === 'checking') { setNonce(n => n + 1); return }
     const current = generation.current
     setCheckError(null)
     const fen = currentFen()
@@ -245,7 +279,7 @@ function PracticeSession() {
     // Later in the line more than one move can be good, so ask the engine.
     setStatus('checking')
     try {
-      const r = await analyse(fen)
+      const r = await withinTimeout(analyse(fen), CHECK_TIMEOUT_MS)
       if (generation.current !== current) return
       const white = fen.split(' ')[1] === 'w'
       const side = (w: number) => (white ? w : 100 - w)
@@ -255,7 +289,7 @@ function PracticeSession() {
         // The stored line no longer applies, so continue with the engine's line after this move.
         const continued = mine.san[0] === mv.san ? [...played, ...mine.san] : [...played, mv.san]
         setLiveLine(continued); setStatus('solving')
-        setNote(`${mv.san} works too: the engine rates it about as well as ${line[played.length]}.${continued.length > played.length + 1 && fullLine ? ' The line continues from the engine’s analysis.' : ''}`)
+        setNote(`${mv.san} works too: the engine rates it about as well as ${line[played.length]}.${continued.length > played.length + 1 && lineFor ? ' The line continues from the engine’s analysis.' : ''}`)
         advance(mv.san, solution, continued)
       } else { setStatus('solving'); reject(mv.san) }
     } catch (error) {
@@ -288,6 +322,10 @@ function PracticeSession() {
     finish('revealed', r)
   }
 
+  const waiting = status === 'checking' || (answer.isPending && !solution)
+  const slow = useSlow(waiting, SLOW_MS)
+  const cancelPromotion = useCallback(() => { setPromotion(null); setNonce(n => n + 1) }, [])
+
   const positions = useMemo(() => (item && solution ? walk(item.fen, line) : []), [item, solution, line])
   const playedPositions = useMemo(() => (item ? walk(item.fen, played) : []), [item, played])
   const at = step ?? playedPositions.length
@@ -301,6 +339,7 @@ function PracticeSession() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.metaKey || e.ctrlKey) return
+      if (promotion) { if (e.key === 'Escape') { e.preventDefault(); cancelPromotion() } return }
       if (!done) return
       if (e.key === 'Enter' || e.key === 'n') { e.preventDefault(); next() }
       else if (e.key === 'ArrowRight') { e.preventDefault(); setStep(Math.min(positions.length, at + 1)) }
@@ -308,7 +347,7 @@ function PracticeSession() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [done, next, positions.length, at])
+  }, [done, next, positions.length, at, promotion, cancelPromotion])
 
   if (loading) return <Loading />
   if (!account) {
@@ -329,7 +368,11 @@ function PracticeSession() {
           {RANGES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
         </Select>
         <Tabs label="Mistake type" value={kind} onChange={choose<Kind>('ci.practiceKind', setKind)} options={KINDS} />
-        <Toggle label="Play out the line" checked={fullLine} onChange={v => { store('ci.practiceLine', v ? 'on' : 'off'); setFullLine(v) }} />
+        <Toggle label="Play out the line" checked={fullLine} onChange={v => {
+          store('ci.practiceLine', v ? 'on' : 'off'); setFullLine(v); fullLineRef.current = v
+          // Before the first move the puzzle can still change; after that it keeps its rules.
+          if (!played.length && !solution) setLineFor(v)
+        }} />
       </>} />
   )
   const progress = shownStats ? (
@@ -386,15 +429,19 @@ function PracticeSession() {
           </Card></div>
         ) : (
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
-            <div className="mx-auto w-full min-w-[280px] max-w-[620px] lg:max-w-[min(640px,calc(100vh-18.5rem))]">
+            <div className="relative mx-auto w-full min-w-[280px] max-w-[620px] lg:max-w-[min(640px,calc(100vh-18.5rem))]">
               <Board fen={fen!} orientation={item.color} lastMove={lastMove} shapes={shapes} nonce={nonce}
                 interactive={!done && yourTurn && status === 'solving' && !answer.isPending && !promotion} onMove={onBoardMove} />
               {promotion && (
-                <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface p-3" role="group" aria-label="Promote pawn">
-                  <span className="mr-1 text-[13px] text-fg-2">Promote to</span>
-                  {([['q', 'Queen'], ['r', 'Rook'], ['b', 'Bishop'], ['n', 'Knight']] as const).map(([p, label]) =>
-                    <Button key={p} onClick={() => { const { orig, dest } = promotion; setPromotion(null); void onMove(orig, dest, p) }}>{label}</Button>)}
-                  <Button variant="ghost" onClick={() => { setPromotion(null); setNonce(n => n + 1) }}>Cancel</Button>
+                // Over the board, so the picker is in view on a phone too.
+                <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/25 p-4 backdrop-blur-[2px]" onClick={cancelPromotion}>
+                  <div className="flex flex-wrap items-center justify-center gap-2 rounded-lg border border-line bg-surface/90 p-3 shadow-lg backdrop-blur-xl backdrop-saturate-150"
+                    role="group" aria-label="Promote pawn" onClick={e => e.stopPropagation()}>
+                    <span className="w-full text-center text-[13px] text-fg-2">Promote to</span>
+                    {([['q', 'Queen'], ['r', 'Rook'], ['b', 'Bishop'], ['n', 'Knight']] as const).map(([p, label]) =>
+                      <Button key={p} onClick={() => { const { orig, dest } = promotion; setPromotion(null); void onMove(orig, dest, p) }}>{label}</Button>)}
+                    <Button variant="ghost" onClick={cancelPromotion}>Cancel</Button>
+                  </div>
                 </div>
               )}
             </div>
@@ -419,10 +466,12 @@ function PracticeSession() {
                 {!done && (
                   <div className="mt-3 text-[13.5px]" aria-live="polite">
                     {status === 'checking' ? <span className="text-fg-2">Checking that move with the engine…</span>
+                      : answer.isPending && !solution ? <span className="text-fg-2">Checking your move…</span>
+                      : promotion ? <span className="text-fg-2">Choose a piece to promote to.</span>
                       : wrong ? <span className="flex items-center gap-1.5 text-bad"><X className="h-4 w-4" />{wrong} isn’t it. Try again.</span>
                       : played.length > 0 && yourTurn ? <span className="flex items-center gap-1.5 text-good"><Check className="h-4 w-4" />Good. Find the next move ({ownDone + 1} of {ownTarget}).</span>
                       : played.length > 0 ? <span className="text-fg-2">Your opponent replies…</span>
-                      : <span className="text-fg-2">Find the best move{fullLine ? ', then keep going' : ''}.</span>}
+                      : <span className="text-fg-2">Find the best move{lineFor ? ', then keep going' : ''}.</span>}
                   </div>
                 )}
                 {!done && (
@@ -432,9 +481,15 @@ function PracticeSession() {
                     <Button variant="ghost" onClick={next}>Skip</Button>
                   </div>
                 )}
+                {!done && lineFor !== fullLine && <p className="mt-2 text-[13px] text-fg-2">“Play out the line” changes from the next position.</p>}
+                {!done && waiting && slow && (
+                  <p className="mt-2 text-[13px] text-fg-2" role="status">
+                    This is taking longer than usual. Reviews running in the background can slow it down. You can wait, or skip this position.
+                  </p>
+                )}
                 {!done && note && <p className="mt-2 text-[13px] text-fg-2">{note}</p>}
                 {answer.error && <div className="mt-3"><ErrorNote error={answer.error} /></div>}
-                {!!checkError && <div className="mt-3"><ErrorNote error={checkError} /><p className="mt-2 text-[13px] text-fg-2">The move wasn’t counted as wrong. Try it again, or use a hint to follow the stored line.</p></div>}
+                {!!checkError && <div className="mt-3"><ErrorNote error={checkError} /><p className="mt-2 text-[13px] text-fg-2">The move wasn’t counted as wrong. Play it again to retry, or use a hint to follow the stored line.</p></div>}
               </Card>
 
               {done && solution && (

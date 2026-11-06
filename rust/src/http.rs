@@ -129,13 +129,10 @@ impl App {
             {
                 return Err(api_error(401, "Sign in to continue."));
             }
-            for &(method, prefix, rate) in security::RATE_RULES {
-                if meta.method == method
-                    && meta.path.starts_with(prefix)
-                    && !self.limiter.allow(&meta.client, prefix, rate)
-                {
-                    return Err(api_error(429, "Too many requests. Try again in a minute."));
-                }
+            if let Some((rule, rate)) = security::rate_rule(&meta.method, &meta.path)
+                && !self.limiter.allow(&meta.client, rule, rate)
+            {
+                return Err(api_error(429, "Too many requests. Try again in a minute."));
             }
         }
         Ok(())
