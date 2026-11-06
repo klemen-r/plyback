@@ -41,6 +41,8 @@ test.describe.serial('Plyback end to end', () => {
     const messages: string[] = []
     errors.set(page, messages)
     page.on('pageerror', error => messages.push(error.message))
+    // Invalid SVG geometry (e.g. arrows drawn on a board without a size) is a console error, not an exception.
+    page.on('console', message => { if (message.type() === 'error' && /attribute .*Expected/.test(message.text())) messages.push(message.text()) })
   })
   test.afterEach(async ({ page }) => expect(errors.get(page)).toEqual([]))
   test('onboarding: connect a Chess.com account', async ({ page }) => {

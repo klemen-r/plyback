@@ -65,7 +65,12 @@ export default function Board({ fen, orientation, lastMove, shapes, interactive,
   useEffect(() => {
     if (!el.current) return
     api.current = Chessground(el.current, config())
-    const ro = new ResizeObserver(() => api.current?.redrawAll())
+    // A board being removed or hidden reports 0×0. Redrawing then divides by zero and writes
+    // NaN arrow coordinates, so wait until it has a size again.
+    const ro = new ResizeObserver(([entry]) => {
+      if (entry && (entry.contentRect.width === 0 || entry.contentRect.height === 0)) return
+      api.current?.redrawAll()
+    })
     ro.observe(el.current)
     return () => {
       ro.disconnect()

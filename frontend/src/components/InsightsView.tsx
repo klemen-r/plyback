@@ -5,6 +5,7 @@ import { memo, useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { PHASE_LABEL, REASON_LABEL } from '../lib/classification'
 import { cap, fmtDate, num, pct } from '../lib/format'
+import { localHours } from '../lib/hours'
 import type { Color, Example, Insights, OpeningFamily, Priority, Resource } from '../lib/types'
 import { BarChart, LineChart, WDLBar } from './charts'
 import PositionCard, { MiniBoard } from './Evidence'
@@ -427,12 +428,7 @@ function Recurring({ data }: { data: Insights }) {
 function Results({ data }: { data: Insights }) {
   const r = data.results
   const s = data.sessions
-  const [offset] = useState(() => Math.round(-new Date().getTimezoneOffset() / 60))
-  const hours = useMemo(() => {
-    const arr = Array.from({ length: 24 }, (_, h) => ({ hour: `${h}:00`, games: 0, score: null as number | null }))
-    r.by_hour_utc.forEach(b => { const lh = (b.hour_utc + offset + 24) % 24; arr[lh] = { hour: `${lh}:00`, games: b.games, score: b.games >= 5 ? b.score : null } })
-    return arr
-  }, [r.by_hour_utc, offset])
+  const hours = useMemo(() => localHours(r), [r])
   const reasons = (obj: Record<string, number>) => Object.entries(obj).sort((a, b) => b[1] - a[1])
   return (
     <div className="space-y-4">
@@ -486,8 +482,10 @@ function Results({ data }: { data: Insights }) {
 }
 
 function Trend({ data }: { data: Insights }) {
-  const tcs = Object.keys(data.ratings)
-  const [tc, setTc] = useState(tcs.sort((a, b) => data.ratings[b].games - data.ratings[a].games)[0] ?? '')
+  const tcs = Object.keys(data.ratings).sort((a, b) => data.ratings[b].games - data.ratings[a].games)
+  const [chosen, setTc] = useState(tcs[0] ?? '')
+  // The filters can remove the chosen time control; fall back to the one with most games.
+  const tc = data.ratings[chosen] ? chosen : tcs[0] ?? ''
   const rating = data.ratings[tc]
   return (
     <div className="grid gap-4 lg:grid-cols-2">

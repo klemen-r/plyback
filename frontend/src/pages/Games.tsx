@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, ChevronLeft, ChevronRight, Search, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import ClassIcon from '../components/ClassIcon'
 import { MiniBoard } from '../components/Evidence'
@@ -82,6 +82,21 @@ export default function Games() {
   const q = useQuery({ queryKey: ['games', query], queryFn: () => api.games(query), placeholderData: p => p, refetchInterval: 15000 })
   const openings = useQuery({ queryKey: ['openings', account?.id], queryFn: () => api.openings(account?.id) })
   const pages = q.data ? Math.max(1, Math.ceil(q.data.total / PAGE)) : 1
+  // Another account starts on its first page. A page past the end (fewer games than before)
+  // moves to the last page instead of showing an empty table.
+  const shownAccount = useRef(account?.id)
+  useEffect(() => {
+    if (shownAccount.current === account?.id) return
+    const switched = shownAccount.current !== undefined
+    shownAccount.current = account?.id
+    // Not on the first load, so a link to a later page still works.
+    if (switched && sp.has('page')) set('page', '')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account?.id])
+  useEffect(() => {
+    if (q.data && !q.isPlaceholderData && page > pages) set('page', pages > 1 ? String(pages) : '')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q.data, q.isPlaceholderData, page, pages])
   const wide = typeof window !== 'undefined' && window.matchMedia('(min-width: 1280px)').matches
 
   return (

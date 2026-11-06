@@ -45,7 +45,9 @@ export default function InsightsPage() {
   if (!account) return <Empty icon={<BarChart3 className="h-10 w-10" />} title="Connect a Chess.com account first" action={<Link to="/accounts"><Button variant="primary">Connect account</Button></Link>} />
 
   const dq = q.data?.data_quality
-  const missing = dq ? dq.games - dq.analyzed : 0
+  // Only standard and Chess960 games can be reviewed; variants such as odds chess stay unanalysed.
+  const missing = dq ? dq.unanalyzed_ids?.length ?? dq.games - dq.analyzed : 0
+  const variants = dq && dq.unanalyzed_ids && dq.unanalyzed_ids.length < 2000 ? dq.games - dq.analyzed - missing : 0
   return (
     <div className="appear">
       <PageHeader title="Account insights" subtitle={`Patterns across ${account.display_name}'s games, backed by engine analysis of every move.`}
@@ -60,6 +62,7 @@ export default function InsightsPage() {
               <span className="text-xs text-fg-3">{q.isFetching ? 'updating…' : q.data?.generated_at ? `updated ${timeAgo(q.data.generated_at)}` : ''}</span>
             </div>
             <Progress value={dq.analyzed} max={dq.games} className="mt-2" />
+            {variants > 0 && <p className="mt-2 text-xs text-fg-3">{variants === 1 ? '1 game is' : `${variants} games are`} a chess variant, which Plyback doesn’t review.</p>}
           </div>
           {missing > 0 && (
             <Button variant="primary" size="sm" onClick={() => analyze.mutate()} loading={analyze.isPending}>

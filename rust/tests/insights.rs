@@ -49,7 +49,12 @@ fn full_insights_match_preserved_python_oracle() {
     let expected: Value =
         serde_json::from_str(include_str!("fixtures/insights-expected.json")).unwrap();
     for case in expected.as_array().unwrap() {
-        let result = compute(&db, 1, &case["filters"]).unwrap();
+        let mut result = compute(&db, 1, &case["filters"]).unwrap();
+        // Native-only extension that the preserved Python oracle does not produce.
+        result["results"]
+            .as_object_mut()
+            .unwrap()
+            .remove("by_quarter_hour");
         equal(
             &result,
             &case["result"],
@@ -343,5 +348,37 @@ fn benchmark_insights_on_readonly_snapshot() {
             format!("{}\n", serde_json::to_string_pretty(&metrics).unwrap()),
         )
         .expect("could not write insight benchmark metrics");
+    }
+}
+#[test]
+fn quarter_hour_buckets_agree_with_utc_hours() {
+    let db = fixture();
+    let result = compute(&db, 1, &json!({})).unwrap();
+    let quarters = result["results"]["by_quarter_hour"].as_array().unwrap();
+    let mut games = [0_u64; 24];
+    let mut points = [0_f64; 24];
+    let mut last = i64::MIN;
+    for q in quarters {
+        let index = q[0].as_i64().unwrap();
+        assert!(index > last, "buckets are sorted and distinct");
+        last = index;
+        let hour = (index * 900).div_euclid(3600).rem_euclid(24) as usize;
+        games[hour] += q[1].as_u64().unwrap();
+        points[hour] += q[2].as_f64().unwrap();
+    }
+    for bucket in result["results"]["by_hour_utc"].as_array().unwrap() {
+        let hour = bucket["hour_utc"].as_u64().unwrap() as usize;
+        assert_eq!(
+            games[hour],
+            bucket["games"].as_u64().unwrap(),
+            "hour {hour}"
+        );
+        if games[hour] > 0 {
+            let score = (1000.0 * points[hour] / games[hour] as f64).round() / 10.0;
+            assert!(
+                (score - bucket["score"].as_f64().unwrap()).abs() < 0.051,
+                "hour {hour}"
+            );
+        }
     }
 }

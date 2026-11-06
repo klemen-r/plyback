@@ -126,7 +126,11 @@ function GameReviewContent() {
   const [variation, setVariation] = useState<Variation | null>(null)
   const [showArrows, setShowArrows] = useState(true)
   const [hint, setHint] = useState(false)
-  const [depth, setDepth] = useState<number>(20)
+  // Live analysis starts at the depth chosen in Settings; the tabs change it for this game.
+  const settings = useQuery({ queryKey: ['settings'], queryFn: api.settings, staleTime: 60_000 })
+  const [chosenDepth, setDepth] = useState<number | null>(null)
+  const depth = chosenDepth ?? settings.data?.interactive_depth ?? 20
+  const depthOptions = [...new Set([16, 20, 24, depth])].sort((a, b) => a - b).map(d => ({ value: String(d), label: `d${d}` }))
   const [promotion, setPromotion] = useState<{ orig: string; dest: string } | null>(null)
   const [enginePaused, setEnginePaused] = useState(false)
   const [engineFen, setEngineFen] = useState('')
@@ -202,7 +206,7 @@ function GameReviewContent() {
   const live = useQuery({
     queryKey: ['engine', fen, depth],
     queryFn: ({ signal }) => api.engine(fen, depth, 3, signal),
-    enabled: liveEnabled && engineFen === fen,
+    enabled: liveEnabled && engineFen === fen && !settings.isPending,
     staleTime: Infinity,
   })
   useEffect(() => {
@@ -406,8 +410,7 @@ function GameReviewContent() {
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-2 text-sm font-semibold"><Cpu className="h-4 w-4 text-accent-ink" />Live engine</div>
                 <Button size="sm" onClick={() => setEnginePaused(p => !p)}>{enginePaused ? 'Start engine' : 'Stop engine'}</Button>
-                <Tabs value={String(depth)} onChange={v => setDepth(Number(v))}
-                  options={[{ value: '16', label: 'd16' }, { value: '20', label: 'd20' }, { value: '24', label: 'd24' }]} />
+                <Tabs value={String(depth)} onChange={v => setDepth(Number(v))} options={depthOptions} />
               </div>
               {enginePaused ? <div className="py-3 text-sm text-fg-2">Engine paused.</div> : live.isFetching && !live.data ? <div className="flex items-center gap-2 py-3 text-sm text-fg-2"><Spinner className="h-4 w-4" />Thinking…</div>
                 : live.error ? <ErrorNote error={live.error} />

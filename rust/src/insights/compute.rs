@@ -808,6 +808,18 @@ fn results(games: &[&Game]) -> Value {
         ));
     }
     let hours=(0..24).map(|h|{let sub=games.iter().filter(|g|g.end!=0&&DateTime::from_timestamp(g.end,0).is_some_and(|d|d.hour()==h)).collect::<Vec<_>>();json!({"hour_utc":h,"games":sub.len(),"score":pct(sub.iter().map(|g|g.score).sum(),sub.len())})}).collect::<Vec<_>>();
+    // Native extension: 15-minute UTC buckets as [index, games, score points], so the browser can
+    // place each game in the local hour that applied on its date, summer time included.
+    let mut quarters = BTreeMap::<i64, (usize, f64)>::new();
+    for g in games.iter().filter(|g| g.end != 0) {
+        let bucket = quarters.entry(g.end.div_euclid(900)).or_default();
+        bucket.0 += 1;
+        bucket.1 += g.score;
+    }
+    let by_quarter_hour = quarters
+        .into_iter()
+        .map(|(q, (n, points))| json!([q, n, round(points, 1)]))
+        .collect::<Vec<_>>();
     let mut lengths = Vec::new();
     for (lo, hi, label) in [
         (0, 40, "< 20 moves"),
@@ -824,7 +836,7 @@ fn results(games: &[&Game]) -> Value {
             lengths.push(extend(wdl(&sub), json!({"label":label})));
         }
     }
-    json!({"wins_by":reasons("win"),"losses_by":reasons("loss"),"draws_by":reasons("draw"),"by_opponent":by_opp,"by_hour_utc":hours,"by_length":lengths})
+    json!({"wins_by":reasons("win"),"losses_by":reasons("loss"),"draws_by":reasons("draw"),"by_opponent":by_opp,"by_hour_utc":hours,"by_quarter_hour":by_quarter_hour,"by_length":lengths})
 }
 
 fn sessions(games: &[&Game]) -> Value {

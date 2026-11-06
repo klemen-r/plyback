@@ -230,6 +230,8 @@ export interface Insights {
     wins_by: Record<string, number>; losses_by: Record<string, number>; draws_by: Record<string, number>
     by_opponent: (WDL & { label: string; expected: number })[]
     by_hour_utc: { hour_utc: number; games: number; score: number | null }[]
+    /** 15-minute UTC buckets: [index (unix time / 900), games, score points]. Absent in older saved reports. */
+    by_quarter_hour?: [number, number, number][]
     by_length: (WDL & { label: string })[]
   }
   sessions: {
