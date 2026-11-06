@@ -37,6 +37,7 @@ export default function EvalGraph({ wins, evals, moves, current, onSelect, heigh
   }
 
   const hp = hover ?? null
+  const hoveredMove = hp !== null && hp > 0 ? moves[hp - 1] : null
   return (
     <div className="relative select-none">
       <svg
@@ -62,7 +63,7 @@ export default function EvalGraph({ wins, evals, moves, current, onSelect, heigh
       {hp !== null && (
         <div className="pointer-events-none absolute -top-9 z-10 -translate-x-1/2 whitespace-nowrap rounded-md border border-line bg-surface px-2 py-1 text-xs shadow-lg"
           style={{ left: `${(hp / n) * 100}%` }}>
-          {hp === 0 ? 'Start' : `${Math.ceil(hp / 2)}${hp % 2 ? '.' : '…'} ${moves[hp - 1]?.san ?? ''}`} · <span className="font-mono">{formatEval(evals[hp])}</span>
+          {hoveredMove ? `${Number(hoveredMove.fen_before.split(' ')[5])}${hoveredMove.color === 'b' ? '…' : '.'} ${hoveredMove.san}` : 'Start'} · <span className="font-mono">{formatEval(evals[hp])}</span>
         </div>
       )}
     </div>

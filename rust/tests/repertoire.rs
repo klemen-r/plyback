@@ -271,7 +271,56 @@ fn merging_groups_move_orders_that_reach_the_same_position() {
         .collect();
     assert_eq!(nf3.len(), 1);
     assert_eq!(nf3[0]["games"], 1);
+    let positions = merged["positions"].as_array().unwrap();
+    let root = positions
+        .iter()
+        .find(|p| p["id"] == merged["root"])
+        .unwrap();
+    assert_eq!(root["games"], 4); // The shuffle's return does not add a fifth game.
+    assert_eq!(root["draws"], 1);
+    assert_eq!(root["score"], 0.625);
+    let shuffled = positions.iter().find(|p| p["id"] == nf3[0]["to"]).unwrap();
+    assert_eq!(shuffled["games"], 1);
+    assert_eq!(shuffled["score"], 0.5);
+    assert_eq!(shuffled["orders"], 2);
     assert_eq!(get(&db, &[("merge", "false")])["merged"], false);
+}
+
+#[test]
+fn merged_position_counts_each_game_once_across_incoming_edges() {
+    let repeated: Vec<_> = ["Nf3", "Nf6", "Nc3", "Nc6", "Ng1", "Nb8", "Nf3"]
+        .into_iter()
+        .map(|san| (san, false, "best"))
+        .collect();
+    let db = fixture(&[
+        (1, "white", "win", "resigned", 100, "chess", &repeated),
+        (2, "white", "resigned", "win", 200, "chess", &repeated[..3]),
+    ]);
+    for merge in ["false", "true"] {
+        let tree = get(&db, &[("merge", merge)]);
+        let first = node(&tree, "Nf3 Nf6 Nc3");
+        let reached = tree["positions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == first["to"])
+            .unwrap();
+        assert_eq!(reached["games"], 2);
+        assert_eq!(reached["wins"], 1);
+        assert_eq!(reached["losses"], 1);
+        assert_eq!(reached["draws"], 0);
+        assert_eq!(reached["score"], 0.5);
+        assert_eq!(reached["orders"], if merge == "true" { 2 } else { 1 });
+        // Edges still describe the distinct moves used to reach the position.
+        let into: i64 = tree["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|n| n["to"] == first["to"])
+            .map(|n| n["games"].as_i64().unwrap())
+            .sum();
+        assert_eq!(into, if merge == "true" { 3 } else { 2 });
+    }
 }
 
 #[test]

@@ -362,7 +362,7 @@ function GameReviewContent() {
           {inVar && (
             <div className="rounded-lg border border-accent-ink/50 bg-surface p-4">
               <div className="mb-2 flex items-center justify-between">
-                <div className="text-sm font-semibold text-accent-ink">{variation.source === 'engine' ? 'Engine line' : 'Your variation'} <span className="font-normal text-fg-2">from move {Math.ceil((variation.basePly + 1) / 2)}</span></div>
+                <div className="text-sm font-semibold text-accent-ink">{variation.source === 'engine' ? 'Engine line' : 'Your variation'} <span className="font-normal text-fg-2">from move {Number(variation.baseFen.split(' ')[5])}{variation.baseFen.split(' ')[1] === 'b' ? '…' : ''}</span></div>
                 <Button size="sm" variant="ghost" onClick={() => setVariation(null)}><X className="h-4 w-4" />Back to game</Button>
               </div>
               <div className="flex flex-wrap gap-1 font-mono text-sm">
@@ -382,7 +382,7 @@ function GameReviewContent() {
           )}
 
           <Card className="lg:flex lg:min-h-[16rem] lg:!shrink lg:flex-col" bodyClass="p-0 lg:flex lg:min-h-0 lg:flex-col lg:overflow-y-auto">
-            {analysis && <MoveInsight current={current} ply={ply} allowExploration={canExplore} onPlayLine={(sans, idx) => current && playLine(current.fen_before, ply - 1, sans, idx)} />}
+            {analysis && <MoveInsight current={current} allowExploration={canExplore} onPlayLine={(sans, idx) => current && playLine(current.fen_before, ply - 1, sans, idx)} />}
             {analysis && analysis.key_moments.length > 0 && (
               <div className="border-b border-line px-4 py-3">
                 <div className="mb-2 text-[13px] font-medium text-fg-2">Key moments</div>
@@ -393,7 +393,7 @@ function GameReviewContent() {
                     return (
                       <button key={p} onClick={() => go(p)} className={clsx('flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors max-sm:py-1.5', p === ply ? 'border-accent-ink bg-hover' : 'border-line bg-subtle hover:bg-hover')}>
                         <ClassIcon c={m.classification} size={14} />
-                        <span className="font-mono">{Math.ceil(p / 2)}{p % 2 ? '.' : '…'} {m.san}</span>
+                        <span className="font-mono">{Number(m.fen_before.split(' ')[5])}{m.fen_before.split(' ')[1] === 'b' ? '…' : '.'} {m.san}</span>
                       </button>
                     )
                   })}
@@ -463,7 +463,7 @@ function EngineLineRow({ evalText, sans, depth, onClick, disabled }: { evalText:
   )
 }
 
-function MoveInsight({ current, ply, onPlayLine, allowExploration }: { current: MoveRow | null; ply: number; onPlayLine: (sans: string[], idx: number) => void; allowExploration: boolean }) {
+function MoveInsight({ current, onPlayLine, allowExploration }: { current: MoveRow | null; onPlayLine: (sans: string[], idx: number) => void; allowExploration: boolean }) {
   if (!current) {
     return (
       <div className="border-b border-line p-4 text-sm text-fg-2">
@@ -473,7 +473,7 @@ function MoveInsight({ current, ply, onPlayLine, allowExploration }: { current: 
     )
   }
   const c = current.classification as Classification | undefined
-  const moveNo = `${Math.ceil(ply / 2)}${ply % 2 ? '.' : '…'}`
+  const moveNo = `${Number(current.fen_before.split(' ')[5])}${current.fen_before.split(' ')[1] === 'b' ? '…' : '.'}`
   return (
     <div className="border-b border-line p-4" style={c ? { boxShadow: `inset 3px 0 0 ${CLASS_META[c].color}` } : undefined}>
       <div className="flex items-center justify-between gap-2" aria-live="polite">

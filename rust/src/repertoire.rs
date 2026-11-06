@@ -13,7 +13,7 @@ use anyhow::Result;
 use rusqlite::{OptionalExtension, params};
 use serde_json::{Value, json};
 use shakmaty::{Chess, Position, san::San};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub const DEFAULT_PLIES: i64 = 16;
 const STANDARD_START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -60,6 +60,33 @@ struct Node {
 }
 /// How many recent games each move links to.
 const RECENT_GAMES: usize = 3;
+
+/// Incoming edges overlap when a game returns to a position by another move.
+#[derive(Default)]
+struct Reached {
+    games: i64,
+    wins: i64,
+    draws: i64,
+    losses: i64,
+    last_game: i64,
+    paths: HashSet<String>,
+}
+impl Reached {
+    fn visit(&mut self, game: i64, score: f64, path: &str) {
+        self.paths.insert(path.to_owned());
+        // Rows are grouped by game, so the last id suffices to deduplicate.
+        if self.games > 0 && self.last_game == game {
+            return;
+        }
+        self.last_game = game;
+        self.games += 1;
+        match score {
+            s if s >= 1.0 => self.wins += 1,
+            s if s > 0.0 => self.draws += 1,
+            _ => self.losses += 1,
+        }
+    }
+}
 
 struct MoveRow {
     game: i64,
@@ -153,6 +180,7 @@ pub fn compute(
         String::new()
     });
     let mut nodes: HashMap<(usize, String), Node> = HashMap::new();
+    let mut reached: BTreeMap<usize, Reached> = BTreeMap::new();
     let (mut games, mut wins, mut draws, mut losses) = (0, 0, 0, 0);
     let mut start = 0;
     while start < rows.len() {
@@ -182,6 +210,7 @@ pub fn compute(
         let mut in_book = true;
         let mut position = Chess::default();
         let mut at = root;
+        reached.entry(root).or_default().visit(game, score, "");
         for m in moves {
             // Follow the game on a board to name the positions; stop at anything unreadable.
             let Some(played) = m
@@ -199,6 +228,7 @@ pub fn compute(
             path.push_str(&m.san);
             let epd = crate::pgn::epd(&position);
             let to = id_of(if merge { epd.clone() } else { path.clone() });
+            reached.entry(to).or_default().visit(game, score, &path);
             let from = std::mem::replace(&mut at, to);
             let node = nodes.entry((from, m.san.clone())).or_default();
             if node.games > 0 && node.last_game == m.game {
@@ -324,6 +354,15 @@ pub fn compute(
         "draws": draws,
         "losses": losses,
         "nodes": nodes.iter().map(|(p, n)| public(p, n)).collect::<Vec<_>>(),
+        "positions": reached.iter().map(|(id, p)| json!({
+            "id": id,
+            "games": p.games,
+            "wins": p.wins,
+            "draws": p.draws,
+            "losses": p.losses,
+            "score": (p.wins as f64 + 0.5 * p.draws as f64) / p.games.max(1) as f64,
+            "orders": p.paths.len(),
+        })).collect::<Vec<_>>(),
         "problems": problems.iter().take(8).map(|e| public(&e.0, &e.1)).collect::<Vec<_>>(),
     }))
 }

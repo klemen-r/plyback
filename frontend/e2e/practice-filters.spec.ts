@@ -227,7 +227,8 @@ test('Openings depth preserves the line and distinguishes a depth boundary from 
       book: 1, left_book: 0, errors: 0, blunders: 0, misses: 0, avg_loss: 0,
       eco: null, opening: null, recent_games: [], recent_plies: [], from: index, to: index + 1, orders: 1,
     }))
-    const repertoire: Repertoire = { color: 'white', plies, merged: false, root: 0, games: 1, total_games: 1, wins: 1, draws: 0, losses: 0, nodes, problems: [] }
+    const positions = nodes.map(n => ({ id: n.to, games: n.games, wins: n.wins, draws: n.draws, losses: n.losses, score: n.score, orders: n.orders }))
+    const repertoire: Repertoire = { color: 'white', plies, merged: false, root: 0, games: 1, total_games: 1, wins: 1, draws: 0, losses: 0, nodes, positions, problems: [] }
     await route.fulfill({ json: repertoire })
   })
   await page.goto(`/openings?${new URLSearchParams({ line: sans.join(' ') })}`)
@@ -260,11 +261,16 @@ test('Openings can merge move orders that reach the same position', async ({ pag
       node('d4', 0, 1), node('d4 Nf6', 1, 2), node('d4 Nf6 c4', 2, 3), node('d4 Nf6 c4 e6', 3, 4),
       node('c4', 0, 5), node('c4 e6', 5, 6), node('c4 e6 d4', 6, 7), node('c4 e6 d4 Nf6', 7, 4),
       node('d4 Nf6 c4 e6 Nc3', 4, 8, { games: 2, wins: 2, orders: 2, recent_games: [7, 8], recent_plies: [5, 5] }),
+      // One of those games returns to position 4 via a third incoming edge.
+      node('d4 Nf6 c4 e6 Nc3 Ng8', 8, 9), node('d4 Nf6 c4 e6 Nc3 Ng8 Nb1', 9, 10),
+      node('d4 Nf6 c4 e6 Nc3 Ng8 Nb1 Nf6', 10, 4),
     ] : [
       node('d4', 0, 1), node('d4 Nf6', 1, 2), node('d4 Nf6 c4', 2, 3), node('d4 Nf6 c4 e6', 3, 4), node('d4 Nf6 c4 e6 Nc3', 4, 5),
       node('c4', 0, 6), node('c4 e6', 6, 7), node('c4 e6 d4', 7, 8), node('c4 e6 d4 Nf6', 8, 9), node('c4 e6 d4 Nf6 Nc3', 9, 10),
     ]
-    const repertoire: Repertoire = { color: 'white', plies: 16, merged, root: 0, games: 2, total_games: 2, wins: 2, draws: 0, losses: 0, nodes, problems: [] }
+    const positions = [...new Map(nodes.map(n => [n.to, { id: n.to, games: n.games, wins: n.wins, draws: n.draws, losses: n.losses, score: n.score, orders: n.orders }])).values()]
+    if (merged) Object.assign(positions.find(p => p.id === 4)!, { games: 2, wins: 2, orders: 3 })
+    const repertoire: Repertoire = { color: 'white', plies: 16, merged, root: 0, games: 2, total_games: 2, wins: 2, draws: 0, losses: 0, nodes, positions, problems: [] }
     await route.fulfill({ json: repertoire })
   })
   await page.goto(`/openings?${new URLSearchParams({ line: 'c4 e6 d4 Nf6' })}`)
@@ -274,7 +280,7 @@ test('Openings can merge move orders that reach the same position', async ({ pag
   // The line is kept, and the move from the shared position counts both games.
   await expect(page.getByLabel('Current line')).toContainText('2. d4Nf6')
   await expect(page.getByRole('button', { name: 'Nc3 2 100% 2 move orders' })).toBeVisible()
-  await expect(page.getByText('2 of your games reached this position by 2 move orders · you scored 100%')).toBeVisible()
+  await expect(page.getByText('2 of your games reached this position by 3 move orders · you scored 100%')).toBeVisible()
   await page.getByRole('button', { name: /^Nc3/ }).click()
   await expect(page.getByText('2 of your games reached this position by 2 move orders · you scored 100%')).toBeVisible()
   await expect(page.getByRole('link', { name: 'Latest game' })).toHaveAttribute('href', '/games/7?ply=5')

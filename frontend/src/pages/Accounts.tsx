@@ -92,10 +92,15 @@ function AccountCard({ a }: { a: Account }) {
       </div>
       {confirm && <div className="border-t border-line bg-bad/5 px-5 py-3 text-[13px]">Removing deletes this account's games and reviews from Plyback. Games shared with another connected account are kept.</div>}
       <div className="grid gap-x-10 border-t border-line px-5 md:grid-cols-3">
-        <Switch checked={a.sync_enabled} onChange={v => patch.mutate({ sync_enabled: v })} label="Sync automatically" description="Check Chess.com for new games" />
-        <Switch checked={a.auto_analyze} onChange={v => patch.mutate({ auto_analyze: v })} label="Review new games" description="As soon as they finish" />
-        <Switch checked={a.analyze_history} onChange={v => patch.mutate({ analyze_history: v })} label="Review history" description="Older games, in the background" />
+        <Switch checked={a.sync_enabled} disabled={patch.isPending} onChange={v => patch.mutate({ sync_enabled: v })} label="Sync automatically" description="Check Chess.com for new games" />
+        <Switch checked={a.auto_analyze} disabled={patch.isPending} onChange={v => patch.mutate({ auto_analyze: v })} label="Review new games" description="As soon as they finish" />
+        <Switch checked={a.analyze_history} disabled={patch.isPending} onChange={v => patch.mutate({ analyze_history: v })} label="Review history" description="Older games, in the background" />
       </div>
+      {(patch.error || sync.error || del.error) && <div className="space-y-2 px-5 pb-4">
+        {patch.error && <ErrorNote error={patch.error} />}
+        {sync.error && <ErrorNote error={sync.error} />}
+        {del.error && <ErrorNote error={del.error} />}
+      </div>}
     </Card>
   )
 }

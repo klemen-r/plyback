@@ -28,6 +28,7 @@ pub struct Services {
     stop: AtomicBool,
     started: AtomicBool,
     paused: AtomicBool,
+    pause_control: Mutex<()>,
     generation: AtomicU64,
     wake: (Mutex<u64>, Condvar),
     handles: Mutex<Vec<JoinHandle<()>>>,
@@ -43,11 +44,19 @@ pub struct Services {
 
 impl Services {
     pub fn new(db: Arc<Database>) -> Result<Arc<Self>> {
+        // Queue state is internal to the controls, rather than an editable
+        // engine setting. Restore it before any background worker can start.
+        let paused = db
+            .one("SELECT value FROM settings WHERE key='queue_paused'", &[])?
+            .map(|row| serde_json::from_str::<bool>(row["value"].as_str().unwrap_or("")))
+            .transpose()?
+            .unwrap_or(false);
         Ok(Arc::new(Self {
             db,
             stop: AtomicBool::new(false),
             started: AtomicBool::new(false),
-            paused: AtomicBool::new(false),
+            paused: AtomicBool::new(paused),
+            pause_control: Mutex::new(()),
             generation: AtomicU64::new(0),
             wake: (Mutex::new(0), Condvar::new()),
             handles: Mutex::new(Vec::new()),
@@ -113,6 +122,20 @@ impl Services {
     pub fn apply_settings(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
         self.notify();
+    }
+    fn set_paused(&self, paused: bool) -> Result<()> {
+        // Serialize persistence with publication to workers. Concurrent pause
+        // and resume requests must leave memory agreeing with the durable row.
+        let _control = self.pause_control.lock().unwrap();
+        self.db.execute(
+            "INSERT INTO settings(key,value) VALUES('queue_paused',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            &[json!(paused.to_string())],
+        )?;
+        self.paused.store(paused, Ordering::SeqCst);
+        if !paused {
+            self.notify();
+        }
+        Ok(())
     }
     pub fn handle(&self, method: &str, path: &str, q: &Query, body: &Value) -> Option<ApiResult> {
         self.route(method, path, q, body)

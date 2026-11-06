@@ -337,4 +337,6 @@ export interface RepertoireNode {
 export interface Repertoire {
   color: Color; plies: number; merged: boolean; root: number; games: number; total_games: number; wins: number; draws: number; losses: number
   nodes: RepertoireNode[]; problems: RepertoireNode[]
+  /** Distinct games reaching each position, including across incoming edges. */
+  positions: { id: number; games: number; wins: number; draws: number; losses: number; score: number; orders: number }[]
 }

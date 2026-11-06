@@ -17,10 +17,9 @@ export default function MoveList({ moves, current, onSelect, result, className =
     }
   }, [current])
 
-  const startsWithBlack = moves[0]?.color === 'b'
   const rows: { num: number; w?: MoveRow; b?: MoveRow }[] = []
-  moves.forEach((m, i) => {
-    const num = Math.floor((i + (startsWithBlack ? 1 : 0)) / 2) + 1
+  moves.forEach(m => {
+    const num = Number(m.fen_before.split(' ')[5])
     if (m.color === 'w' || rows.length === 0) rows.push({ num, w: m.color === 'w' ? m : undefined, b: m.color === 'b' ? m : undefined })
     else rows[rows.length - 1].b = m
   })

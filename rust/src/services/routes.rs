@@ -631,11 +631,8 @@ impl Services {
     }
     fn queue_action(&self, action: &str) -> ApiResult {
         match action {
-            "pause" => self.paused.store(true, Ordering::SeqCst),
-            "resume" => {
-                self.paused.store(false, Ordering::SeqCst);
-                self.notify();
-            }
+            "pause" => self.set_paused(true)?,
+            "resume" => self.set_paused(false)?,
             "retry-failed" => return Ok((200, json!({"retried":self.retry_failed()?}))),
             "clear" => {
                 return Ok((

@@ -117,12 +117,9 @@ export default function Openings() {
   }, [q.data, byFrom, requested])
   const line = useMemo(() => (q.data ? requested.slice(0, trail.length) : requested), [q.data, requested, trail])
   const current = trail.at(-1)
-  // With merged move orders a position can be entered by several moves: count all of them.
+  // Incoming edges can share games, so use the backend's distinct-position totals.
   const reached = useMemo(() => {
-    if (!current || !q.data?.merged) return current && { games: current.games, wins: current.wins, draws: current.draws, orders: 1 }
-    const into = q.data.nodes.filter(n => n.to === current.to)
-    return into.reduce((a, n) => ({ games: a.games + n.games, wins: a.wins + n.wins, draws: a.draws + n.draws, orders: a.orders + n.orders }),
-      { games: 0, wins: 0, draws: 0, orders: 0 })
+    return current && q.data?.positions.find(p => p.id === current.to)
   }, [current, q.data])
   const children = (q.data && byFrom.get(current ? current.to : q.data.root)) ?? []
   // The opening is named by the deepest position along this line that the dataset names.
