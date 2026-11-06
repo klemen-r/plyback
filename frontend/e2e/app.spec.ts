@@ -355,7 +355,7 @@ test.describe.serial('Plyback end to end', () => {
     const context = await browser.newContext()
     try {
       const guest = await context.newPage()
-      await guest.goto('http://127.0.0.1:8790/')
+      await guest.goto(new URL('/', page.url()).href)
       await expect(guest.getByRole('heading', { name: 'Sign in to Plyback' })).toBeVisible()
       await guest.getByLabel('Password', { exact: true }).fill('wrong-password')
       await guest.getByRole('button', { name: 'Sign in', exact: true }).click()

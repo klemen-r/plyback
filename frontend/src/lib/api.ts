@@ -1,5 +1,5 @@
 import type {
-  Account, EventRow, GameDetail, GamesPage, InsightFilters, Insights, InteractiveResult, PracticeKind, PracticePhase, PracticeQueue, PracticeResult, QueueDetail, Repertoire, Report, Session, Settings, Status,
+  Account, EventRow, GameDetail, GamesPage, InsightFilters, Insights, InteractiveResult, PracticeKind, PracticePhase, PracticeTheme, PracticeQueue, PracticeResult, QueueDetail, Repertoire, Report, Session, Settings, Status,
 } from './types'
 
 export class ApiError extends Error {
@@ -98,8 +98,8 @@ export const api = {
     request<Report>('POST', `/accounts/${account_id}/reports`, { filters, title }),
   report: (id: number) => request<Report>('GET', `/reports/${id}`),
 
-  practice: (account_id: number, kind?: PracticeKind, limit = 10, since?: number, phase?: PracticePhase) =>
-    request<PracticeQueue>('GET', `/accounts/${account_id}/practice${qs({ kind, limit, since, phase })}`),
+  practice: (account_id: number, kind?: PracticeKind, limit = 10, since?: number, phase?: PracticePhase, theme?: PracticeTheme) =>
+    request<PracticeQueue>('GET', `/accounts/${account_id}/practice${qs({ kind, limit, since, phase, theme })}`),
   repertoire: (account_id: number, q: { color: 'white' | 'black'; time_class?: string; plies?: number; merge?: boolean }) =>
     request<Repertoire>('GET', `/accounts/${account_id}/repertoire${qs(q)}`),
   answerPractice: (account_id: number, game_id: number, ply: number, answer: { uci: string } | { reveal: true }) =>

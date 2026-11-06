@@ -179,6 +179,12 @@ fn queue_offers_only_the_accounts_own_clear_mistakes_newest_first() {
     assert_eq!(first["opponent"], "rival");
     assert_eq!(first["opponent_rating"], 640);
     assert_eq!(first["status"], "new");
+    assert!(
+        first["themes"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("mate-in-1"))
+    );
     // The answer is only revealed after an attempt.
     assert!(first.get("best_uci").is_none() && first.get("best_san").is_none());
     assert_eq!(items[1]["color"], "black");
@@ -217,6 +223,12 @@ fn answers_are_checked_and_scheduled() {
     assert_eq!(wrong["best_san"], "Qxf7#");
     assert_eq!(wrong["game_san"], "Nc3");
     assert_eq!(wrong["line_san"], json!(["Qxf7#"]));
+    assert!(
+        wrong["themes"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("mate-in-1"))
+    );
     assert_eq!(wrong["box"], 0);
     // Missed positions return shortly, so it is no longer due right now.
     let (_, queue) = get(&db, "/api/accounts/1/practice", &[]);
@@ -286,6 +298,9 @@ fn invalid_requests_are_rejected() {
     let q: Query = [("kind".to_string(), "brilliant".to_string())].into();
     let error = practice::handle(&db, "GET", "/api/accounts/1/practice", &q, &Value::Null).unwrap();
     assert_eq!(status(error.unwrap_err()), 422);
+    let q: Query = [("theme".to_string(), "made-up-theme".to_string())].into();
+    let error = practice::handle(&db, "GET", "/api/accounts/1/practice", &q, &Value::Null).unwrap();
+    assert_eq!(status(error.unwrap_err()), 422);
     let error = practice::handle(
         &db,
         "DELETE",
@@ -305,6 +320,140 @@ fn invalid_requests_are_rejected() {
         )
         .is_none()
     );
+}
+
+#[test]
+fn theme_filters_scope_statistics_and_counts_respect_the_other_filters() {
+    let db = fixture();
+    let path = "/api/accounts/1/practice";
+    let (_, all) = get(&db, path, &[]);
+    assert_eq!(all["theme_counts"]["mate-in-1"], 1);
+    assert_eq!(
+        all["theme_counts"].as_object().unwrap().len(),
+        plyback::tactics::THEMES.len()
+    );
+
+    let (_, mates) = get(&db, path, &[("theme", "mate-in-1"), ("limit", "1")]);
+    assert_eq!(mates["stats"]["total"], 1);
+    assert_eq!(mates["stats"]["new"], 1);
+    assert_eq!(mates["items"][0]["game_id"], 10);
+    // The selected theme and item limit do not narrow facet counts.
+    assert_eq!(mates["theme_counts"], all["theme_counts"]);
+
+    let (_, misses) = get(&db, path, &[("kind", "miss"), ("theme", "mate-in-1")]);
+    assert_eq!(misses["stats"]["total"], 0);
+    assert_eq!(misses["theme_counts"]["mate-in-1"], 0);
+    let (_, opening) = get(&db, path, &[("phase", "opening")]);
+    assert_eq!(opening["theme_counts"]["mate-in-1"], 1);
+    let (_, ending) = get(&db, path, &[("phase", "endgame")]);
+    assert!(
+        ending["theme_counts"]
+            .as_object()
+            .unwrap()
+            .values()
+            .all(|v| v == 0)
+    );
+    let (_, future) = get(&db, path, &[("since", "2001")]);
+    assert!(
+        future["theme_counts"]
+            .as_object()
+            .unwrap()
+            .values()
+            .all(|v| v == 0)
+    );
+
+    post(
+        &db,
+        "/api/accounts/1/practice/10/7",
+        json!({"reveal": true}),
+    )
+    .unwrap();
+    let (_, scheduled) = get(&db, path, &[("theme", "mate-in-1")]);
+    assert_eq!(scheduled["stats"]["total"], 1);
+    assert_eq!(scheduled["stats"]["learning"], 1);
+    assert_eq!(scheduled["stats"]["new"], 0);
+    assert_eq!(scheduled["theme_counts"]["mate-in-1"], 1);
+    assert_eq!(scheduled["items"], json!([]));
+    let (_, range) = get(&db, path, &[("theme", "mate-in-1"), ("since", "0")]);
+    assert_eq!(range["items"][0]["game_id"], 10);
+    for theme in ["", "all"] {
+        assert_eq!(get(&db, path, &[("theme", theme)]).1["stats"]["total"], 2);
+    }
+}
+
+#[test]
+fn themes_follow_the_current_stored_position_and_line_without_changing_review_data() {
+    let db = fixture();
+    let path = "/api/accounts/1/practice";
+    let before = db
+        .read(|c| {
+            Ok(c.query_row(
+                "SELECT lines_json FROM moves WHERE game_id=10 AND ply=7",
+                [],
+                |r| r.get::<_, String>(0),
+            )?)
+        })
+        .unwrap();
+    get(&db, path, &[]);
+    assert_eq!(
+        db.read(|c| {
+            Ok(c.query_row(
+                "SELECT lines_json FROM moves WHERE game_id=10 AND ply=7",
+                [],
+                |r| r.get::<_, String>(0),
+            )?)
+        })
+        .unwrap(),
+        before
+    );
+    db.transaction(|tx| {
+        tx.execute("UPDATE moves SET fen_before=?1, best_uci='e2e4', best_san='e4', lines_json=?2 WHERE game_id=10 AND ply=7", rusqlite::params![
+            plyback::pgn::STARTING_FEN,
+            json!([{"cp":500,"uci":"e2e4","san":["e4"]},{"cp":-500,"uci":"g1f3","san":["Nf3"]}]).to_string()
+        ])?;
+        Ok(())
+    }).unwrap();
+    let (_, changed) = get(&db, path, &[]);
+    assert_eq!(changed["items"][0]["themes"], json!([]));
+    assert_eq!(changed["theme_counts"]["mate-in-1"], 0);
+    assert_eq!(
+        get(&db, path, &[("theme", "mate-in-1")]).1["stats"]["total"],
+        0
+    );
+    assert_eq!(get(&db, path, &[("theme", "all")]).1["stats"]["total"], 2);
+}
+
+/// Reproducible throughput check using only in-memory fixture data. Repeated
+/// positions measure list/detection overhead, not coverage on real game data.
+#[test]
+#[ignore = "manual release-mode Practice throughput measurement"]
+fn profile_three_thousand_theme_candidates() {
+    let db = fixture();
+    db.transaction(|tx| {
+        tx.execute_batch(
+            "WITH RECURSIVE ids(id) AS (SELECT 100 UNION ALL SELECT id+1 FROM ids WHERE id<3099)
+             INSERT INTO games(id, uuid, pgn, rules, end_time, white_username, black_username, imported_at)
+             SELECT id, 'theme-profile-' || id, '', 'chess', 2000, 'me', 'rival', 0 FROM ids;
+             INSERT INTO account_games(account_id, game_id, color)
+             SELECT 1, id, 'white' FROM games WHERE id>=100;
+             INSERT INTO moves(game_id, ply, color, san, uci, fen_before, epd_before,
+                               classification, best_uci, best_san, lines_json, ep_loss, phase)
+             SELECT g.id, m.ply, m.color, m.san, m.uci, m.fen_before, m.epd_before,
+                    m.classification, m.best_uci, m.best_san, m.lines_json, m.ep_loss, m.phase
+             FROM games g CROSS JOIN moves m WHERE g.id>=100 AND m.game_id=10 AND m.ply=7;"
+        )?;
+        Ok(())
+    }).unwrap();
+    for iteration in 0..3 {
+        let start = std::time::Instant::now();
+        let (_, queue) = get(&db, "/api/accounts/1/practice", &[("theme", "mate-in-1")]);
+        assert_eq!(queue["stats"]["total"], 3001);
+        assert_eq!(queue["theme_counts"]["mate-in-1"], 3001);
+        eprintln!(
+            "Practice themes: 3002 fixture candidates, iteration {iteration}: {:?}",
+            start.elapsed()
+        );
+    }
 }
 
 #[test]

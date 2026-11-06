@@ -108,7 +108,7 @@
           "practice"
         ],
         "summary": "Practice queue",
-        "description": "Due positions first, then new ones from the most recent games. Positions are the account’s own blunders, mistakes and misses in standard chess whose best move beats the second engine line by at least 0.05 expected points. The answer is only returned after an attempt.",
+        "description": "Due positions first, then new ones from the most recent games. Positions are the account’s own blunders, mistakes and misses in standard chess whose best move beats the second engine line by at least 0.05 expected points. The answer is only returned after an attempt. Themes are derived from the stored best line without new engine searches. Clients should show item themes only after solving, skipping or revealing a puzzle.",
         "operationId": "practice_queue",
         "parameters": [
           {
@@ -149,6 +149,31 @@
             }
           },
           {
+            "name": "theme",
+            "in": "query",
+            "required": false,
+            "description": "Restrict the queue and its statistics to positions with this tactical theme. Empty or all includes every theme and untagged positions.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "mate-in-1",
+                "mate-in-2",
+                "mate-in-3-plus",
+                "back-rank-mate",
+                "fork",
+                "knight-fork",
+                "pin",
+                "skewer",
+                "discovered-attack",
+                "hanging-piece",
+                "trapped-piece",
+                "promotion",
+                "defensive"
+              ]
+            }
+          },
+          {
             "name": "since",
             "in": "query",
             "required": false,
@@ -175,7 +200,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/PracticeQueue"
                 }
               }
             }
@@ -195,7 +220,7 @@
           "practice"
         ],
         "summary": "Answer a practice position",
-        "description": "Send {\"uci\": \"e2e4\"} to answer, or {\"reveal\": true} to show the answer (counts as a miss). Returns whether it was correct, the solution and the new schedule.",
+        "description": "Send {\"uci\": \"e2e4\"} to answer, or {\"reveal\": true} to show the answer (counts as a miss). Returns whether it was correct, the solution and the new schedule. The solution includes the same derived themes as the queue item.",
         "operationId": "practice_answer",
         "parameters": [
           {
@@ -250,7 +275,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/PracticeAnswer"
                 }
               }
             }
@@ -843,7 +868,12 @@
             "description": "How a decisive game ended: checkmate, resignation, time or abandoned.",
             "schema": {
               "type": "string",
-              "enum": ["checkmate", "resignation", "time", "abandoned"]
+              "enum": [
+                "checkmate",
+                "resignation",
+                "time",
+                "abandoned"
+              ]
             }
           },
           {
@@ -1926,6 +1956,117 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "TacticalTheme": {
+        "type": "string",
+        "enum": [
+          "mate-in-1",
+          "mate-in-2",
+          "mate-in-3-plus",
+          "back-rank-mate",
+          "fork",
+          "knight-fork",
+          "pin",
+          "skewer",
+          "discovered-attack",
+          "hanging-piece",
+          "trapped-piece",
+          "promotion",
+          "defensive"
+        ],
+        "description": "Conservatively detected from the puzzle position and its stored best line; a puzzle can have no themes."
+      },
+      "PracticeItem": {
+        "type": "object",
+        "required": [
+          "game_id",
+          "ply",
+          "fen",
+          "themes"
+        ],
+        "properties": {
+          "game_id": {
+            "type": "integer"
+          },
+          "ply": {
+            "type": "integer"
+          },
+          "fen": {
+            "type": "string"
+          },
+          "themes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TacticalTheme"
+            },
+            "uniqueItems": true,
+            "description": "Hidden in the interface until the puzzle is solved, skipped or revealed."
+          }
+        },
+        "additionalProperties": true
+      },
+      "PracticeQueue": {
+        "type": "object",
+        "required": [
+          "stats",
+          "items",
+          "theme_counts"
+        ],
+        "properties": {
+          "stats": {
+            "type": "object",
+            "description": "Totals and scheduling statistics after all requested filters."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PracticeItem"
+            }
+          },
+          "theme_counts": {
+            "type": "object",
+            "description": "One count per supported theme, including zero. Counts include scheduled positions, respect kind, phase and since, and are computed before the theme filter and queue limit. Multi-theme puzzles count once in each applicable theme.",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      "PracticeAnswer": {
+        "type": "object",
+        "required": [
+          "correct",
+          "themes",
+          "best_uci",
+          "best_san",
+          "line_san"
+        ],
+        "properties": {
+          "correct": {
+            "type": "boolean"
+          },
+          "themes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TacticalTheme"
+            },
+            "uniqueItems": true
+          },
+          "best_uci": {
+            "type": "string"
+          },
+          "best_san": {
+            "type": "string"
+          },
+          "line_san": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": true
       }
     }
   }

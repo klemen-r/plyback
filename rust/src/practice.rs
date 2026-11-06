@@ -9,7 +9,9 @@
 //! Scheduling is a small Leitner system: a correct answer moves the position up
 //! one box and schedules it after that box's interval; a wrong answer sends it
 //! back to the first box and brings it back after `RETRY_SECONDS`.
-use crate::{ApiResult, Query, analysis::expected_points, api_error, db::Database, now, pgn};
+use crate::{
+    ApiResult, Query, analysis::expected_points, api_error, db::Database, now, pgn, tactics,
+};
 use anyhow::Result;
 use rand::seq::SliceRandom;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -42,6 +44,7 @@ struct Candidate {
     ep_loss: f64,
     explanation: Option<String>,
     line_san: Vec<String>,
+    themes: Vec<&'static str>,
     last_uci: Option<String>,
     last_san: Option<String>,
     end_time: Option<i64>,
@@ -130,6 +133,7 @@ fn candidates(
                 ep_loss: row.get::<_, Option<f64>>(10)?.unwrap_or(0.0),
                 explanation: row.get(11)?,
                 line_san: Vec::new(),
+                themes: Vec::new(),
                 last_uci: row.get(13)?,
                 last_san: row.get(14)?,
                 end_time: row.get(15)?,
@@ -215,6 +219,7 @@ fn public(c: &Candidate, at: i64) -> Value {
         "move_number": (c.ply + 1) / 2,
         "classification": c.classification,
         "phase": c.phase,
+        "themes": c.themes,
         "ep_loss": c.ep_loss,
         "last_uci": c.last_uci,
         "last_san": c.last_san,
@@ -237,6 +242,7 @@ fn public(c: &Candidate, at: i64) -> Value {
 fn queue(db: &Database, account: i64, q: &Query) -> ApiResult {
     let kind = filter(q, "kind", &KINDS)?;
     let phase = filter(q, "phase", &PHASES)?;
+    let theme = filter(q, "theme", tactics::THEMES)?;
     let limit = match q.get("limit") {
         None => 10,
         Some(raw) => raw
@@ -255,6 +261,24 @@ fn queue(db: &Database, account: i64, q: &Query) -> ApiResult {
     let mut all = db.read(|c| candidates(c, account, kind, phase))?;
     if let Some(since) = since {
         all.retain(|c| c.end_time.is_some_and(|t| t >= since));
+    }
+    // Pure detection runs after the read lock is released. Counts include scheduled
+    // positions and remain scoped to every filter except the selected theme.
+    let mut theme_counts = serde_json::Map::new();
+    for &name in tactics::THEMES {
+        theme_counts.insert(name.to_owned(), json!(0));
+    }
+    for candidate in &mut all {
+        candidate.themes =
+            tactics::detect(&candidate.fen, &candidate.best_uci, &candidate.line_san);
+        for &name in &candidate.themes {
+            if let Some(count) = theme_counts.get_mut(name) {
+                *count = json!(count.as_u64().unwrap_or(0) + 1);
+            }
+        }
+    }
+    if let Some(theme) = theme {
+        all.retain(|c| c.themes.contains(&theme));
     }
     let at = now();
     let items = if since.is_some() {
@@ -277,7 +301,10 @@ fn queue(db: &Database, account: i64, q: &Query) -> ApiResult {
             .map(|c| public(c, at))
             .collect::<Vec<_>>()
     };
-    Ok((200, json!({"stats": stats(&all, at), "items": items})))
+    Ok((
+        200,
+        json!({"stats": stats(&all, at), "items": items, "theme_counts": theme_counts}),
+    ))
 }
 
 /// The submitted move in standard UCI, or an error if it is not legal here.
@@ -319,11 +346,12 @@ fn answer(db: &Database, account: i64, game: i64, ply: i64, body: &Value) -> Api
                 .ok_or_else(|| api_error(422, "uci must be a move such as e2e4"))?,
         )
     };
-    let candidate = db
+    let mut candidate = db
         .read(|c| candidates(c, account, None, None))?
         .into_iter()
         .find(|c| c.game_id == game && c.ply == ply)
         .ok_or_else(|| api_error(404, "Practice position not found"))?;
+    candidate.themes = tactics::detect(&candidate.fen, &candidate.best_uci, &candidate.line_san);
     debug_assert_eq!(candidate.rules, "chess");
     let played = raw.map(|raw| normalize(&candidate.fen, raw)).transpose()?;
     let correct = played.as_deref() == Some(candidate.best_uci.as_str());
@@ -373,6 +401,7 @@ fn answer(db: &Database, account: i64, game: i64, ply: i64, body: &Value) -> Api
             "best_uci": candidate.best_uci,
             "best_san": candidate.best_san,
             "line_san": candidate.line_san,
+            "themes": candidate.themes,
             "game_san": candidate.san,
             "explanation": candidate.explanation,
             "box": box_,

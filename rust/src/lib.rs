@@ -9,6 +9,7 @@ pub mod practice;
 pub mod repertoire;
 pub mod security;
 pub mod services;
+pub mod tactics;
 
 use serde_json::Value;
 use std::collections::HashMap;

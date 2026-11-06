@@ -11,11 +11,11 @@ const item: PracticeItem = {
   game_id: 101, ply: 1, fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
   color: 'white', move_number: 1, classification: 'mistake', phase: 'opening', ep_loss: 0.2,
   last_uci: null, last_san: null, end_time: null, time_class: 'rapid', opponent: 'First opponent',
-  opponent_rating: null, status: 'new', box: 0, attempts: 0, correct: 0,
+  opponent_rating: null, themes: ['fork', 'knight-fork'], status: 'new', box: 0, attempts: 0, correct: 0,
 }
 const stats = { total: 2, new: 2, due: 0, learning: 0, mastered: 0, next_due_at: null }
 const answer: PracticeResult = {
-  correct: false, uci: null, san: null, best_uci: 'e2e4', best_san: 'e4',
+  themes: ['fork', 'knight-fork'], correct: false, uci: null, san: null, best_uci: 'e2e4', best_san: 'e4',
   line_san: ['e4', 'e5', 'Nf3'], game_san: 'a3', explanation: null, box: 0,
   due_at: Math.floor(Date.now() / 1000) + 600, stats: { ...stats, new: 1, learning: 1 },
 }
@@ -56,6 +56,7 @@ test('Practice phase filters persist and keep the answer statistics scoped', asy
     requests.push(url)
     const endgame = url.searchParams.get('phase') === 'endgame'
     const queue: PracticeQueue = {
+      theme_counts: { fork: 1, 'knight-fork': 1 },
       items: endgame ? [{ ...item, phase: 'endgame' }] : [item],
       stats: { ...stats, total: endgame ? 1 : 2, new: attempted ? 0 : 1, learning: attempted ? 1 : 0 },
     }
@@ -71,6 +72,49 @@ test('Practice phase filters persist and keep the answer statistics scoped', asy
   await expect(page.getByText('The move was e4')).toBeVisible()
   await expect(page.locator('dl > div').filter({ has: page.getByText('Learning', { exact: true }) }).locator('dd')).toHaveText('1')
   await expect.poll(() => requests.some(u => u.searchParams.get('phase') === 'endgame' && u.searchParams.get('limit') === '1')).toBe(true)
+  expect(errors).toEqual([])
+})
+
+test('Practice theme filters show counts, persist and reveal themes only after the answer', async ({ page }) => {
+  const requests: URL[] = []
+  let attempted = false
+  const errors = await fixture(page, async (route, url) => {
+    if (route.request().method() === 'POST') {
+      attempted = true
+      await route.fulfill({ json: { ...answer, stats: { ...stats, total: 50, new: 10, learning: 40 } } })
+      return
+    }
+    requests.push(url)
+    const theme = url.searchParams.get('theme')
+    const empty = theme === 'promotion'
+    const queue: PracticeQueue = {
+      theme_counts: { fork: 2, 'knight-fork': 1, promotion: 1 },
+      items: empty ? [] : [item],
+      stats: { ...stats, total: empty ? 0 : theme ? 1 : 2, new: empty || attempted ? 0 : 1, learning: attempted ? 1 : 0 },
+    }
+    await route.fulfill({ json: queue })
+  })
+  await page.goto('/practice')
+  await expect(page.getByLabel('Tactical theme').locator('option[value="fork"]')).toHaveText('Fork (2)')
+  await expect(page.getByLabel('Puzzle themes', { exact: true })).toHaveCount(0)
+  await page.getByLabel('Tactical theme').selectOption('knight-fork')
+  await expect(page.getByText('1 positions with one clear answer')).toBeVisible()
+  await page.reload()
+  await expect(page.getByLabel('Tactical theme')).toHaveValue('knight-fork')
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(page.getByLabel('Tactical theme')).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+  // A wrong attempt returns the answer for retries, but must not show the theme yet.
+  await playOnBoard(page, 'a2', 'a3')
+  await expect(page.getByText('a3 isn’t it. Try again.')).toBeVisible()
+  await expect(page.getByLabel('Puzzle themes', { exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Show answer' }).click()
+  await expect(page.getByLabel('Puzzle themes', { exact: true })).toHaveText('Themes: Fork, Knight fork')
+  await expect.poll(() => requests.some(u => u.searchParams.get('theme') === 'knight-fork' && u.searchParams.get('limit') === '1')).toBe(true)
+  await expect(page.locator('dl > div').filter({ has: page.getByText('Learning', { exact: true }) }).locator('dd')).toHaveText('1')
+  await page.getByLabel('Tactical theme').selectOption('promotion')
+  await expect(page.getByText('No positions match these filters')).toBeVisible()
+  await expect(page.getByLabel('Puzzle themes', { exact: true })).toHaveCount(0)
   expect(errors).toEqual([])
 })
 
@@ -125,12 +169,17 @@ test('An active Practice batch survives review updates and an empty batch replen
 })
 
 async function playOnBoard(page: Page, from: string, to: string) {
-  await page.locator('cg-board').evaluate(el => el.scrollIntoView({ block: 'center' }))
-  const board = await page.locator('cg-board').boundingBox()
+  const target = page.locator('cg-board')
+  // Wait for the mounted board to settle before selecting squares. Locator clicks also
+  // check stability and use its current position if the page scrolls during interaction.
+  await target.scrollIntoViewIfNeeded()
+  const board = await target.boundingBox()
   if (!board) throw new Error('Chessboard is not visible')
   for (const square of [from, to]) {
-    await page.mouse.click(board.x + (square.charCodeAt(0) - 97 + 0.5) * board.width / 8,
-      board.y + (8 - Number(square[1]) + 0.5) * board.height / 8)
+    await target.click({ position: {
+      x: (square.charCodeAt(0) - 97 + 0.5) * board.width / 8,
+      y: (8 - Number(square[1]) + 0.5) * board.height / 8,
+    } })
   }
 }
 
@@ -160,6 +209,7 @@ test('An accepted alternative continues the puzzle with the engine line', async 
   // The opponent replied with the engine's Nf6, so the next move is checked against that line.
   await playOnBoard(page, 'd2', 'd3')
   await expect(page.getByText('Solved the line on the first try')).toBeVisible()
+  await expect(page.getByLabel('Puzzle themes', { exact: true })).toHaveText('Themes: Fork, Knight fork')
   await expect(page.getByText('Engine line, with your alternative')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Nf6', exact: true })).toBeVisible()
   expect(errors).toEqual([])

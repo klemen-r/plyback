@@ -13,10 +13,11 @@ import { useAccount } from '../lib/account-context'
 import { api } from '../lib/api'
 import { CLASS_META, PHASE_LABEL } from '../lib/classification'
 import { cap, DAY, fmtDate, fmtDuration, nowTs } from '../lib/format'
-import type { InteractiveResult, PracticeItem, PracticeKind, PracticePhase, PracticeResult, PracticeStats } from '../lib/types'
+import type { InteractiveResult, PracticeItem, PracticeKind, PracticePhase, PracticeResult, PracticeStats, PracticeTheme } from '../lib/types'
 
 type Kind = 'all' | PracticeKind
 type Phase = 'all' | PracticePhase
+type Theme = 'all' | PracticeTheme
 type Range = 'all' | 'today' | '7' | '30'
 type Promotion = 'q' | 'r' | 'b' | 'n'
 type Status = 'solving' | 'checking' | 'solved' | 'revealed'
@@ -27,6 +28,13 @@ const KINDS: { value: Kind; label: string }[] = [
 ]
 const RANGES: [Range, string][] = [['all', 'All games, due first'], ['today', 'Today’s games'], ['7', 'Last 7 days'], ['30', 'Last 30 days']]
 const PHASES: [Phase, string][] = [['all', 'All phases'], ['opening', 'Opening'], ['middlegame', 'Middlegame'], ['endgame', 'Endgame']]
+const THEMES: [PracticeTheme, string][] = [
+  ['mate-in-1', 'Mate in 1'], ['mate-in-2', 'Mate in 2'], ['mate-in-3-plus', 'Mate in 3+'],
+  ['back-rank-mate', 'Back-rank mate'], ['fork', 'Fork'], ['knight-fork', 'Knight fork'],
+  ['pin', 'Pin'], ['skewer', 'Skewer'], ['discovered-attack', 'Discovered attack'],
+  ['hanging-piece', 'Hanging piece'], ['trapped-piece', 'Trapped piece'], ['promotion', 'Promotion'], ['defensive', 'Defensive'],
+]
+const THEME_LABEL = Object.fromEntries(THEMES) as Record<PracticeTheme, string>
 /** With "Play out the line", a puzzle asks for at most this many of your moves. */
 const MAX_OWN_MOVES = 3
 /** A different continuation is accepted when it keeps this much winning chance (percentage points). */
@@ -119,6 +127,7 @@ function PracticeSession() {
   const qc = useQueryClient()
   const [kind, setKind] = useState<Kind>(() => stored('ci.practiceKind', ['all', 'blunder', 'mistake', 'miss'], 'all'))
   const [phase, setPhase] = useState<Phase>(() => stored('ci.practicePhase', ['all', 'opening', 'middlegame', 'endgame'], 'all'))
+  const [theme, setTheme] = useState<Theme>(() => stored('ci.practiceTheme', ['all', ...THEMES.map(([value]) => value)], 'all'))
   const [range, setRange] = useState<Range>(() => stored('ci.practiceRange', ['all', 'today', '7', '30'], 'all'))
   const [fullLine, setFullLine] = useState(() => stored('ci.practiceLine', ['on', 'off'], 'on') === 'on')
   /** The "Play out the line" setting this puzzle uses. A change mid-puzzle applies from the next one. */
@@ -144,8 +153,8 @@ function PracticeSession() {
   const generation = useRef(0)
 
   const queue = useQuery({
-    queryKey: ['practice', account?.id, kind, range, phase],
-    queryFn: () => api.practice(account!.id, kind === 'all' ? undefined : kind, range === 'all' ? 10 : 30, since(range), phase === 'all' ? undefined : phase),
+    queryKey: ['practice', account?.id, kind, range, phase, theme],
+    queryFn: () => api.practice(account!.id, kind === 'all' ? undefined : kind, range === 'all' ? 10 : 30, since(range), phase === 'all' ? undefined : phase, theme === 'all' ? undefined : theme),
     enabled: !!account,
     staleTime: Infinity,
     // Finished reviews mark queues stale. Refetch only on purpose (a new round, an empty batch),
@@ -213,10 +222,10 @@ function PracticeSession() {
   }, [queueData, isStale, isFetching, isError, refetch, resetPuzzle])
 
   const updateStats = (result: PracticeResult, current: number) => {
-    if (kind === 'all' && phase === 'all' && range === 'all') { setStats(result.stats); return }
+    if (kind === 'all' && phase === 'all' && range === 'all' && theme === 'all') { setStats(result.stats); return }
     // The answer response contains account totals. Fetch only filtered stats without replacing
     // the active batch (recent-game queues are shuffled by the server).
-    void api.practice(account!.id, kind === 'all' ? undefined : kind, 1, since(range), phase === 'all' ? undefined : phase)
+    void api.practice(account!.id, kind === 'all' ? undefined : kind, 1, since(range), phase === 'all' ? undefined : phase, theme === 'all' ? undefined : theme)
       .then(q => { if (generation.current === current) setStats(q.stats) })
       .catch(() => { /* Keep the last known stats; the answer and schedule were already saved. */ })
   }
@@ -364,6 +373,10 @@ function PracticeSession() {
         <Select label="Game phase" value={phase} onChange={v => choose<Phase>('ci.practicePhase', setPhase)(v as Phase)}>
           {PHASES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
         </Select>
+        <Select label="Tactical theme" value={theme} onChange={v => choose<Theme>('ci.practiceTheme', setTheme)(v as Theme)}>
+          <option value="all">All themes</option>
+          {THEMES.filter(([value]) => value === theme || (queue.data?.theme_counts?.[value] ?? 0) > 0).map(([value, label]) => <option key={value} value={value}>{label} ({queue.data?.theme_counts?.[value] ?? 0})</option>)}
+        </Select>
         <Select label="Which games" value={range} onChange={v => choose<Range>('ci.practiceRange', setRange)(v as Range)}>
           {RANGES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
         </Select>
@@ -417,8 +430,8 @@ function PracticeSession() {
         : !item ? (
           <div className="space-y-4">{progress}<Card>
             {shownStats?.total === 0
-              ? <Empty title={kind !== 'all' || phase !== 'all' ? 'No positions match these filters' : range === 'all' ? 'No practice positions yet' : 'No positions from these games'}>
-                  {kind !== 'all' || phase !== 'all' ? 'Try another game phase or mistake type, or a longer range of games.' : range === 'all' ? 'Positions appear once your games are reviewed. Only moves with one clearly best answer are used, so every puzzle has a fair solution.' : 'Pick a longer range, or wait until your latest games are reviewed.'}
+              ? <Empty title={kind !== 'all' || phase !== 'all' || theme !== 'all' ? 'No positions match these filters' : range === 'all' ? 'No practice positions yet' : 'No positions from these games'}>
+                  {kind !== 'all' || phase !== 'all' || theme !== 'all' ? 'Try another theme, game phase or mistake type, or a longer range of games.' : range === 'all' ? 'Positions appear once your games are reviewed. Only moves with one clearly best answer are used, so every puzzle has a fair solution.' : 'Pick a longer range, or wait until your latest games are reviewed.'}
                 </Empty>
               : <Empty title={score.done ? `Done: ${score.right} of ${score.done} on the first try` : 'Nothing due right now'}
                   action={<Button variant="primary" onClick={restart}><RotateCcw className="h-3.5 w-3.5" />{range !== 'all' || shownStats?.due || shownStats?.new ? 'Keep going' : 'Check again'}</Button>}>
@@ -503,6 +516,11 @@ function PracticeSession() {
                   <p className="mt-2 text-[13.5px] text-fg-2">
                     {note ? `${note} ` : ''}In the game you played {solution.game_san}. {firstTry ? 'It comes back' : 'Only the first try counts, so it comes back'} {returnsIn(solution.due_at)}.
                   </p>
+                  {(solution.themes ?? item.themes ?? []).length > 0 && (
+                    <p className="mt-3 border-t border-line pt-3 text-[13px] text-fg-2" aria-label="Puzzle themes">
+                      <span className="font-semibold text-fg">Themes: </span>{(solution.themes ?? item.themes).map(value => THEME_LABEL[value]).join(', ')}
+                    </p>
+                  )}
                   {positions.length > 0 && (
                     <div className="mt-4">
                       <div className="mb-2 flex items-center justify-between">
