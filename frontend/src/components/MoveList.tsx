@@ -4,16 +4,29 @@ import { CLASS_META } from '../lib/classification'
 import type { MoveRow } from '../lib/types'
 import ClassIcon from './ClassIcon'
 
+/** The list and its scrolling ancestors below the page, innermost first. */
+function scrollingBoxes(list: HTMLElement): HTMLElement[] {
+  const boxes: HTMLElement[] = []
+  for (let el: HTMLElement | null = list; el && el !== document.body; el = el.parentElement) {
+    const overflow = getComputedStyle(el).overflowY
+    if ((overflow === 'auto' || overflow === 'scroll') && el.scrollHeight > el.clientHeight) boxes.push(el)
+  }
+  return boxes
+}
+
 const NOTABLE = new Set(['brilliant', 'great', 'inaccuracy', 'mistake', 'miss', 'blunder'])
 
 export default function MoveList({ moves, current, onSelect, result, className = 'max-h-[340px]' }: { moves: MoveRow[]; current: number; onSelect: (ply: number) => void; result?: string | null; className?: string }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const el = ref.current?.querySelector<HTMLElement>(`[data-ply="${current}"]`)
-    if (el && ref.current) {
-      const box = ref.current
-      const top = el.offsetTop - box.offsetTop
-      if (top < box.scrollTop || top > box.scrollTop + box.clientHeight - 40) box.scrollTo({ top: top - box.clientHeight / 2, behavior: 'smooth' })
+    if (!el || !ref.current) return
+    // Keep the current move in view inside every box that scrolls (the list, and on laptop
+    // screens the side card around it). Never the page, so the board does not jump away.
+    for (const box of scrollingBoxes(ref.current)) {
+      const view = box.getBoundingClientRect(), move = el.getBoundingClientRect()
+      if (move.top < view.top) box.scrollTop += move.top - view.top - 8
+      else if (move.bottom > view.bottom) box.scrollTop += move.bottom - view.bottom + 8
     }
   }, [current])
 

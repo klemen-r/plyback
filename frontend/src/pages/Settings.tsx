@@ -59,11 +59,15 @@ function Appearance() {
 
 function NumberField({ label, description, value, onChange, min, max, step = 1, suffix }:
   { label: string; description?: string; value: number; onChange: (v: number) => void; min: number; max: number; step?: number; suffix?: string }) {
+  // Keep what is typed, so a field can be cleared and retyped; only numbers reach the form.
+  const [text, setText] = useState<string | null>(null)
   return (
     <label className="flex items-center justify-between gap-4 py-2">
       <span className="min-w-0"><span className="block text-sm font-medium">{label}</span>{description && <span className="block text-xs text-fg-2">{description}</span>}</span>
       <span className="flex shrink-0 items-center gap-2">
-        <Input type="number" value={value} min={min} max={max} step={step} onChange={e => onChange(Number(e.target.value))} aria-label={label}
+        <Input type="number" value={text ?? String(value)} min={min} max={max} step={step} aria-label={label}
+          onChange={e => { setText(e.target.value); if (e.target.value.trim() !== '' && Number.isFinite(Number(e.target.value))) onChange(Number(e.target.value)) }}
+          onBlur={() => setText(null)}
           className="w-24 text-right tnum" />
         <span className="w-6 text-xs text-fg-3">{suffix}</span>
       </span>

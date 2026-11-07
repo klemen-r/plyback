@@ -183,7 +183,7 @@ export default function Openings() {
           <Select label="Time control" value={timeClass} onChange={v => update({ tc: v === 'all' ? null : v })}>
             {TIME_CLASSES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
           </Select>
-          <Tabs label="Colour" value={color} onChange={v => update({ color: v === 'white' ? null : v, line: null, focus: null })}
+          <Tabs label="Colour" value={color} onChange={v => { if (v !== color) update({ color: v === 'white' ? null : v, line: null, focus: null }) }}
             options={[{ value: 'white', label: 'As White' }, { value: 'black', label: 'As Black' }]} />
         </>} />
 

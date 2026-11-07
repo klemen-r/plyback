@@ -309,12 +309,14 @@ function GameReviewContent() {
             </span>
           </div>
           {job?.status === 'running' && job.total ? <Progress value={job.progress ?? 0} max={job.total} className="max-w-xs" /> : null}
-          {(!job || job.status === 'failed') && !g.pgn_error && (
+          {(!job || job.status === 'failed') && !g.pgn_error && (g.rules === 'chess' || g.rules === 'chess960') && (
             <Button variant="primary" size="sm" loading={analyze.isPending} onClick={() => analyze.mutate({})}><Sparkles className="h-4 w-4" />Analyse now</Button>
           )}
         </div>
       )}
-      {!canExplore && <p className="mb-4 rounded-lg border border-line bg-surface p-3 text-sm text-fg-2">Chess960 games support recorded-move review. Board exploration and live engine hints are available for standard chess.</p>}
+      {!canExplore && <p className="mb-4 rounded-lg border border-line bg-surface p-3 text-sm text-fg-2">{g.rules === 'chess960'
+        ? 'Chess960 games support recorded-move review. Board exploration and live engine hints are available for standard chess.'
+        : 'This game is a chess variant. Plyback shows its recorded moves but does not review variants.'}</p>}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:grid-rows-[auto_1fr] xl:grid-cols-[minmax(0,1fr)_420px] lg:[grid-template-areas:'board_panel'_'quality_panel']">
         {/* board column */}

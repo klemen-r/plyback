@@ -34,7 +34,7 @@ export default function ActivityPage() {
         <Figure label="Avg. per game" value={d.avg_game_seconds ? `${d.avg_game_seconds}s` : '—'} />
         <Figure label="Time remaining" value={d.paused && d.queued ? 'Paused' : d.eta_seconds ? fmtDuration(d.eta_seconds) : '—'} />
       </div>
-      <Card title="Queue" subtitle={d.engine ? `${d.engine}${d.paused ? ' · paused' : ''}` : undefined} bodyClass="p-2">
+      <Card title="Queue" subtitle={[d.engine, d.paused ? 'Paused' : null].filter(Boolean).join(' · ') || undefined} bodyClass="p-2">
         {d.jobs.length ? d.jobs.map(j => (
           <Link key={j.id} to={`/games/${j.game_id}`} className="flex items-center gap-4 rounded-lg px-3 py-2 text-sm hover:bg-subtle">
             <span className={clsx('h-2 w-2 shrink-0 rounded-full', j.status === 'running' ? 'animate-pulse bg-accent' : 'bg-fg-3')} />
