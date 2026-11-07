@@ -62,6 +62,10 @@ export default function Board({ fen, orientation, lastMove, shapes, interactive,
     drawable: { enabled: !mini, visible: true, autoShapes: shapes ?? [], defaultSnapToValidMove: true },
   })
 
+  // Chessground binds its mouse and touch handlers only when it builds a board that is not view-only,
+  // and it rebuilds the board on a flip or a resize. Turning `viewOnly` off later does not bind them,
+  // so a board rebuilt while locked (a flip to the next position, a resize between moves) would
+  // ignore every move. Build a new board whenever it switches between locked and playable.
   useEffect(() => {
     if (!el.current) return
     api.current = Chessground(el.current, config())
@@ -78,7 +82,7 @@ export default function Board({ fen, orientation, lastMove, shapes, interactive,
       api.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [interactive])
 
   useEffect(() => {
     if (!api.current) return

@@ -1,9 +1,9 @@
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Chess, type Square } from 'chess.js'
+import { Chess, type Move, type Square } from 'chess.js'
 import clsx from 'clsx'
-import { ArrowRight, Check, ChevronLeft, ChevronRight, Eye, Lightbulb, RotateCcw, X } from 'lucide-react'
+import { ArrowRight, Check, ChevronLeft, ChevronRight, Copy, ExternalLink, Eye, Lightbulb, RotateCcw, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import Board from '../components/Board'
@@ -104,6 +104,35 @@ function returnsIn(due: number) {
   return days === 1 ? 'tomorrow' : `in ${days} days`
 }
 
+/** The puzzle as PGN: its position, the engine line and what was played in the game. */
+function puzzlePgn(item: PracticeItem, solution: PracticeResult, line: string[], username: string) {
+  const chess = new Chess(item.fen)
+  chess.setComment(`In the game: ${solution.game_san}. Best: ${solution.best_san}.`)
+  for (const san of line) { try { chess.move(san) } catch { break } }
+  const date = item.end_time ? new Date(item.end_time * 1000) : null
+  const [white, black] = item.color === 'white' ? [username, item.opponent ?? '?'] : [item.opponent ?? '?', username]
+  chess.setHeader('Event', 'Plyback practice')
+  chess.setHeader('Date', date ? `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')}` : '????.??.??')
+  chess.setHeader('White', white)
+  chess.setHeader('Black', black)
+  return chess.pgn()
+}
+
+/** Copy text, also where the clipboard API is unavailable (a plain-http address on the network). */
+async function copyText(text: string) {
+  try { await navigator.clipboard.writeText(text); return } catch { /* fall back below */ }
+  const area = document.createElement('textarea')
+  area.value = text
+  area.setAttribute('readonly', '')
+  area.style.position = 'fixed'
+  area.style.opacity = '0'
+  document.body.appendChild(area)
+  area.select()
+  const ok = document.execCommand('copy')
+  area.remove()
+  if (!ok) throw new Error('Copy failed')
+}
+
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
     <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)}
@@ -148,9 +177,12 @@ function PracticeSession() {
   const [score, setScore] = useState({ right: 0, done: 0 })
   const [stats, setStats] = useState<PracticeStats | null>(null)
   const [promotion, setPromotion] = useState<{ orig: string; dest: string } | null>(null)
+  /** A move being checked stays on the board until it is accepted or put back. */
+  const [trying, setTrying] = useState<{ fen: string; from: Key; to: Key } | null>(null)
   const [checkError, setCheckError] = useState<unknown>(null)
   const [typed, setTyped] = useState('')
   const [typedError, setTypedError] = useState<string | null>(null)
+  const [copied, setCopied] = useState<'yes' | 'failed' | null>(null)
   const reply = useRef<number | undefined>(undefined)
   const generation = useRef(0)
 
@@ -192,8 +224,8 @@ function PracticeSession() {
     cancelCheck()
     resetAnswer()
     setSolution(null); setPlayed([]); setStatus('solving'); setTries(0); setWrong(null); setHint(false)
-    setNote(null); setLiveLine(null); setStep(null); setPromotion(null); setCheckError(null)
-    setLineFor(fullLineRef.current); setTyped(''); setTypedError(null)
+    setNote(null); setLiveLine(null); setStep(null); setPromotion(null); setTrying(null); setCheckError(null)
+    setLineFor(fullLineRef.current); setTyped(''); setTypedError(null); setCopied(null)
   }, [cancelCheck, resetAnswer])
   const restart = () => {
     resetPuzzle(); setIndex(0); setScore({ right: 0, done: 0 }); setStats(null)
@@ -270,6 +302,11 @@ function PracticeSession() {
     let mv
     try { mv = new Chess(fen).move({ from: orig, to: dest, promotion: piece }) } catch { setNonce(n => n + 1); return }
     const uci = `${mv.from}${mv.to}${mv.promotion ?? ''}`
+    setTrying({ fen: mv.after, from: mv.from as Key, to: mv.to as Key })
+    try { await judge(mv, uci, fen, current) } finally { if (generation.current === current) setTrying(null) }
+  }
+
+  const judge = async (mv: Move, uci: string, fen: string, current: number) => {
     if (!solution) {
       // The first try is recorded for scheduling and returns the solution.
       const r = await answer.mutateAsync({ uci }).catch(() => null)
@@ -409,7 +446,7 @@ function PracticeSession() {
 
   // The board shows the line being solved, or a step through the engine line afterwards.
   const viewing = done && step !== null ? positions.slice(0, step) : playedPositions
-  const shownMove = viewing.at(-1)
+  const shownMove = trying ?? viewing.at(-1)
   const fen = shownMove?.fen ?? item?.fen
   const lastMove = shownMove ? [shownMove.from, shownMove.to] as [Key, Key] : squares(item?.last_uci)
   const yourTurn = played.length % 2 === 0
@@ -566,8 +603,14 @@ function PracticeSession() {
                   )}
                   <div className="mt-5 flex flex-wrap items-center gap-2">
                     <Button variant="primary" onClick={next}>Next<ArrowRight className="h-3.5 w-3.5" /></Button>
+                    <Button variant="ghost" onClick={() => {
+                      copyText(puzzlePgn(item, solution, line, account.username)).then(() => setCopied('yes'), () => setCopied('failed'))
+                    }}><Copy className="h-3.5 w-3.5" />{copied === 'yes' ? 'Copied' : 'Copy PGN'}</Button>
+                    <a href={`https://lichess.org/analysis/${item.fen.replace(/ /g, '_')}?color=${item.color}`} target="_blank" rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[13px] text-fg-2 hover:text-fg">Analyse on Lichess<ExternalLink className="h-3.5 w-3.5" /></a>
                     <Link to={`/games/${item.game_id}?ply=${item.ply - 1}`} className="text-[13px] text-fg-2 hover:text-fg">Open in game review</Link>
                   </div>
+                  {copied === 'failed' && <p className="mt-2 text-[13px] text-bad" role="alert">Couldn’t copy. Your browser blocked the clipboard.</p>}
                 </Card>
               )}
               {progress}

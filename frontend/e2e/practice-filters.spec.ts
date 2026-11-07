@@ -168,17 +168,20 @@ test('An active Practice batch survives review updates and an empty batch replen
   expect(errors).toEqual([])
 })
 
-async function playOnBoard(page: Page, from: string, to: string) {
-  const target = page.locator('cg-board')
-  // Wait for the mounted board to settle before selecting squares. Locator clicks also
-  // check stability and use its current position if the page scrolls during interaction.
+async function playOnBoard(page: Page, from: string, to: string, orientation: 'white' | 'black' = 'white') {
+  // The board is rebuilt when it becomes playable, so wait for the playable one before selecting
+  // squares. Locator clicks also check stability and use its current position if the page scrolls.
+  const target = page.locator('.cg-wrap.manipulable cg-board')
+  await expect(target).toBeVisible()
   await target.scrollIntoViewIfNeeded()
   const board = await target.boundingBox()
   if (!board) throw new Error('Chessboard is not visible')
   for (const square of [from, to]) {
+    const file = square.charCodeAt(0) - 97
+    const rank = Number(square[1]) - 1
     await target.click({ position: {
-      x: (square.charCodeAt(0) - 97 + 0.5) * board.width / 8,
-      y: (8 - Number(square[1]) + 0.5) * board.height / 8,
+      x: ((orientation === 'white' ? file : 7 - file) + 0.5) * board.width / 8,
+      y: ((orientation === 'white' ? 7 - rank : rank) + 0.5) * board.height / 8,
     } })
   }
 }
@@ -468,5 +471,69 @@ test('A double-click on Show answer records one answer', async ({ page }) => {
   await page.getByRole('button', { name: 'Show answer' }).dblclick()
   await expect(page.getByText('The move was e4')).toBeVisible()
   expect(posts).toBe(1)
+  expect(errors).toEqual([])
+})
+
+test('The board takes moves on the next position after it flips to the other colour', async ({ page }) => {
+  const black: PracticeItem = { ...item, game_id: 102, ply: 2, color: 'black', fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1', last_uci: 'e2e4', last_san: 'e4' }
+  const posted: string[] = []
+  const errors = await fixture(page, async (route, url) => {
+    if (route.request().method() === 'POST') {
+      const { uci } = route.request().postDataJSON() as { uci: string }
+      const san = uci === 'e2e4' ? 'e4' : 'e5'
+      posted.push(`${url.pathname.split('/').slice(-2).join('/')} ${uci}`)
+      await route.fulfill({ json: { ...answer, correct: true, uci, san, best_uci: uci, best_san: san, line_san: [san] } })
+      return
+    }
+    await route.fulfill({ json: { stats, items: [item, black] } })
+  })
+  await page.goto('/practice')
+  await playOnBoard(page, 'e2', 'e4')
+  await expect(page.getByText('Solved on the first try')).toBeVisible()
+  await page.getByRole('button', { name: 'Next', exact: true }).click()
+  await expect(page.getByText('Black to move')).toBeVisible()
+  await playOnBoard(page, 'e7', 'e5', 'black')
+  await expect(page.getByText('Solved on the first try')).toBeVisible()
+  expect(posted).toEqual(['101/1 e2e4', '102/2 e7e5'])
+  expect(errors).toEqual([])
+})
+
+test('The board takes moves after it was resized while locked', async ({ page }) => {
+  let posted = 0
+  const errors = await fixture(page, async route => {
+    if (route.request().method() === 'POST') { posted++; await route.fulfill({ json: { ...answer, correct: true, uci: 'e2e4', san: 'e4', line_san: ['e4'] } }); return }
+    await route.fulfill({ json: { stats, items: [item, { ...item, game_id: 102 }] } })
+  })
+  await page.goto('/practice')
+  await playOnBoard(page, 'e2', 'e4')
+  await expect(page.getByText('Solved on the first try')).toBeVisible()
+  // The board is locked between positions. A size change now (a window resize, a scrollbar
+  // appearing) makes the library rebuild it.
+  await page.setViewportSize({ width: 1200, height: 800 })
+  await page.getByRole('button', { name: 'Next', exact: true }).click()
+  await expect(page.getByText('2 / 2')).toBeVisible()
+  await playOnBoard(page, 'e2', 'e4')
+  await expect(page.getByText('Solved on the first try')).toBeVisible()
+  expect(posted).toBe(2)
+  expect(errors).toEqual([])
+})
+
+test('A finished puzzle can be copied as PGN or opened on Lichess', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  const errors = await fixture(page, async route => {
+    if (route.request().method() === 'POST') { await route.fulfill({ json: answer }); return }
+    await route.fulfill({ json: { stats, items: [item] } })
+  })
+  await page.goto('/practice')
+  await page.getByRole('button', { name: 'Show answer' }).click()
+  await expect(page.getByText('The move was e4')).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Analyse on Lichess' }))
+    .toHaveAttribute('href', 'https://lichess.org/analysis/rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR_w_KQkq_-_0_1?color=white')
+  await page.getByRole('button', { name: 'Copy PGN' }).click()
+  await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible()
+  const pgn = await page.evaluate(() => navigator.clipboard.readText())
+  expect(pgn).toContain('[White "practice_fixture"]')
+  expect(pgn).toContain('[Black "First opponent"]')
+  expect(pgn).toContain('{In the game: a3. Best: e4.} 1. e4 e5 2. Nf3')
   expect(errors).toEqual([])
 })
