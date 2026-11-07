@@ -39,6 +39,8 @@ pub struct Services {
     worker_count: AtomicU64,
     requested: Mutex<HashSet<i64>>,
     current_sync: Mutex<Option<i64>>,
+    /// Accounts whose last sync found the database busy, and when to try them again.
+    sync_busy_until: Mutex<HashMap<i64, std::time::Instant>>,
     client: sync::ChessComClient,
 }
 
@@ -67,6 +69,7 @@ impl Services {
             worker_count: AtomicU64::new(0),
             requested: Mutex::new(HashSet::new()),
             current_sync: Mutex::new(None),
+            sync_busy_until: Mutex::new(HashMap::new()),
             client: sync::ChessComClient::new()?,
         }))
     }

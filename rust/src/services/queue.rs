@@ -55,7 +55,7 @@ impl Services {
                 || self.stop.load(Ordering::SeqCst),
             )?
             else {
-                anyhow::bail!("Sync cancelled or database busy");
+                return Err(super::sync::SyncDbBusy.into());
             };
             settings
         } else {
@@ -128,7 +128,7 @@ impl Services {
                     || self.stop.load(Ordering::SeqCst),
                     enqueue,
                 )?
-                .ok_or_else(|| anyhow::anyhow!("Sync cancelled or database busy"))?
+                .ok_or(super::sync::SyncDbBusy)?
         } else {
             self.db.transaction(enqueue)?
         };

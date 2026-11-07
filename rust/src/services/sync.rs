@@ -5,6 +5,19 @@ use reqwest::blocking::Client;
 use std::{io::Read, sync::OnceLock, time::Instant};
 use url::Url;
 
+/// The database stayed locked (busy review workers or a long request) for the sync's bounded
+/// wait. Not a sync failure: the tick is skipped and the account is tried again on the next one.
+#[derive(Debug)]
+pub(super) struct SyncDbBusy;
+/// How long an account waits after its sync found the database busy.
+const SYNC_BUSY_RETRY: Duration = Duration::from_secs(45);
+impl std::fmt::Display for SyncDbBusy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Sync database wait was cancelled or timed out")
+    }
+}
+impl std::error::Error for SyncDbBusy {}
+
 const OFFICIAL_BASE: &str = "https://api.chess.com/pub";
 const MAX_RESPONSE: u64 = 32 * 1024 * 1024;
 pub(super) struct ChessComClient {
@@ -53,7 +66,7 @@ impl AccountSync {
                 || service.stop.load(Ordering::SeqCst),
                 |connection| self.matches(connection),
             )?
-            .ok_or_else(|| api_error(503, "Sync database wait was cancelled or timed out"))
+            .ok_or_else(|| SyncDbBusy.into())
     }
     fn transaction<T>(
         &self,
@@ -73,7 +86,7 @@ impl AccountSync {
                     }
                 },
             )?
-            .ok_or_else(|| api_error(503, "Sync database wait was cancelled or timed out"))
+            .ok_or_else(|| SyncDbBusy.into())
     }
     fn event(&self, tx: &rusqlite::Transaction<'_>, level: &str, message: &str) -> Result<()> {
         tx.execute(
@@ -390,13 +403,13 @@ impl Services {
                 || self.stop.load(Ordering::SeqCst),
                 |connection| crate::db::query_connection(connection, sql, params),
             )?
-            .ok_or_else(|| api_error(503, "Sync database wait was cancelled or timed out"))
+            .ok_or_else(|| SyncDbBusy.into())
     }
     fn sync_settings(&self) -> Result<Value> {
         settings::get_settings_until(&self.db, Instant::now() + Duration::from_secs(2), || {
             self.stop.load(Ordering::SeqCst)
         })?
-        .ok_or_else(|| api_error(503, "Sync database wait was cancelled or timed out"))
+        .ok_or_else(|| SyncDbBusy.into())
     }
     fn sync_error(&self, account: &Value, message: &str) -> Result<()> {
         let claim = AccountSync::from_row(account)?;
@@ -411,8 +424,12 @@ impl Services {
     }
     pub(super) fn sync_loop(&self) {
         while !self.stop.load(Ordering::SeqCst) {
-            if let Err(error) = self.sync_tick() {
-                tracing::error!(%error,"Account sync tick failed");
+            match self.sync_tick() {
+                Err(error) if error.is::<SyncDbBusy>() => {
+                    tracing::debug!("Account sync tick skipped: database busy")
+                }
+                Err(error) => tracing::error!(%error, "Account sync tick failed"),
+                Ok(()) => {}
             }
             if !self.stop.load(Ordering::SeqCst) {
                 self.wait(Duration::from_secs(2));
@@ -423,6 +440,19 @@ impl Services {
         let settings = self.sync_settings()?;
         let accounts = self.sync_rows("SELECT * FROM accounts ORDER BY id", &[])?;
         let requested = std::mem::take(&mut *self.requested.lock().unwrap());
+        let result = self.sync_due(&settings, &accounts, &requested);
+        if result.is_err() {
+            // A tick cut short keeps the manual requests it had not served yet.
+            self.requested.lock().unwrap().extend(&requested);
+        }
+        result
+    }
+    fn sync_due(
+        &self,
+        settings: &Value,
+        accounts: &[Value],
+        requested: &HashSet<i64>,
+    ) -> Result<()> {
         for account in accounts {
             if self.stop.load(Ordering::SeqCst) {
                 break;
@@ -441,15 +471,53 @@ impl Services {
             if account["sync_status"] == "error" {
                 interval = interval.max(600);
             }
-            if requested.contains(&id)
+            let busy = self
+                .sync_busy_until
+                .lock()
+                .unwrap()
+                .get(&id)
+                .is_some_and(|until| *until > Instant::now());
+            let due = requested.contains(&id)
                 || (account["sync_enabled"] == 1
-                    && now() - account["last_sync_at"].as_i64().unwrap_or(0) >= interval)
-            {
+                    && now() - account["last_sync_at"].as_i64().unwrap_or(0) >= interval);
+            if busy {
+                // Retried after a short pause; a manual request waits for it too.
+                if requested.contains(&id) {
+                    self.requested.lock().unwrap().insert(id);
+                }
+                continue;
+            }
+            if due {
                 *self.current_sync.lock().unwrap() = Some(id);
-                let result = self.sync_account(&account);
+                let mut result = self.sync_account(account);
                 *self.current_sync.lock().unwrap() = None;
-                if let Err(error) = result {
-                    self.sync_error(&account, &error.to_string())?;
+                if let Err(error) = &result
+                    && !error.is::<SyncDbBusy>()
+                {
+                    // Record the real failure. If recording it finds the database busy, retry
+                    // the account soon; any other recording error ends the tick as before.
+                    let message = error.to_string();
+                    match self.sync_error(account, &message) {
+                        Ok(()) => result = Ok(()),
+                        Err(busy) if busy.is::<SyncDbBusy>() => result = Err(busy),
+                        Err(other) => return Err(other),
+                    }
+                }
+                match result {
+                    Err(error) if error.is::<SyncDbBusy>() => {
+                        // Not a failure: last_sync_at is unchanged, so the account stays due,
+                        // but wait a little rather than refetching its archives every tick.
+                        self.sync_busy_until
+                            .lock()
+                            .unwrap()
+                            .insert(id, Instant::now() + SYNC_BUSY_RETRY);
+                        if requested.contains(&id) {
+                            self.requested.lock().unwrap().insert(id);
+                        }
+                    }
+                    _ => {
+                        self.sync_busy_until.lock().unwrap().remove(&id);
+                    }
                 }
             }
         }
@@ -1061,5 +1129,53 @@ mod tests {
             db.scalar("SELECT priority FROM jobs", &[]).unwrap(),
             PRIORITY_NEW
         );
+    }
+    #[test]
+    fn a_busy_database_skips_the_tick_instead_of_failing_the_sync() {
+        let db = Arc::new(crate::db::Database::open(":memory:").unwrap());
+        db.execute("INSERT INTO accounts(username,added_at,sync_enabled,last_sync_at) VALUES('fixture',0,1,0)", &[]).unwrap();
+        let service = Services::new(db.clone()).unwrap();
+        let holder = db.clone();
+        let held = std::thread::spawn(move || {
+            holder
+                .transaction(|_| {
+                    std::thread::sleep(Duration::from_secs(3));
+                    Ok(())
+                })
+                .unwrap()
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        let error = service.sync_tick().unwrap_err();
+        assert!(error.is::<SyncDbBusy>(), "{error}");
+        held.join().unwrap();
+        let account = db
+            .one("SELECT sync_status, sync_error FROM accounts", &[])
+            .unwrap()
+            .unwrap();
+        assert_ne!(account["sync_status"], "error");
+        assert!(account["sync_error"].is_null());
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM events", &[]).unwrap(), 0);
+    }
+    #[test]
+    fn an_account_that_found_the_database_busy_waits_before_retrying() {
+        let db = Arc::new(crate::db::Database::open(":memory:").unwrap());
+        db.execute("INSERT INTO accounts(username,added_at,sync_enabled,last_sync_at) VALUES('fixture',0,1,0)", &[]).unwrap();
+        let service = Services::new(db.clone()).unwrap();
+        service
+            .sync_busy_until
+            .lock()
+            .unwrap()
+            .insert(1, Instant::now() + SYNC_BUSY_RETRY);
+        service.request_sync(1);
+        // Due and requested, but still inside its busy pause: no sync (and no network).
+        service.sync_tick().unwrap();
+        assert!(service.requested.lock().unwrap().contains(&1));
+        assert!(service.current_sync.lock().unwrap().is_none());
+        let account = db
+            .one("SELECT sync_status, last_sync_at FROM accounts", &[])
+            .unwrap()
+            .unwrap();
+        assert_ne!(account["sync_status"], "syncing");
+        assert_eq!(account["last_sync_at"], 0);
     }
 }
