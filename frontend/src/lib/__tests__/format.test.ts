@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fmtClock, fmtTimeControl, formatEval, mateIn, moveLabel, winWhite } from '../format'
+import { fmtClock, fmtTimeControl, formatEval, mateIn, moveLabel, moveNumber, winWhite } from '../format'
 import { restoreFilters, toInsightFilters, type FilterState } from '../filters'
 
 describe('format helpers', () => {
@@ -68,5 +68,13 @@ describe('custom date ranges', () => {
     const base: Omit<FilterState, 'from' | 'to'> = { period: 'custom', time_classes: [], color: '', rated: '', opening: '' }
     expect(toInsightFilters({ ...base, from: '2026-10-28', to: '2026-10-25' }))
       .toEqual(toInsightFilters({ ...base, from: '2026-10-25', to: '2026-10-28' }))
+  })
+})
+
+describe('moveNumber', () => {
+  it('reads the FEN move number, else falls back', () => {
+    expect(moveNumber('7k/8/8/8/8/8/8/7K b - - 0 42', 1)).toBe(42)
+    expect(moveNumber(null, 7)).toBe(7)
+    expect(moveNumber('bad', 3)).toBe(3)
   })
 })

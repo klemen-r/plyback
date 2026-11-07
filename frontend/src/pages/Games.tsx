@@ -34,7 +34,7 @@ function Preview({ g, onClose }: { g: GameSummary; onClose: () => void }) {
           <>
             <MiniBoard fen={worst.fen_before} orientation={me ?? 'white'} played={worst.san} best={worst.best_san} />
             <div className="mt-3 flex items-center gap-1.5 text-[13.5px] font-medium">
-              <ClassIcon c={worst.classification} size={15} />{moveLabel(worst.ply, worst.san)}
+              <ClassIcon c={worst.classification} size={15} />{moveLabel(worst.ply, worst.san, worst.fen_before)}
               <span className="font-normal text-fg-2">— {CLASS_META[worst.classification].label.toLowerCase()}</span>
             </div>
             {worst.explanation && <p className="mt-1 text-[13px] text-fg-2">{worst.explanation}</p>}

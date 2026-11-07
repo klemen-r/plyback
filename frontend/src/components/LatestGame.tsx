@@ -56,7 +56,7 @@ export default function LatestGame({ g }: { g: GameSummary }) {
             </dl>
             {worst && worst.classification && (
               <p className="mt-3 line-clamp-3 text-[13px] text-fg-2 max-sm:hidden">
-                <span className="font-medium text-fg">Costliest moment: {moveLabel(worst.ply, worst.san)}</span>
+                <span className="font-medium text-fg">Costliest moment: {moveLabel(worst.ply, worst.san, worst.fen_before)}</span>
                 {worst.explanation ? ` — ${worst.explanation}` : ''}
               </p>
             )}
