@@ -85,3 +85,24 @@ test('Games: an invalid page in the address falls back to the first page', async
   expect(requests.every(u => (u.searchParams.get('page') ?? '1') === '1')).toBe(true)
   expect(errors).toEqual([])
 })
+
+test('Import keeps a large file out of the text box and warns about too many games', async ({ page }) => {
+  let posted = 0
+  const errors = await fixture(page, async (route, url) => {
+    if (url.pathname === '/api/games/import') { posted++; return route.fulfill({ json: { imported: 2, existing: 0, game_ids: [1, 2], errors: [] } }) }
+    await route.fulfill({ json: {} })
+  })
+  const game = (i: number) => `[Event "Fixture ${i}"]\n[White "A"]\n[Black "B"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 *\n\n`
+  await page.goto('/import')
+  const input = page.locator('input[type=file]')
+  await input.setInputFiles({ name: 'big.pgn', mimeType: 'application/x-chess-pgn', buffer: Buffer.from(Array.from({ length: 3000 }, (_, i) => game(i)).join('')) })
+  await expect(page.getByText(/big\.pgn · 0\.\d MB · about 3,000 games/)).toBeVisible()
+  await expect(page.getByLabel('PGN text')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Import' }).click()
+  await expect(page.getByText(/2.*new game\(s\) imported/)).toBeVisible()
+  expect(posted).toBe(1)
+  await input.setInputFiles({ name: 'huge.pgn', mimeType: 'application/x-chess-pgn', buffer: Buffer.from(Array.from({ length: 10_001 }, (_, i) => `[Event "${i}"]\n1. e4 *\n`).join('')) })
+  await expect(page.getByText(/about 10,001 games\. Import at most 10,000/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Import' })).toBeDisabled()
+  expect(errors).toEqual([])
+})

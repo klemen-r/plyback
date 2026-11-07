@@ -275,6 +275,9 @@ impl Read for CountingReader<'_> {
 
 /// Split with the PGN parser rather than blank lines or `[Event` text, which may
 /// also occur inside comments. Preserve the exact original text for game IDs.
+/// The most games one PGN import may contain.
+pub const MAX_IMPORT_GAMES: usize = 10_000;
+
 pub fn split_games(text: &str) -> Result<Vec<String>> {
     if text.len() > 20_000_000 || text.contains('\0') {
         return Err(api_error(400, "PGN import exceeds the supported limit"));
@@ -308,7 +311,7 @@ pub fn split_games(text: &str) -> Result<Vec<String>> {
             out.push(game.to_owned());
         }
         start = end;
-        if out.len() > 10_000 {
+        if out.len() > MAX_IMPORT_GAMES {
             return Err(api_error(400, "Import at most 10000 games at a time"));
         }
     }

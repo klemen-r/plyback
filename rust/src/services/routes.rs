@@ -319,8 +319,9 @@ impl Services {
         if texts.is_empty() {
             return Err(api_error(400, "No games found in the PGN"));
         }
-        if texts.len() > 20000 {
-            return Err(api_error(400, "Import at most 20000 games at once"));
+        // `split_games` already stops at 10,000 games; keep one limit and one message.
+        if texts.len() > pgn::MAX_IMPORT_GAMES {
+            return Err(api_error(400, "Import at most 10000 games at a time"));
         }
         let mut rows = Vec::new();
         let mut errors = Vec::new();
@@ -355,6 +356,23 @@ impl Services {
                     &result,
                 )?;
             }
+            // Imports from the Import page appear in Activity next to sync imports.
+            let new = result.iter().filter(|(_, new)| *new).count();
+            let existing = result.len() - new;
+            let message = match (new, existing) {
+                (n, 0) => format!("Imported {n} game(s) from PGN"),
+                (0, e) => format!("PGN import: {e} game(s) already in Plyback"),
+                (n, e) => format!("Imported {n} game(s) from PGN; {e} already in Plyback"),
+            };
+            tx.execute(
+                "INSERT INTO events(ts,level,source,message,account_id) VALUES(?,'info','import',?,NULL)",
+                rusqlite::params![crate::now(), message],
+            )?;
+            // The same 5,000-event window as the other event writers.
+            tx.execute(
+                "DELETE FROM events WHERE id < (SELECT MAX(id)-5000 FROM events)",
+                [],
+            )?;
             Ok(result)
         })?;
         let ids = results.iter().map(|(id, _)| *id).collect::<Vec<_>>();
@@ -693,7 +711,7 @@ mod tests {
     #[test]
     fn import_is_deduplicated_and_bad_games_are_reported() {
         let db = Arc::new(Database::open(":memory:").unwrap());
-        let s = Services::new(db).unwrap();
+        let s = Services::new(db.clone()).unwrap();
         let input = json!({"pgn":"[Event \"Fixture\"]\n[White \"Alice\"]\n[Black \"Bob\"]\n\n1. e4 e5 2. Nf3 Nc6 *","analyze":false});
         let (_, first) = s.import_pgn(&input).unwrap();
         assert_eq!(first["imported"], 1);
@@ -704,6 +722,17 @@ mod tests {
             .unwrap();
         assert_eq!(game["moves"].as_array().unwrap().len(), 4);
         assert!(!game["game"]["final_fen"].is_null());
+        // Both imports are logged for Activity.
+        let events = db
+            .query("SELECT source, message FROM events ORDER BY id", &[])
+            .unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["source"], "import");
+        assert_eq!(events[0]["message"], "Imported 1 game(s) from PGN");
+        assert_eq!(
+            events[1]["message"],
+            "PGN import: 1 game(s) already in Plyback"
+        );
     }
     #[test]
     fn games_filter_by_how_they_ended() {
