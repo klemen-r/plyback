@@ -1,17 +1,33 @@
 import clsx from 'clsx'
 import { AlertCircle, Loader2 } from 'lucide-react'
 import type React from 'react'
+import { useEffect, useRef } from 'react'
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react'
 import type { Confidence as Conf } from '../lib/types'
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
 
-export function Button({ variant = 'secondary', size = 'md', loading, className, children, ...rest }:
-  ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: 'sm' | 'md' | 'icon'; loading?: boolean }) {
+export function Button({ variant = 'secondary', size = 'md', loading, className, children, onClick, ref, ...rest }:
+  ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: 'sm' | 'md' | 'icon'; loading?: boolean; ref?: React.Ref<HTMLButtonElement> }) {
+  // Buttons that start work (they pass `loading`) are disabled only after the next render, so
+  // the second click of a double-click would submit twice. Hold a short lock from the click
+  // until the work shows as loading (then `disabled` takes over) or has finished.
+  const lockedUntil = useRef(0)
+  useEffect(() => { if (!loading) lockedUntil.current = 0 }, [loading])
+  const click = (e: React.MouseEvent<HTMLButtonElement>) => {
+    if (loading !== undefined) {
+      // preventDefault also stops a second form submission from a submit button.
+      if (e.timeStamp < lockedUntil.current) { e.preventDefault(); return }
+      lockedUntil.current = e.timeStamp + 500
+    }
+    onClick?.(e)
+  }
   return (
     <button
       type="button"
       {...rest}
+      ref={ref}
+      onClick={click}
       disabled={rest.disabled || loading}
       className={clsx(
         'inline-flex shrink-0 select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-md font-medium transition-colors disabled:pointer-events-none disabled:opacity-50',

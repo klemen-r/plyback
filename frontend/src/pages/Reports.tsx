@@ -23,6 +23,7 @@ export default function Reports() {
   const del = useMutation({ mutationFn: (id: number) => api.deleteReport(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['reports'] }) })
   // Reports are frozen snapshots that cannot be recreated, so deleting one asks first.
   const [confirming, setConfirming] = useState<number | null>(null)
+  const cancelDelete = (id: number) => { setConfirming(null); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`[data-report-delete="${id}"]`)?.focus()) }
 
   if (!account) return <Empty icon={<FileText className="h-10 w-10" />} title="Connect a Chess.com account first" action={<Link to="/accounts"><Button variant="primary">Connect account</Button></Link>} />
   return (
@@ -52,11 +53,11 @@ export default function Reports() {
               {r.status === 'analyzing' ? `analysing ${r.analyzed_games}/${r.total_games}` : r.status}
             </Badge>
             {confirming === r.id
-              ? <span className="flex items-center gap-2">
+              ? <span className="flex items-center gap-2" onKeyDown={e => { if (e.key === 'Escape') cancelDelete(r.id) }}>
                   <Button size="sm" variant="danger" loading={del.isPending} onClick={() => del.mutate(r.id, { onSettled: () => setConfirming(null) })}>Delete</Button>
-                  <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>Cancel</Button>
+                  <Button size="sm" variant="ghost" autoFocus onClick={() => cancelDelete(r.id)}>Cancel</Button>
                 </span>
-              : <Button size="sm" variant="ghost" onClick={() => setConfirming(r.id)} aria-label="Delete report"><Trash2 className="h-4 w-4" /></Button>}
+              : <Button size="sm" variant="ghost" data-report-delete={r.id} onClick={() => setConfirming(r.id)} aria-label="Delete report"><Trash2 className="h-4 w-4" /></Button>}
           </div>
         )) : <Empty title="No reports yet">Create one above — for example "last 90 days of blitz".</Empty>}
       </Card>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { fmtClock, fmtTimeControl, formatEval, mateIn, moveLabel, winWhite } from '../format'
-import { restoreFilters, toInsightFilters } from '../filters'
+import { restoreFilters, toInsightFilters, type FilterState } from '../filters'
 
 describe('format helpers', () => {
   it('formats evaluations and mates like the backend', () => {
@@ -60,5 +60,13 @@ describe('moveLabel', () => {
     expect(moveLabel(1, 'Kh7', '7k/8/8/8/8/8/8/7K b - - 0 42')).toBe('42… Kh7')
     expect(moveLabel(2, 'Kh2', '8/7k/8/8/8/8/8/7K w - - 1 43')).toBe('43. Kh2')
     expect(moveLabel(3, 'Kg8', 'not a fen')).toBe('2. Kg8')
+  })
+})
+
+describe('custom date ranges', () => {
+  it('treats dates entered the wrong way round as the same range', () => {
+    const base: Omit<FilterState, 'from' | 'to'> = { period: 'custom', time_classes: [], color: '', rated: '', opening: '' }
+    expect(toInsightFilters({ ...base, from: '2026-10-28', to: '2026-10-25' }))
+      .toEqual(toInsightFilters({ ...base, from: '2026-10-25', to: '2026-10-28' }))
   })
 })

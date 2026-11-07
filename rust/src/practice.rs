@@ -375,7 +375,12 @@ fn answer(db: &Database, account: i64, game: i64, ply: i64, body: &Value) -> Api
                  box = excluded.box, due_at = excluded.due_at,
                  attempts = attempts + 1, correct = correct + excluded.correct,
                  lapses = lapses + excluded.lapses,
-                 last_seen_at = excluded.last_seen_at, last_correct = excluded.last_correct",
+                 last_seen_at = excluded.last_seen_at, last_correct = excluded.last_correct
+             -- Answering again before the position is due, within 10 minutes of the last
+             -- answer (a second tab, a repeated request), only shows the solution: the first
+             -- answer already set the schedule and must not gain a second lapse.
+             WHERE NOT (practice_items.due_at > excluded.last_seen_at
+                        AND practice_items.last_seen_at > excluded.last_seen_at - 600)",
             params![
                 account,
                 game,
@@ -388,6 +393,13 @@ fn answer(db: &Database, account: i64, game: i64, ply: i64, body: &Value) -> Api
             ],
         )?;
         Ok(())
+    })?;
+    let (box_, due_at): (i64, i64) = db.read(|c| {
+        Ok(c.query_row(
+            "SELECT box, due_at FROM practice_items WHERE account_id=?1 AND game_id=?2 AND ply=?3",
+            params![account, game, ply],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?)
     })?;
     let all = db.read(|c| candidates(c, account, None, None))?;
     let san = played.as_ref().map(|played| {

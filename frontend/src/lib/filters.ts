@@ -36,8 +36,10 @@ export function toInsightFilters(s: FilterState): InsightFilters {
       const [y, m, d] = date.split('-').map(Number)
       return Math.floor(new Date(y, m - 1, d + Number(nextDay)).getTime() / 1000)
     }
-    if (s.from) f.since = midnight(s.from)
-    if (s.to) f.until = midnight(s.to, true)
+    // Dates entered the wrong way round mean the same range, rather than an error.
+    const [from, to] = s.from && s.to && s.from > s.to ? [s.to, s.from] : [s.from, s.to]
+    if (from) f.since = midnight(from)
+    if (to) f.until = midnight(to, true)
   } else if (s.period !== 'all') {
     f.since = Math.floor((nowTs() - Number(s.period) * DAY) / 3600) * 3600 // hour-rounded: stable cache keys
   }

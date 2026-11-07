@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import Board from '../components/Board'
 import ClassIcon from '../components/ClassIcon'
-import { Button, Card, Empty, ErrorNote, Loading, PageHeader, Select, Tabs } from '../components/ui'
+import { Button, Card, Empty, ErrorNote, Input, Loading, PageHeader, Select, Tabs } from '../components/ui'
 import { useAccount } from '../lib/account-context'
 import { api } from '../lib/api'
 import { CLASS_META, PHASE_LABEL } from '../lib/classification'
@@ -149,6 +149,8 @@ function PracticeSession() {
   const [stats, setStats] = useState<PracticeStats | null>(null)
   const [promotion, setPromotion] = useState<{ orig: string; dest: string } | null>(null)
   const [checkError, setCheckError] = useState<unknown>(null)
+  const [typed, setTyped] = useState('')
+  const [typedError, setTypedError] = useState<string | null>(null)
   const reply = useRef<number | undefined>(undefined)
   const generation = useRef(0)
 
@@ -191,7 +193,7 @@ function PracticeSession() {
     resetAnswer()
     setSolution(null); setPlayed([]); setStatus('solving'); setTries(0); setWrong(null); setHint(false)
     setNote(null); setLiveLine(null); setStep(null); setPromotion(null); setCheckError(null)
-    setLineFor(fullLineRef.current)
+    setLineFor(fullLineRef.current); setTyped(''); setTypedError(null)
   }, [cancelCheck, resetAnswer])
   const restart = () => {
     resetPuzzle(); setIndex(0); setScore({ right: 0, done: 0 }); setStats(null)
@@ -411,6 +413,19 @@ function PracticeSession() {
   const fen = shownMove?.fen ?? item?.fen
   const lastMove = shownMove ? [shownMove.from, shownMove.to] as [Key, Key] : squares(item?.last_uci)
   const yourTurn = played.length % 2 === 0
+  const canMove = !done && yourTurn && status === 'solving' && !answer.isPending && !promotion
+  const typeMove = () => {
+    const text = typed.trim()
+    if (!text || !canMove) return
+    const position = new Chess(currentFen())
+    let m
+    try { m = position.move(text) } catch {
+      try { m = /^[a-h][1-8][a-h][1-8][qrbn]?$/i.test(text) ? position.move({ from: text.slice(0, 2).toLowerCase(), to: text.slice(2, 4).toLowerCase(), promotion: text[4]?.toLowerCase() }) : null } catch { m = null }
+    }
+    if (!m) { setTypedError(`${text} isn’t a legal move here.`); return }
+    setTyped(''); setTypedError(null)
+    void onMove(m.from, m.to, m.promotion as Promotion | undefined)
+  }
   const shapes: DrawShape[] = []
   if (hint && !done && yourTurn && solution && line[played.length] && fen) {
     const to = walk(fen, [line[played.length]])[0]
@@ -444,7 +459,7 @@ function PracticeSession() {
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
             <div className="relative mx-auto w-full min-w-[280px] max-w-[620px] lg:max-w-[min(640px,calc(100vh-18.5rem))]">
               <Board fen={fen!} orientation={item.color} lastMove={lastMove} shapes={shapes} nonce={nonce}
-                interactive={!done && yourTurn && status === 'solving' && !answer.isPending && !promotion} onMove={onBoardMove} />
+                interactive={canMove} onMove={onBoardMove} />
               {promotion && (
                 // Over the board, so the picker is in view on a phone too.
                 <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/25 p-4 backdrop-blur-[2px]" onClick={cancelPromotion}>
@@ -486,6 +501,15 @@ function PracticeSession() {
                       : played.length > 0 ? <span className="text-fg-2">Your opponent replies…</span>
                       : <span className="text-fg-2">Find the best move{lineFor ? ', then keep going' : ''}.</span>}
                   </div>
+                )}
+                {!done && (
+                  // Moves can also be typed, so Practice works from the keyboard and with a screen reader.
+                  <form className="mt-3 flex items-center gap-2" onSubmit={e => { e.preventDefault(); typeMove() }}>
+                    <Input aria-label="Type your move" placeholder="Type a move, e.g. Nf3 or g1f3" value={typed} disabled={!canMove}
+                      onChange={e => { setTyped(e.target.value); setTypedError(null) }} className="w-56" autoComplete="off" spellCheck={false} />
+                    <Button type="submit" size="sm" disabled={!canMove || !typed.trim()}>Play</Button>
+                    {typedError && <span className="text-[13px] text-bad" role="alert">{typedError}</span>}
+                  </form>
                 )}
                 {!done && (
                   <div className="mt-4 flex flex-wrap items-center gap-2">

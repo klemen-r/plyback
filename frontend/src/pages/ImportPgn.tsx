@@ -16,7 +16,8 @@ export default function ImportPgn() {
   const onFile = async (f: File | undefined) => {
     if (!f) return
     // The server accepts PGN text up to 20,000,000 bytes.
-    if (f.size > 20_000_000) { setFileError('Choose a PGN file of at most 20 MB, or split it into smaller files.'); return }
+    // A rejected file also clears the previous text and result, so Import cannot resend old text.
+    if (f.size > 20_000_000) { setPgn(''); imp.reset(); setFileError('Choose a PGN file of at most 20 MB, or split it into smaller files.'); return }
     try { setPgn(await f.text()); setFileError(null); imp.reset() }
     catch { setFileError('The selected file could not be read. Try choosing it again.') }
   }

@@ -3,7 +3,7 @@ import type { GameSummary } from './types'
 /** How a game ended, from the per-side result codes that Chess.com and PGN imports store. */
 const HOW: Record<string, string> = {
   checkmated: 'checkmate', resigned: 'resignation', timeout: 'time', abandoned: 'abandonment',
-  kingofthehill: 'king of the hill', threecheck: 'three checks', lose: 'loss', bughousepartnerlose: 'partner loss',
+  kingofthehill: 'king of the hill', threecheck: 'three checks', bughousepartnerlose: 'partner loss',
 }
 const DRAWS: Record<string, string> = {
   agreed: 'agreement', repetition: 'repetition', stalemate: 'stalemate', insufficient: 'insufficient material',
@@ -36,7 +36,12 @@ export function endingOf(g: { white: Side; black: Side } & Pick<GameSummary, 'us
     return g.termination ? { short: g.termination, text: g.termination } : null
   }
   const how = HOW[whiteWon ? b : w]
-  if (!how) return g.termination ? { short: whiteWon ? 'White won' : 'Black won', text: g.termination } : null
+  if (!how) {
+    // A win without a known reason (Chess.com's generic "lose", or a PGN without a Termination).
+    const short = whiteWon ? 'White won' : 'Black won'
+    if (g.termination) return { short, text: g.termination }
+    return { short, text: g.user_color ? ((g.user_color === 'white') === whiteWon ? 'Won' : 'Lost') : short }
+  }
   const short = how === 'time' ? 'Time' : how[0].toUpperCase() + how.slice(1)
   if (!g.user_color) return { short, text: `${whiteWon ? 'White' : 'Black'} won ${by(how)}` }
   const won = (g.user_color === 'white') === whiteWon

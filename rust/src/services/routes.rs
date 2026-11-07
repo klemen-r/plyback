@@ -327,7 +327,11 @@ impl Services {
         for (index, text) in texts.iter().enumerate() {
             match store::game_row_from_pgn(text) {
                 Ok(row) if row["plies"].as_u64().unwrap_or(0) > 0 => rows.push(row),
-                Ok(_) => errors.push(json!({"index":index,"error":"Game has no moves"})),
+                Ok(_) => errors.push(json!({"index":index,"error":if text.trim_start().starts_with('[') {
+                    "Game has no moves"
+                } else {
+                    "This doesn't look like PGN: no tags such as [White \"…\"] and no moves such as 1. e4"
+                }})),
                 Err(error) => errors.push(json!({"index":index,"error":error.to_string()})),
             }
         }

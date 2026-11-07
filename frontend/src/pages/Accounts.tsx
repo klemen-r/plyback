@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowUpRight, RefreshCw } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Avatar } from '../components/Layout'
 import { Badge, Button, Card, ErrorNote, Input, PageHeader, Progress, Section, Select, Switch } from '../components/ui'
@@ -29,7 +29,7 @@ export function AddAccountForm({ onAdded }: { onAdded?: (a: Account) => void }) 
     <form onSubmit={e => { e.preventDefault(); if (username.trim()) add.mutate() }}>
       <label htmlFor="username" className="text-[14px] font-medium">Chess.com username</label>
       <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-        <Input id="username" value={username} onChange={e => setUsername(e.target.value)} placeholder="e.g. hikaru" autoComplete="off" autoFocus className="h-9 flex-1" />
+        <Input id="username" value={username} onChange={e => setUsername(e.target.value)} placeholder="e.g. hikaru" autoComplete="off" autoFocus className="h-10 sm:h-9 sm:flex-1" />
         <Select label="History to import" value={range} onChange={setRange} className="h-9">
           <option value="all">All history</option>
           <option value="1">This month</option>
@@ -44,6 +44,7 @@ export function AddAccountForm({ onAdded }: { onAdded?: (a: Account) => void }) 
         <Switch checked={history} onChange={setHistory} label="Review imported history in the background"
           description="New games are always reviewed. Turn this off to review older games only when you ask for them." />
       </div>
+      {add.isPending && <p className="mt-2 text-[13px] text-fg-2" role="status">Contacting Chess.com… If it is slow or unreachable, this can take up to a minute.</p>}
       {add.error && <div className="mt-1"><ErrorNote error={add.error} /></div>}
       <p className="mt-2 text-[12.5px] text-fg-3">Uses Chess.com's public API. No password or Chess.com login is needed.</p>
     </form>
@@ -58,12 +59,15 @@ function AccountCard({ a }: { a: Account }) {
   const sync = useMutation({ mutationFn: () => api.syncAccount(a.id), onSuccess: refresh })
   const del = useMutation({ mutationFn: () => api.deleteAccount(a.id), onSuccess: refresh })
   const [confirm, setConfirm] = useState(false)
+  const removeButton = useRef<HTMLButtonElement>(null)
+  const cancelRemove = () => { setConfirm(false); requestAnimationFrame(() => removeButton.current?.focus()) }
   const ratings = Object.entries(a.ratings).filter(([, r]) => r.rating)
   return (
     <Card padded={false}>
       <div className="flex flex-wrap items-start gap-4 p-5">
         <Avatar src={a.avatar} name={a.username} size={40} />
-        <div className="min-w-0 flex-1">
+        {/* A real minimum width, so the buttons wrap below on a phone instead of squeezing this. */}
+        <div className="min-w-0 flex-1 basis-56">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[16px] font-semibold tracking-[-0.01em]">{a.title && <span className="mr-1.5 text-bad">{a.title}</span>}{a.display_name}</span>
             {account?.id === a.id ? <Badge>Selected</Badge> : <button className="text-[13px] text-fg-2 hover:text-fg" onClick={() => select(a.id)}>Select</button>}
@@ -83,11 +87,12 @@ function AccountCard({ a }: { a: Account }) {
                 : <span className="text-fg-3">Last synced {timeAgo(a.last_sync_at)}</span>}
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2" onKeyDown={e => { if (e.key === 'Escape' && confirm) cancelRemove() }}>
           <Button size="sm" onClick={() => sync.mutate()} loading={sync.isPending || a.sync_status === 'syncing'}><RefreshCw className="h-3.5 w-3.5" />Sync</Button>
+          {/* Keyboard focus moves into the confirmation and back, instead of falling to the page. */}
           {confirm
-            ? <><Button size="sm" variant="danger" loading={del.isPending} onClick={() => del.mutate()}>Remove</Button><Button size="sm" variant="ghost" onClick={() => setConfirm(false)}>Cancel</Button></>
-            : <Button size="sm" variant="ghost" onClick={() => setConfirm(true)}>Remove…</Button>}
+            ? <><Button size="sm" variant="danger" loading={del.isPending} onClick={() => del.mutate()}>Remove</Button><Button size="sm" variant="ghost" autoFocus onClick={cancelRemove}>Cancel</Button></>
+            : <Button size="sm" variant="ghost" ref={removeButton} onClick={() => setConfirm(true)}>Remove…</Button>}
         </div>
       </div>
       {confirm && <div className="border-t border-line bg-bad/5 px-5 py-3 text-[13px]">Removing deletes this account's games and reviews from Plyback. Games shared with another connected account are kept.</div>}

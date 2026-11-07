@@ -261,8 +261,10 @@ impl Insights {
             tx.execute("UPDATE reports SET scope_frozen=1 WHERE id=? AND status!='ready'",[rid])?;Ok(())
         })
     }
+    // A game still queued or running (e.g. re-analysed at the report's depth) is not done yet,
+    // even if an older, shallower analysis exists; otherwise the bar reads complete too early.
     fn progress(&self, rid: i64) -> Result<(usize, usize, usize)> {
-        let row=self.db.one("SELECT COUNT(*) AS total, COALESCE(SUM(EXISTS(SELECT 1 FROM game_analysis ga WHERE ga.game_id=g.id)),0) AS analyzed,COALESCE(SUM(EXISTS(SELECT 1 FROM jobs j WHERE j.game_id=g.id AND j.status IN ('queued','running'))),0) AS pending FROM report_games rg JOIN games g ON g.id=rg.game_id AND g.uuid=rg.game_uuid WHERE rg.report_id=? AND g.rules IN ('chess','chess960')",&[json!(rid)])?.unwrap_or_else(||json!({}));
+        let row=self.db.one("SELECT COUNT(*) AS total, COALESCE(SUM(EXISTS(SELECT 1 FROM game_analysis ga WHERE ga.game_id=g.id) AND NOT EXISTS(SELECT 1 FROM jobs j WHERE j.game_id=g.id AND j.status IN ('queued','running'))),0) AS analyzed,COALESCE(SUM(EXISTS(SELECT 1 FROM jobs j WHERE j.game_id=g.id AND j.status IN ('queued','running'))),0) AS pending FROM report_games rg JOIN games g ON g.id=rg.game_id AND g.uuid=rg.game_uuid WHERE rg.report_id=? AND g.rules IN ('chess','chess960')",&[json!(rid)])?.unwrap_or_else(||json!({}));
         Ok((
             row["total"].as_u64().unwrap_or(0) as usize,
             row["analyzed"].as_u64().unwrap_or(0) as usize,

@@ -429,3 +429,44 @@ test('Hint is offered only on your move, not while the opponent replies', async 
   await expect(page.getByRole('button', { name: 'Hint' })).toBeVisible()
   expect(errors).toEqual([])
 })
+
+test('Practice can be played from the keyboard by typing moves', async ({ page }) => {
+  const posted: unknown[] = []
+  const errors = await fixture(page, async route => {
+    if (route.request().method() === 'POST') {
+      posted.push(route.request().postDataJSON())
+      await route.fulfill({ json: { ...answer, correct: true, uci: 'e2e4', san: 'e4', line_san: ['e4', 'e5', 'Nf3'] } })
+      return
+    }
+    await route.fulfill({ json: { stats, items: [item] } })
+  })
+  await page.clock.install()
+  await page.goto('/practice')
+  const field = page.getByLabel('Type your move')
+  await field.fill('Ke2')
+  await field.press('Enter')
+  await expect(page.getByText('Ke2 isn’t a legal move here.')).toBeVisible()
+  expect(posted).toEqual([])
+  await field.fill('e2e4')
+  await field.press('Enter')
+  await expect.poll(() => posted).toEqual([{ uci: 'e2e4' }])
+  await page.clock.runFor(500)
+  await expect(page.getByText('Good. Find the next move (2 of 2).')).toBeVisible()
+  await field.fill('Nf3')
+  await field.press('Enter')
+  await expect(page.getByText('Solved the line on the first try')).toBeVisible()
+  expect(errors).toEqual([])
+})
+
+test('A double-click on Show answer records one answer', async ({ page }) => {
+  let posts = 0
+  const errors = await fixture(page, async route => {
+    if (route.request().method() === 'POST') { posts++; await new Promise(r => setTimeout(r, 300)); await route.fulfill({ json: answer }); return }
+    await route.fulfill({ json: { stats, items: [item] } })
+  })
+  await page.goto('/practice')
+  await page.getByRole('button', { name: 'Show answer' }).dblclick()
+  await expect(page.getByText('The move was e4')).toBeVisible()
+  expect(posts).toBe(1)
+  expect(errors).toEqual([])
+})

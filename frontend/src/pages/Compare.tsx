@@ -3,10 +3,10 @@ import { SERIES } from '../lib/charts'
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { GitCompare } from 'lucide-react'
-import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { BarChart } from '../components/charts'
 import FilterBar from '../components/FilterBar'
-import { DEFAULT_FILTERS, toInsightFilters, type FilterState } from '../lib/filters'
+import { DEFAULT_FILTERS, restoreFilters, toInsightFilters, type FilterState } from '../lib/filters'
 import { Card, Empty, ErrorNote, Loading, Select } from '../components/ui'
 import { useAccount } from '../lib/account-context'
 import { api } from '../lib/api'
@@ -16,6 +16,16 @@ import { insightPollInterval } from '../lib/insight-query'
 
 interface Segment { accountId: number | null; filters: FilterState }
 
+/** A selection kept in the address (`?a=` / `?b=`), so Back and reload return to it. */
+function readSegment(raw: string | null, fallback: Segment): Segment {
+  if (!raw) return fallback
+  try {
+    const v = JSON.parse(raw) as { account?: unknown; filters?: unknown }
+    const id = Number(v.account)
+    return { accountId: Number.isInteger(id) && id > 0 ? id : null, filters: restoreFilters(v.filters) }
+  } catch { return fallback }
+}
+
 function useSegment(seg: Segment) {
   const f = toInsightFilters(seg.filters)
   return useQuery({ queryKey: ['insights', seg.accountId, f], queryFn: () => api.insights(seg.accountId!, f), enabled: !!seg.accountId, refetchInterval: insightPollInterval })
@@ -23,16 +33,28 @@ function useSegment(seg: Segment) {
 
 type Row = { label: string; a: number | null | undefined; b: number | null | undefined; unit?: string; better: 'higher' | 'lower'; digits?: number }
 
+/** Causes from either selection, so an empty side does not hide the other's. Unknown stays null. */
+function causes(a: Insights, b: Insights) {
+  const keys = [...new Map([...a.priorities, ...b.priorities].filter(p => p.ep_lost_per_game !== undefined).map(p => [p.key, p.title])).entries()]
+  const loss = (d: Insights, key: string) => {
+    const v = d.priorities.find(x => x.key === key)?.ep_lost_per_game
+    return d.data_quality.analyzed && v !== undefined && v !== null ? +(v * 100).toFixed(1) : null
+  }
+  return keys.map(([key, title]) => ({ area: title.split(' (')[0], A: loss(a, key), B: loss(b, key) }))
+}
+
 function metrics(a: Insights, b: Insights): Row[] {
   const ph = (d: Insights, k: 'opening' | 'middlegame' | 'endgame') => d.phases[k].user.accuracy
-  const tag = (d: Insights, t: string) => d.errors.tags.find(x => x.tag === t)?.per_game
+  // With no analysed games a per-game rate is unknown, not 0.
+  const engine = (d: Insights, v: number | null | undefined) => (d.data_quality.analyzed ? v : null)
+  const tag = (d: Insights, t: string) => engine(d, d.errors.tags.find(x => x.tag === t)?.per_game)
   return [
     { label: 'Games', a: a.overview.games, b: b.overview.games, better: 'higher', digits: 0 },
     { label: 'Score', a: a.overview.score, b: b.overview.score, unit: '%', better: 'higher', digits: 1 },
     { label: 'Accuracy', a: a.overview.accuracy, b: b.overview.accuracy, unit: '%', better: 'higher', digits: 1 },
     { label: 'Avg. centipawn loss', a: a.overview.acpl, b: b.overview.acpl, better: 'lower', digits: 1 },
-    { label: 'Blunders / game', a: a.overview.per_game?.blunder, b: b.overview.per_game?.blunder, better: 'lower', digits: 2 },
-    { label: 'Mistakes / game', a: a.overview.per_game?.mistake, b: b.overview.per_game?.mistake, better: 'lower', digits: 2 },
+    { label: 'Blunders / game', a: engine(a, a.overview.per_game?.blunder), b: engine(b, b.overview.per_game?.blunder), better: 'lower', digits: 2 },
+    { label: 'Mistakes / game', a: engine(a, a.overview.per_game?.mistake), b: engine(b, b.overview.per_game?.mistake), better: 'lower', digits: 2 },
     { label: 'Performance rating', a: a.overview.performance_rating, b: b.overview.performance_rating, better: 'higher', digits: 0 },
     ...(['opening', 'middlegame', 'endgame'] as const).map(k => ({ label: `${PHASE_LABEL[k]} accuracy`, a: ph(a, k), b: ph(b, k), unit: '%', better: 'higher' as const, digits: 1 })),
     { label: 'Hanging pieces / game', a: tag(a, 'hanging_piece'), b: tag(b, 'hanging_piece'), better: 'lower', digits: 2 },
@@ -58,8 +80,15 @@ function SegmentPicker({ label, seg, onChange, color }: { label: string; seg: Se
 
 export default function Compare() {
   const { account, accounts } = useAccount()
-  const [a, setA] = useState<Segment>({ accountId: null, filters: { ...DEFAULT_FILTERS, period: '30' } })
-  const [b, setB] = useState<Segment>({ accountId: null, filters: { ...DEFAULT_FILTERS, period: 'all' } })
+  const [sp, setSp] = useSearchParams()
+  const a = readSegment(sp.get('a'), { accountId: null, filters: { ...DEFAULT_FILTERS, period: '30' } })
+  const b = readSegment(sp.get('b'), { accountId: null, filters: { ...DEFAULT_FILTERS, period: 'all' } })
+  const save = (key: 'a' | 'b') => (s: Segment) => {
+    const next = new URLSearchParams(sp)
+    next.set(key, JSON.stringify({ account: s.accountId, filters: s.filters }))
+    setSp(next, { replace: true })
+  }
+  const setA = save('a'), setB = save('b')
   const segA = { ...a, accountId: a.accountId ?? account?.id ?? null }
   const segB = { ...b, accountId: b.accountId ?? account?.id ?? null }
   const qa = useSegment(segA)
@@ -105,10 +134,7 @@ export default function Compare() {
             </Card>
             <Card title="Win chance lost per game, by cause">
               <BarChart horizontal height={300} labelWidth={150}
-                data={qa.data.priorities.filter(p => p.ep_lost_per_game !== undefined).map(p => ({
-                  area: p.title.split(' (')[0], A: +((p.ep_lost_per_game ?? 0) * 100).toFixed(1),
-                  B: +(((qb.data!.priorities.find(x => x.key === p.key)?.ep_lost_per_game) ?? 0) * 100).toFixed(1),
-                }))} x="area" unit="%" series={[{ key: 'A', name: 'A', color: SERIES.you }, { key: 'B', name: 'B', color: SERIES.opp }]} />
+                data={causes(qa.data, qb.data)} x="area" unit="%" series={[{ key: 'A', name: 'A', color: SERIES.you }, { key: 'B', name: 'B', color: SERIES.opp }]} />
             </Card>
           </div>
         </div>

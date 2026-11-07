@@ -235,6 +235,22 @@ fn answers_are_checked_and_scheduled() {
     assert_eq!(queue["stats"]["learning"], 1);
     assert_eq!(queue["stats"]["due"], 0);
     assert_eq!(queue["items"].as_array().unwrap().len(), 1);
+    // Answering again before it is due (a second tab) changes nothing.
+    let (_, again) = post(&db, path, json!({"uci": "d2d3"})).unwrap();
+    assert_eq!(again["correct"], false);
+    let attempts: i64 = db
+        .read(|c| {
+            Ok(c.query_row(
+                "SELECT attempts FROM practice_items WHERE game_id=10 AND ply=7",
+                [],
+                |r| r.get(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(attempts, 1);
+    // Later, once it is due again, the next answer counts.
+    db.execute("UPDATE practice_items SET due_at=0", &[])
+        .unwrap();
     let (_, right) = post(&db, path, json!({"uci": "h5f7"})).unwrap();
     assert_eq!(right["correct"], true);
     assert_eq!(right["box"], 1);

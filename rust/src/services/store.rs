@@ -137,9 +137,26 @@ pub fn game_row_from_pgn(text: &str) -> Result<Value> {
     let h = &game.headers;
     let get = |key: &str| h.get(key).map(String::as_str);
     let result = get("Result").unwrap_or("*");
+    // How the loser lost: checkmate is read from the final position, other reasons from the
+    // Termination header; otherwise the generic "lose" (shown as just "Won"/"Lost").
+    let termination = get("Termination").unwrap_or("").to_ascii_lowercase();
+    let mated = pgn::board(&game.final_fen, game.chess960)
+        .map(|b| shakmaty::Position::is_checkmate(&b))
+        .unwrap_or(false);
+    let loser = if mated || termination.contains("checkmate") {
+        "checkmated"
+    } else if termination.contains("time") {
+        "timeout"
+    } else if termination.contains("resign") {
+        "resigned"
+    } else if termination.contains("abandon") {
+        "abandoned"
+    } else {
+        "lose"
+    };
     let (wr, br) = match result {
-        "1-0" => (Some("win"), Some("lose")),
-        "0-1" => (Some("lose"), Some("win")),
+        "1-0" => (Some("win"), Some(loser)),
+        "0-1" => (Some(loser), Some("win")),
         "1/2-1/2" => (Some("agreed"), Some("agreed")),
         _ => (None, None),
     };

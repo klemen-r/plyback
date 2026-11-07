@@ -19,6 +19,11 @@ export default function CommandPalette({ onClose }: { onClose: () => void }) {
   const nav = useNavigate()
   const { account } = useAccount()
   const input = useRef<HTMLInputElement>(null)
+  // Give focus back to whatever opened the palette (the Search button, or the page for Ctrl+K).
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    return () => { if (opener?.isConnected) opener.focus() }
+  }, [])
   const listId = useId()
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null

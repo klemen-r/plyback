@@ -30,3 +30,12 @@ describe('endingOf', () => {
     expect(endingOf(game(null, null, null))).toBeNull()
   })
 })
+
+describe('a win without a known reason', () => {
+  it('says who won instead of "won by loss"', () => {
+    expect(endingOf(game('win', 'lose'))).toEqual({ short: 'White won', text: 'Won' })
+    expect(endingOf(game('win', 'lose', 'black'))).toEqual({ short: 'White won', text: 'Lost' })
+    expect(endingOf(game('lose', 'win', null))).toEqual({ short: 'Black won', text: 'Black won' })
+    expect(endingOf(game('win', 'lose', 'white', 'White wins by adjudication'))?.text).toBe('White wins by adjudication')
+  })
+})
