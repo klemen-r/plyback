@@ -32,7 +32,7 @@ export default function ActivityPage() {
         <Figure label="Running" value={d.running} detail={`${d.workers} worker${d.workers === 1 ? '' : 's'}`} />
         <Figure label="Completed (7 days)" value={d.done} />
         <Figure label="Avg. per game" value={d.avg_game_seconds ? `${d.avg_game_seconds}s` : '—'} />
-        <Figure label="Time remaining" value={d.eta_seconds ? fmtDuration(d.eta_seconds) : '—'} />
+        <Figure label="Time remaining" value={d.paused && d.queued ? 'Paused' : d.eta_seconds ? fmtDuration(d.eta_seconds) : '—'} />
       </div>
       <Card title="Queue" subtitle={d.engine ? `${d.engine}${d.paused ? ' · paused' : ''}` : undefined} bodyClass="p-2">
         {d.jobs.length ? d.jobs.map(j => (
@@ -42,7 +42,7 @@ export default function ActivityPage() {
             {j.status === 'running' && j.total ? <span className="flex w-40 items-center gap-2"><Progress value={j.progress ?? 0} max={j.total} /><span className="text-xs tnum text-fg-2">{j.progress}/{j.total}</span></span>
               : <span className="text-xs text-fg-3">{PRIORITY[j.priority] ?? `p${j.priority}`} · d{j.depth}</span>}
           </Link>
-        )) : <Empty title="Queue is empty">All games are analysed.</Empty>}
+        )) : <Empty title="Queue is empty">Nothing is waiting to be reviewed.</Empty>}
         {d.queued > d.jobs.length && <p className="px-3 py-2 text-xs text-fg-3">…and {d.queued - d.jobs.filter(j => j.status === 'queued').length} more</p>}
       </Card>
       {d.failed_jobs.length > 0 && (

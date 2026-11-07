@@ -399,7 +399,7 @@ function PracticeSession() {
         ))}
       </dl>
       <div className="border-t border-line px-3 py-2 text-[12.5px] text-fg-2">
-        {score.done > 0 ? `This session: ${score.right} of ${score.done} on the first try` : `${shownStats.total} positions${range === 'all' ? '' : ' from these games'} with one clear answer`}
+        {score.done > 0 ? `This session: ${score.right} of ${score.done} on the first try` : `${shownStats.total} ${shownStats.total === 1 ? 'position' : 'positions'}${range === 'all' ? '' : ' from these games'} with one clear answer`}
         {range === 'all' && shownStats.next_due_at && !shownStats.due ? ` · next review ${returnsIn(shownStats.next_due_at)}` : ''}
       </div>
     </Card>
@@ -412,7 +412,7 @@ function PracticeSession() {
   const lastMove = shownMove ? [shownMove.from, shownMove.to] as [Key, Key] : squares(item?.last_uci)
   const yourTurn = played.length % 2 === 0
   const shapes: DrawShape[] = []
-  if (hint && !done && solution && line[played.length] && fen) {
+  if (hint && !done && yourTurn && solution && line[played.length] && fen) {
     const to = walk(fen, [line[played.length]])[0]
     if (to) shapes.push({ orig: to.from, brush: 'yellow' })
   }
@@ -489,7 +489,7 @@ function PracticeSession() {
                 )}
                 {!done && (
                   <div className="mt-4 flex flex-wrap items-center gap-2">
-                    {solution && !hint && <Button variant="ghost" onClick={() => setHint(true)}><Lightbulb className="h-3.5 w-3.5" />Hint</Button>}
+                    {solution && !hint && yourTurn && <Button variant="ghost" onClick={() => setHint(true)}><Lightbulb className="h-3.5 w-3.5" />Hint</Button>}
                     <Button variant="ghost" onClick={() => void reveal()} loading={answer.isPending && !solution}><Eye className="h-3.5 w-3.5" />Show answer</Button>
                     <Button variant="ghost" onClick={next}>Skip</Button>
                   </div>

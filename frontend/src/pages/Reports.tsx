@@ -21,6 +21,8 @@ export default function Reports() {
   })
   const create = useMutation({ mutationFn: () => api.createReport(account!.id, toInsightFilters(fs), title || undefined), onSuccess: r => nav(`/reports/${r.id}`) })
   const del = useMutation({ mutationFn: (id: number) => api.deleteReport(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['reports'] }) })
+  // Reports are frozen snapshots that cannot be recreated, so deleting one asks first.
+  const [confirming, setConfirming] = useState<number | null>(null)
 
   if (!account) return <Empty icon={<FileText className="h-10 w-10" />} title="Connect a Chess.com account first" action={<Link to="/accounts"><Button variant="primary">Connect account</Button></Link>} />
   return (
@@ -49,7 +51,12 @@ export default function Reports() {
             <Badge className={r.status === 'ready' ? 'bg-accent/15 text-accent' : r.status === 'failed' ? 'bg-bad/15 text-bad' : 'bg-accent-ink/20 text-accent-ink'}>
               {r.status === 'analyzing' ? `analysing ${r.analyzed_games}/${r.total_games}` : r.status}
             </Badge>
-            <Button size="sm" variant="ghost" onClick={() => del.mutate(r.id)} aria-label="Delete report"><Trash2 className="h-4 w-4" /></Button>
+            {confirming === r.id
+              ? <span className="flex items-center gap-2">
+                  <Button size="sm" variant="danger" loading={del.isPending} onClick={() => del.mutate(r.id, { onSettled: () => setConfirming(null) })}>Delete</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>Cancel</Button>
+                </span>
+              : <Button size="sm" variant="ghost" onClick={() => setConfirming(r.id)} aria-label="Delete report"><Trash2 className="h-4 w-4" /></Button>}
           </div>
         )) : <Empty title="No reports yet">Create one above — for example "last 90 days of blitz".</Empty>}
       </Card>

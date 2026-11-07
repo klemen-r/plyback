@@ -65,7 +65,7 @@ test('Practice phase filters persist and keep the answer statistics scoped', asy
   await page.goto('/practice')
   await page.getByLabel('Game phase').selectOption('endgame')
   await expect(page.getByText('Move 1 · Endgame')).toBeVisible()
-  await expect(page.getByText('1 positions with one clear answer')).toBeVisible()
+  await expect(page.getByText('1 position with one clear answer')).toBeVisible()
   await page.reload()
   await expect(page.getByLabel('Game phase')).toHaveValue('endgame')
   await page.getByRole('button', { name: 'Show answer' }).click()
@@ -98,7 +98,7 @@ test('Practice theme filters show counts, persist and reveal themes only after t
   await expect(page.getByLabel('Tactical theme').locator('option[value="fork"]')).toHaveText('Fork (2)')
   await expect(page.getByLabel('Puzzle themes', { exact: true })).toHaveCount(0)
   await page.getByLabel('Tactical theme').selectOption('knight-fork')
-  await expect(page.getByText('1 positions with one clear answer')).toBeVisible()
+  await expect(page.getByText('1 position with one clear answer')).toBeVisible()
   await page.reload()
   await expect(page.getByLabel('Tactical theme')).toHaveValue('knight-fork')
   await page.setViewportSize({ width: 390, height: 844 })
@@ -408,5 +408,24 @@ test('Turning off "Play out the line" mid-puzzle applies from the next position'
   await expect(page.getByText(/against Second opponent/)).toBeVisible()
   await expect(page.getByText('Find the best move.', { exact: true })).toBeVisible()
   await expect(page.getByText(/changes from the next position/)).toHaveCount(0)
+  expect(errors).toEqual([])
+})
+
+test('Hint is offered only on your move, not while the opponent replies', async ({ page }) => {
+  const errors = await fixture(page, async route => {
+    if (route.request().method() === 'POST') {
+      await route.fulfill({ json: { ...answer, correct: true, uci: 'e2e4', san: 'e4', line_san: ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5', 'a6'] } })
+      return
+    }
+    await route.fulfill({ json: { stats, items: [item] } })
+  })
+  await page.clock.install()
+  await page.goto('/practice')
+  await playOnBoard(page, 'e2', 'e4')
+  await expect(page.getByText('Your opponent replies…')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Hint' })).toHaveCount(0)
+  await page.clock.runFor(500)
+  await expect(page.getByText('Good. Find the next move (2 of 3).')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Hint' })).toBeVisible()
   expect(errors).toEqual([])
 })

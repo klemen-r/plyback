@@ -86,5 +86,14 @@ export function cap(s: string): string {
 export const DAY = 86400
 export function nowTs() { return Math.floor(Date.now() / 1000) }
 
-export const moveLabel = (ply: number, san: string) => `${Math.ceil(ply / 2)}${ply % 2 ? '.' : '…'} ${san}`
+/**
+ * "42… Kh7". With the position before the move, the number and side come from its FEN,
+ * so games imported from a set-up position keep their numbering; otherwise from the ply.
+ */
+export function moveLabel(ply: number, san: string, fen?: string | null) {
+  const [, side, , , , full] = fen?.split(' ') ?? []
+  const n = Number(full)
+  if ((side === 'w' || side === 'b') && Number.isInteger(n) && n > 0) return `${n}${side === 'b' ? '…' : '.'} ${san}`
+  return `${Math.ceil(ply / 2)}${ply % 2 ? '.' : '…'} ${san}`
+}
 

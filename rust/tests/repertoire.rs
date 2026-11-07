@@ -282,7 +282,8 @@ fn merging_groups_move_orders_that_reach_the_same_position() {
     let shuffled = positions.iter().find(|p| p["id"] == nf3[0]["to"]).unwrap();
     assert_eq!(shuffled["games"], 1);
     assert_eq!(shuffled["score"], 0.5);
-    assert_eq!(shuffled["orders"], 2);
+    // One game returning by repetition is one move order, not two.
+    assert_eq!(shuffled["orders"], 1);
     assert_eq!(get(&db, &[("merge", "false")])["merged"], false);
 }
 
@@ -310,7 +311,8 @@ fn merged_position_counts_each_game_once_across_incoming_edges() {
         assert_eq!(reached["losses"], 1);
         assert_eq!(reached["draws"], 0);
         assert_eq!(reached["score"], 0.5);
-        assert_eq!(reached["orders"], if merge == "true" { 2 } else { 1 });
+        // Game 1 comes back to the position by repetition; that is not another move order.
+        assert_eq!(reached["orders"], 1);
         // Edges still describe the distinct moves used to reach the position.
         let into: i64 = tree["nodes"]
             .as_array()

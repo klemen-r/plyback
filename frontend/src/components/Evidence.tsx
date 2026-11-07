@@ -22,13 +22,13 @@ export default function PositionCard({ ex }: { ex: Example }) {
   if (!ex.fen) return null
   return (
     <div className="group flex flex-col overflow-hidden rounded-lg border border-line bg-surface">
-      <Link to={`/games/${ex.game_id}?ply=${ex.ply}`} className="block p-2.5 pb-0" aria-label={`Open ${moveLabel(ex.ply, ex.san)} in review`}>
+      <Link to={`/games/${ex.game_id}?ply=${ex.ply}`} className="block p-2.5 pb-0" aria-label={`Open ${moveLabel(ex.ply, ex.san, ex.fen)} in review`}>
         <MiniBoard fen={ex.fen} orientation={ex.color} played={ex.san} best={ex.best_san} />
       </Link>
       <div className="flex flex-1 flex-col gap-1 px-3 pb-3 pt-2.5">
         <div className="flex items-center gap-1.5 text-[13px]">
           <ClassIcon c={ex.classification} size={15} />
-          <span className="font-mono font-medium">{moveLabel(ex.ply, ex.san)}</span>
+          <span className="font-mono font-medium">{moveLabel(ex.ply, ex.san, ex.fen)}</span>
           {ex.best_san && ex.best_san !== ex.san && <span className="truncate text-fg-3">· best <span className="font-mono text-fg-2">{ex.best_san}</span></span>}
         </div>
         {ex.explanation && <p className="line-clamp-3 text-[12.5px] leading-snug text-fg-2">{ex.explanation}</p>}

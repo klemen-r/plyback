@@ -141,6 +141,25 @@ fn pinned(pos: &Chess, sq: Square) -> bool {
         .attacks_to(king, !piece.color, without.occupied())
         .any()
 }
+/// Whether moving the piece on `from` to `to` would expose its own king. A piece pinned
+/// by the piece on `to` (or along the same line) can still capture there. While the king
+/// is already in check, pins are ignored, as in `pinned`.
+fn exposes_king(pos: &Chess, from: Square, to: Square) -> bool {
+    let board = pos.board();
+    let Some(piece) = board.piece_at(from) else {
+        return false;
+    };
+    let Some(king) = board.king_of(piece.color) else {
+        return false;
+    };
+    if piece.role == Role::King || attacked(pos, king, !piece.color) {
+        return false;
+    }
+    let mut after = board.clone();
+    after.discard_piece_at(from);
+    after.set_piece_at(to, piece);
+    after.attacks_to(king, !piece.color, after.occupied()).any()
+}
 /// Whether `by` can retake on `sq`, judged from attacks rather than legal moves, so a
 /// check given by the capture does not hide a defender. Pieces pinned to their king and
 /// a king retaking into an attack do not count.
@@ -151,7 +170,7 @@ fn defended(pos: &Chess, sq: Square, by: Color) -> bool {
         .into_iter()
         .any(|defender| match board.role_at(defender) {
             Some(Role::King) => !board.attacks_to(sq, !by, board.occupied() ^ defender).any(),
-            Some(_) => !pinned(pos, defender),
+            Some(_) => !exposes_king(pos, defender, sq),
             None => false,
         })
 }
@@ -678,6 +697,23 @@ mod tests {
             "r2qk2r/pp3ppp/4pn2/1Bbp4/3n1P2/2N2P1P/PPP5/R1BQ1RK1 b kq - 2 11",
             "d4b5",
             &["Nxb5+", "Kg2", "Nxc3"],
+        );
+        assert!(!t.contains(&"hanging-piece"), "{t:?}");
+    }
+    // Round-2 audit: a defender pinned by the capturing piece can still take it back
+    // along the pin line, so the captured piece was not hanging.
+    #[test]
+    fn a_defender_pinned_by_the_capturer_still_defends() {
+        let t = themes(
+            "2kq1b1r/ppp2ppp/2n1b3/4p3/4P1n1/2NP4/PPP1BPPP/R2Q1RK1 w - - 0 11",
+            "e2g4",
+            &["Bxg4", "h5", "Bxe6+", "fxe6", "Ne2", "g5"],
+        );
+        assert!(!t.contains(&"hanging-piece"), "{t:?}");
+        let t = themes(
+            "rn2kb1r/pp4pp/1qp3b1/4p1Pn/4p3/1NN5/PPP1BP1P/R1BQK2R w KQkq - 1 12",
+            "e2h5",
+            &["Bxh5", "Bc5", "Bxg6+", "hxg6", "Nxc5", "Qxc5"],
         );
         assert!(!t.contains(&"hanging-piece"), "{t:?}");
     }

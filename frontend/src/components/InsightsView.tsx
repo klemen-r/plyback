@@ -4,7 +4,7 @@ import { AlertTriangle, ChevronDown, ChevronRight, ExternalLink, Target, Trendin
 import { memo, useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { PHASE_LABEL, REASON_LABEL } from '../lib/classification'
-import { cap, fmtDate, num, pct } from '../lib/format'
+import { cap, fmtDate, moveLabel, num, pct } from '../lib/format'
 import { localHours } from '../lib/hours'
 import type { Color, Example, Insights, OpeningFamily, Priority, Resource } from '../lib/types'
 import { BarChart, LineChart, WDLBar } from './charts'
@@ -379,7 +379,7 @@ function Advantage({ data }: { data: Insights }) {
               {a.lost_advantages.map(l => (
                 <Link key={l.game_id} to={`/games/${l.game_id}${l.culprit ? `?ply=${l.culprit.ply}` : ''}`} className="flex items-center justify-between gap-3 rounded-lg bg-subtle px-3 py-2 text-sm hover:bg-hover">
                   <span className="min-w-0"><span className="font-medium">vs {l.opponent}</span> <span className="text-xs text-fg-3">{fmtDate(l.end_time)}</span>
-                    {l.culprit && <span className="block truncate text-xs text-fg-2">Turning point: {Math.ceil(l.culprit.ply / 2)}{l.culprit.ply % 2 ? '.' : '…'} {l.culprit.san} (best {l.culprit.best_san})</span>}</span>
+                    {l.culprit && <span className="block truncate text-xs text-fg-2">Turning point: {moveLabel(l.culprit.ply, l.culprit.san, l.culprit.fen)} (best {l.culprit.best_san})</span>}</span>
                   <span className="shrink-0 text-right text-xs"><span className="text-good">peak {l.peak_win.toFixed(0)}%</span><br /><span className={l.outcome === 'loss' ? 'text-bad' : 'text-fg-2'}>{l.outcome} · {REASON_LABEL[l.reason] ?? l.reason}</span></span>
                 </Link>
               ))}

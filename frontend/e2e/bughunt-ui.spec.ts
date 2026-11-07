@@ -69,3 +69,19 @@ test('Insights: the rating chart follows a time-control filter that removes its 
   await expect(page.getByText('No rated games in this selection')).toHaveCount(0)
   expect(errors).toEqual([])
 })
+
+test('Games: an invalid page in the address falls back to the first page', async ({ page }) => {
+  const requests: URL[] = []
+  const errors = await fixture(page, async (route, url) => {
+    if (url.pathname !== '/api/games') return route.fulfill({ json: {} })
+    requests.push(url)
+    await route.fulfill({ json: { total: 300, page: 1, page_size: 30, items: [] } })
+  })
+  for (const bad of ['abc', '0', '-2', '2.5']) {
+    await page.goto(`/games?page=${bad}`)
+    await expect(page).not.toHaveURL(/page=/)
+    await expect(page.getByText('Page 1 of 10')).toBeVisible()
+  }
+  expect(requests.every(u => (u.searchParams.get('page') ?? '1') === '1')).toBe(true)
+  expect(errors).toEqual([])
+})

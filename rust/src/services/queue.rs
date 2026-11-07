@@ -141,7 +141,12 @@ impl Services {
         let mut counts = HashMap::new();
         if let Ok(rows) = self
             .db
-            .query("SELECT status,COUNT(*) AS n FROM jobs GROUP BY status", &[])
+            // "done" means completed in the last 7 days: older rows are only pruned after
+            // the next review, so an idle week would otherwise show them as recent.
+            .query(
+                "SELECT status,COUNT(*) AS n FROM jobs WHERE status<>'done' OR finished_at>=? GROUP BY status",
+                &[json!(crate::now() - 7 * 86_400)],
+            )
         {
             for row in rows {
                 counts.insert(
@@ -160,7 +165,7 @@ impl Services {
         let avg=self.db.scalar("SELECT AVG(duration_ms) FROM (SELECT duration_ms FROM game_analysis ORDER BY analyzed_at DESC LIMIT 30)",&[]).ok().and_then(|v|v.as_f64()).filter(|v|*v>0.);
         let workers = self.worker_count.load(Ordering::SeqCst);
         let queued = *counts.get("queued").unwrap_or(&0);
-        json!({"paused":self.paused.load(Ordering::SeqCst),"workers":workers,"engine":*self.engine_name.lock().unwrap(),"engine_error":*self.engine_error.lock().unwrap(),"queued":queued,"running":counts.get("running").copied().unwrap_or(0),"failed":counts.get("failed").copied().unwrap_or(0),"done":counts.get("done").copied().unwrap_or(0),"active":active,"avg_game_seconds":avg.map(|v|(v/100.).round()/10.),"eta_seconds":avg.map(|v|(queued as f64*v/1000./workers.max(1) as f64)as i64)})
+        json!({"paused":self.paused.load(Ordering::SeqCst),"workers":workers,"engine":*self.engine_name.lock().unwrap(),"engine_error":*self.engine_error.lock().unwrap(),"queued":queued,"running":counts.get("running").copied().unwrap_or(0),"failed":counts.get("failed").copied().unwrap_or(0),"done":counts.get("done").copied().unwrap_or(0),"active":active,"avg_game_seconds":avg.map(|v|(v/100.).round()/10.),"eta_seconds":avg.filter(|_|!self.paused.load(Ordering::SeqCst)).map(|v|(queued as f64*v/1000./workers.max(1) as f64)as i64)})
     }
     pub(super) fn supervise_workers(self: Arc<Self>) {
         let mut workers: Vec<(Arc<AtomicBool>, JoinHandle<()>)> = Vec::new();

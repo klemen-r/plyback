@@ -72,7 +72,9 @@ export default function Games() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search])
 
-  const page = Number(get('page') || 1)
+  // A hand-edited or stale ?page= (0, -2, 2.5, abc) falls back to the first page.
+  const rawPage = Number(get('page') || 1)
+  const page = Number.isInteger(rawPage) && rawPage >= 1 ? rawPage : 1
   const query: GameQuery = {
     account_id: account?.id, page, page_size: PAGE, time_class: get('time_class') || undefined, outcome: get('outcome') || undefined, ending: get('ending') || undefined,
     color: get('color') || undefined, opening: get('opening') || undefined, q: get('q') || undefined,
@@ -94,14 +96,15 @@ export default function Games() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account?.id])
   useEffect(() => {
-    if (q.data && !q.isPlaceholderData && page > pages) set('page', pages > 1 ? String(pages) : '')
+    if (sp.has('page') && page !== rawPage) set('page', '')
+    else if (q.data && !q.isPlaceholderData && page > pages) set('page', pages > 1 ? String(pages) : '')
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q.data, q.isPlaceholderData, page, pages])
+  }, [q.data, q.isPlaceholderData, page, pages, rawPage])
   const wide = typeof window !== 'undefined' && window.matchMedia('(min-width: 1280px)').matches
 
   return (
     <div className="appear">
-      <PageHeader title="Games" description={q.data ? `${q.data.total.toLocaleString()} games${account ? ` played by ${account.display_name}` : ''}` : ' '}
+      <PageHeader title="Games" description={q.data ? `${q.data.total.toLocaleString()} ${q.data.total === 1 ? 'game' : 'games'}${account ? ` played by ${account.display_name}` : ''}` : ' '}
         actions={<Link to="/import"><Button>Import PGN</Button></Link>} />
       <div className="mb-4 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center max-sm:[&>*:last-child:nth-child(even)]:col-span-2">
         <div className="relative col-span-2">

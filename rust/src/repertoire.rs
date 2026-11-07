@@ -73,11 +73,12 @@ struct Reached {
 }
 impl Reached {
     fn visit(&mut self, game: i64, score: f64, path: &str) {
-        self.paths.insert(path.to_owned());
-        // Rows are grouped by game, so the last id suffices to deduplicate.
+        // Rows are grouped by game, so the last id suffices to deduplicate. A game that
+        // comes back to the position (a repetition) is not another move order either.
         if self.games > 0 && self.last_game == game {
             return;
         }
+        self.paths.insert(path.to_owned());
         self.last_game = game;
         self.games += 1;
         match score {

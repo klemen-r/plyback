@@ -309,7 +309,10 @@ impl Services {
             .as_str()
             .ok_or_else(|| api_error(422, "PGN is required"))?;
         if text.len() > 20_000_000 {
-            return Err(api_error(413, "PGN is too large"));
+            return Err(api_error(
+                413,
+                "PGN is too large: the limit is 20 MB. Split it into smaller files.",
+            ));
         }
         let analyze = bool_value(body, "analyze", true)?;
         let texts = pgn::split_games(text).map_err(|e| api_error(400, e.to_string()))?;

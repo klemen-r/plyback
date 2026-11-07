@@ -216,7 +216,14 @@ fn public(c: &Candidate, at: i64) -> Value {
         "ply": c.ply,
         "fen": c.fen,
         "color": if c.color == "w" { "white" } else { "black" },
-        "move_number": (c.ply + 1) / 2,
+        // From the position's own FEN, so games imported from a set-up position keep their numbers.
+        "move_number": c
+            .fen
+            .split_whitespace()
+            .nth(5)
+            .and_then(|n| n.parse::<i64>().ok())
+            .filter(|n| *n > 0)
+            .unwrap_or((c.ply + 1) / 2),
         "classification": c.classification,
         "phase": c.phase,
         "themes": c.themes,

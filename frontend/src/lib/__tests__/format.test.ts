@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fmtClock, fmtTimeControl, formatEval, mateIn, winWhite } from '../format'
+import { fmtClock, fmtTimeControl, formatEval, mateIn, moveLabel, winWhite } from '../format'
 import { restoreFilters, toInsightFilters } from '../filters'
 
 describe('format helpers', () => {
@@ -48,5 +48,17 @@ describe('format helpers', () => {
     const f = restoreFilters({ time_classes: null, period: {}, color: 2, opening: false })
     expect(toInsightFilters(f)).toEqual({})
     expect(restoreFilters({ time_classes: ['blitz', 'not-a-time-class', 'blitz'] }).time_classes).toEqual(['blitz'])
+  })
+})
+
+describe('moveLabel', () => {
+  it('numbers from the ply for games from the start', () => {
+    expect(moveLabel(1, 'e4')).toBe('1. e4')
+    expect(moveLabel(4, 'Nf6')).toBe('2… Nf6')
+  })
+  it('numbers from the FEN for games imported from a set-up position', () => {
+    expect(moveLabel(1, 'Kh7', '7k/8/8/8/8/8/8/7K b - - 0 42')).toBe('42… Kh7')
+    expect(moveLabel(2, 'Kh2', '8/7k/8/8/8/8/8/7K w - - 1 43')).toBe('43. Kh2')
+    expect(moveLabel(3, 'Kg8', 'not a fen')).toBe('2. Kg8')
   })
 })

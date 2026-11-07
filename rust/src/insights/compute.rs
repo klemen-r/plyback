@@ -1718,14 +1718,16 @@ fn compute_once(
             "Fewer than 40 analysed games: treat engine-based patterns as preliminary.".to_string(),
         );
     }
-    if !games.is_empty() && analyzed.len() < games.len() {
-        notes.push(format!("{} game(s) in this selection are not analysed yet; result statistics include them, engine statistics do not.",games.len()-analyzed.len()));
-    }
     let un = games
         .iter()
         .filter(|g| !g.analyzed && ["chess", "chess960"].contains(&text(&g.row["rules"])))
         .map(|g| g.id)
         .collect::<Vec<_>>();
+    // Variants are never reviewed, so they are not "not analysed yet". The coverage bar
+    // in the interface names them separately.
+    if !un.is_empty() {
+        notes.push(format!("{} game(s) in this selection are not analysed yet; result statistics include them, engine statistics do not.",un.len()));
+    }
     let mut result = json!({"filters":f,"data_quality":{"games":games.len(),"analyzed":analyzed.len(),"coverage":pct(analyzed.len() as f64,games.len()),"unanalyzed_ids":&un[un.len().saturating_sub(2000)..],"notes":notes,"confidence":confidence(analyzed.len(),10,40,150)},"overview":overview,"ratings":ratings(&games),"results":results(&games),"sessions":sessions,"trend":trend(&games),"openings":openings,"phases":phases(&analyzed),"errors":errors(&analyzed),"time":time,"advantage":advantage(&analyzed),"missed":missed(&analyzed),"recurring":recurring(&analyzed),"priorities":priorities(&analyzed,&openings,&time,&sessions)});
     let aggregated_at = std::time::Instant::now();
     hydrate(db, &mut result)?;
