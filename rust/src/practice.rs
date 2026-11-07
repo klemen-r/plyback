@@ -88,11 +88,13 @@ fn answer_line(lines_json: &str, white: bool, best_uci: &str) -> Option<(f64, Ve
     Some((gap, san))
 }
 
+/// Practice positions for an account, optionally only the one at `(game, ply)`.
 fn candidates(
     connection: &Connection,
     account: i64,
     kind: Option<&str>,
     phase: Option<&str>,
+    only: Option<(i64, i64)>,
 ) -> Result<Vec<Candidate>> {
     let mut statement = connection.prepare_cached(
         "SELECT m.game_id, m.ply, m.color, m.fen_before, m.san, m.uci, m.best_uci, m.best_san,
@@ -111,51 +113,55 @@ fn candidates(
            AND m.classification IN ('blunder', 'mistake', 'miss')
            AND (?2 IS NULL OR m.classification = ?2)
            AND (?3 IS NULL OR m.phase = ?3)
+           AND (?4 IS NULL OR (m.game_id = ?4 AND m.ply = ?5))
            AND m.best_uci IS NOT NULL AND m.best_uci <> m.uci
            AND m.lines_json IS NOT NULL
            AND g.rules = 'chess'
          ORDER BY g.end_time DESC, m.ply",
     )?;
-    let rows = statement.query_map(params![account, kind, phase], |row| {
-        let color: String = row.get(2)?;
-        let best_uci: String = row.get(6)?;
-        let lines: String = row.get(12)?;
-        let box_: Option<i64> = row.get(20)?;
-        Ok((
-            Candidate {
-                game_id: row.get(0)?,
-                ply: row.get(1)?,
-                fen: row.get(3)?,
-                san: row.get(4)?,
-                best_san: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
-                classification: row.get(8)?,
-                phase: row.get(9)?,
-                ep_loss: row.get::<_, Option<f64>>(10)?.unwrap_or(0.0),
-                explanation: row.get(11)?,
-                line_san: Vec::new(),
-                themes: Vec::new(),
-                last_uci: row.get(13)?,
-                last_san: row.get(14)?,
-                end_time: row.get(15)?,
-                time_class: row.get(16)?,
-                rules: row.get(17)?,
-                opponent: row.get(18)?,
-                opponent_rating: row.get(19)?,
-                state: match box_ {
-                    Some(box_) => Some(State {
-                        box_,
-                        due_at: row.get(21)?,
-                        attempts: row.get(22)?,
-                        correct: row.get(23)?,
-                    }),
-                    None => None,
+    let rows = statement.query_map(
+        params![account, kind, phase, only.map(|o| o.0), only.map(|o| o.1)],
+        |row| {
+            let color: String = row.get(2)?;
+            let best_uci: String = row.get(6)?;
+            let lines: String = row.get(12)?;
+            let box_: Option<i64> = row.get(20)?;
+            Ok((
+                Candidate {
+                    game_id: row.get(0)?,
+                    ply: row.get(1)?,
+                    fen: row.get(3)?,
+                    san: row.get(4)?,
+                    best_san: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
+                    classification: row.get(8)?,
+                    phase: row.get(9)?,
+                    ep_loss: row.get::<_, Option<f64>>(10)?.unwrap_or(0.0),
+                    explanation: row.get(11)?,
+                    line_san: Vec::new(),
+                    themes: Vec::new(),
+                    last_uci: row.get(13)?,
+                    last_san: row.get(14)?,
+                    end_time: row.get(15)?,
+                    time_class: row.get(16)?,
+                    rules: row.get(17)?,
+                    opponent: row.get(18)?,
+                    opponent_rating: row.get(19)?,
+                    state: match box_ {
+                        Some(box_) => Some(State {
+                            box_,
+                            due_at: row.get(21)?,
+                            attempts: row.get(22)?,
+                            correct: row.get(23)?,
+                        }),
+                        None => None,
+                    },
+                    color: color.clone(),
+                    best_uci: best_uci.clone(),
                 },
-                color: color.clone(),
-                best_uci: best_uci.clone(),
-            },
-            lines,
-        ))
-    })?;
+                lines,
+            ))
+        },
+    )?;
     let mut out = Vec::new();
     for row in rows {
         let (mut candidate, lines) = row?;
@@ -265,7 +271,7 @@ fn queue(db: &Database, account: i64, q: &Query) -> ApiResult {
                 .map_err(|_| api_error(422, "since must be a Unix timestamp"))?,
         ),
     };
-    let mut all = db.read(|c| candidates(c, account, kind, phase))?;
+    let mut all = db.read(|c| candidates(c, account, kind, phase, None))?;
     if let Some(since) = since {
         all.retain(|c| c.end_time.is_some_and(|t| t >= since));
     }
@@ -354,9 +360,9 @@ fn answer(db: &Database, account: i64, game: i64, ply: i64, body: &Value) -> Api
         )
     };
     let mut candidate = db
-        .read(|c| candidates(c, account, None, None))?
+        .read(|c| candidates(c, account, None, None, Some((game, ply))))?
         .into_iter()
-        .find(|c| c.game_id == game && c.ply == ply)
+        .next()
         .ok_or_else(|| api_error(404, "Practice position not found"))?;
     candidate.themes = tactics::detect(&candidate.fen, &candidate.best_uci, &candidate.line_san);
     debug_assert_eq!(candidate.rules, "chess");
@@ -401,7 +407,7 @@ fn answer(db: &Database, account: i64, game: i64, ply: i64, body: &Value) -> Api
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?)
     })?;
-    let all = db.read(|c| candidates(c, account, None, None))?;
+    let all = db.read(|c| candidates(c, account, None, None, None))?;
     let san = played.as_ref().map(|played| {
         pgn::board(&candidate.fen, false)
             .ok()
