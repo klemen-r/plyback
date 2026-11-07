@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { endingOf } from '../ending'
+import { endingOf, endShapes, outcomeOf } from '../ending'
 
 const game = (white: string | null, black: string | null, user_color: 'white' | 'black' | null = 'white', termination: string | null = null) => ({
   white: { username: 'w', rating: null, result: white }, black: { username: 'b', rating: null, result: black }, user_color, termination,
@@ -37,5 +37,36 @@ describe('a win without a known reason', () => {
     expect(endingOf(game('win', 'lose', 'black'))).toEqual({ short: 'White won', text: 'Lost' })
     expect(endingOf(game('lose', 'win', null))).toEqual({ short: 'Black won', text: 'Black won' })
     expect(endingOf(game('win', 'lose', 'white', 'White wins by adjudication'))?.text).toBe('White wins by adjudication')
+  })
+})
+
+const result = (white: string | null, black: string | null, score = '*') => ({
+  white: { result: white }, black: { result: black }, result: score,
+})
+const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+const FOOLS_MATE = 'rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3'
+const STALEMATE = '7k/5Q2/6K1/8/8/8/8/8 b - - 0 1'
+
+describe('outcomeOf', () => {
+  it('reads checkmate and stalemate from the final position, even without result codes', () => {
+    expect(outcomeOf(result(null, null), FOOLS_MATE)).toEqual({ white: 'mate', black: 'win' })
+    expect(outcomeOf(result(null, null), STALEMATE)).toEqual({ white: 'draw', black: 'draw' })
+  })
+  it('uses the stored result for resignation, time, draws and plain scores', () => {
+    expect(outcomeOf(result('resigned', 'win'), START)).toEqual({ white: 'resign', black: 'win' })
+    expect(outcomeOf(result('win', 'timeout'), START)).toEqual({ white: 'win', black: 'time' })
+    expect(outcomeOf(result('agreed', 'agreed'), START)).toEqual({ white: 'draw', black: 'draw' })
+    expect(outcomeOf(result('timevsinsufficient', 'timeout'), START)).toEqual({ white: 'draw', black: 'draw' })
+    expect(outcomeOf(result(null, null, '1-0'), START)).toEqual({ white: 'win', black: 'loss' })
+    expect(outcomeOf(result(null, null, '1/2-1/2'), START)).toEqual({ white: 'draw', black: 'draw' })
+    expect(outcomeOf(result(null, null, '*'), START)).toBeNull()
+  })
+})
+
+describe('endShapes', () => {
+  it('puts a badge on each king', () => {
+    expect(endShapes(result(null, null), FOOLS_MATE).map(s => s.orig)).toEqual(['e1', 'e8'])
+    expect(endShapes(result(null, null), STALEMATE).map(s => s.orig)).toEqual(['g6', 'h8'])
+    expect(endShapes(result(null, null), START)).toEqual([])
   })
 })

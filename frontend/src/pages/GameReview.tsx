@@ -17,7 +17,7 @@ import { Button, Card, ErrorNote, Loading, Badge, Progress, Tabs, Spinner } from
 import { useAccount } from '../lib/account-context'
 import { api } from '../lib/api'
 import { CLASS_META, CLASS_ORDER, classBadgeSvg, PHASE_LABEL } from '../lib/classification'
-import { endingOf } from '../lib/ending'
+import { endingOf, endShapes } from '../lib/ending'
 import { fmtClock, fmtDate, fmtTimeControl, formatEval } from '../lib/format'
 import type { Classification, GameDetail, MoveRow } from '../lib/types'
 
@@ -214,10 +214,12 @@ function GameReviewContent() {
   }, [qc, fen, depth, liveEnabled])
 
   const shapes: DrawShape[] = useMemo(() => {
-    const s: DrawShape[] = []
+    // The final position shows how the game ended on both kings.
+    const s: DrawShape[] = !inVar && data && n > 0 && ply === n ? endShapes(data.game, mainFen(n)) : []
     if (!inVar && current?.classification && current.uci) {
       const sq = uciSquares(current.uci)
-      if (sq) s.push({ orig: sq[1], customSvg: { html: classBadgeSvg(current.classification) } })
+      // A last move by a king keeps the ending badge in that corner.
+      if (sq && !s.some(e => e.orig === sq[1])) s.push({ orig: sq[1], customSvg: { html: classBadgeSvg(current.classification) } })
       if (showArrows && current.best_uci && current.best_uci !== current.uci &&
         ['inaccuracy', 'mistake', 'miss', 'blunder'].includes(current.classification)) {
         const b = uciSquares(current.best_uci)
@@ -230,7 +232,7 @@ function GameReviewContent() {
       if (b) s.push({ orig: b[0], dest: b[1], brush: 'blue' })
     }
     return s
-  }, [inVar, current, showArrows, hint, live.data, analysis, ply, n, moves])
+  }, [inVar, current, showArrows, hint, live.data, analysis, ply, n, moves, data, mainFen])
 
   const applyBoardMove = (orig: string, dest: string, piece?: Promotion) => {
     const chess = new Chess(fen)
