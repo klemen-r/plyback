@@ -162,10 +162,16 @@ pub fn game_row_from_pgn(text: &str) -> Result<Value> {
     };
     let tc = get("TimeControl");
     let tc_class = tc.and_then(|tc| {
-        if tc.contains('/') {
+        // Chess.com writes daily games as "1/<seconds per move>".
+        if tc
+            .strip_prefix("1/")
+            .is_some_and(|s| s.parse::<u64>().is_ok())
+        {
             return Some("daily");
         }
-        let mut pieces = tc.split('+');
+        // Classical PGN periods ("40/7200:3600") are classed by the first period's time.
+        let first = tc.split(':').next()?;
+        let mut pieces = first.rsplit('/').next()?.split('+');
         let secs = pieces.next()?.parse::<f64>().ok()?
             + 40. * pieces.next().unwrap_or("0").parse::<f64>().ok()?;
         Some(if secs < 180. {
@@ -426,6 +432,23 @@ pub fn account_public(db: &Database, account: &Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pgn_time_classes() {
+        let class = |tc: &str| {
+            game_row_from_pgn(&format!(
+                "[TimeControl \"{tc}\"]
+
+1. e4 e5 *"
+            ))
+            .unwrap()["time_class"]
+                .clone()
+        };
+        assert_eq!(class("1/86400"), json!("daily"));
+        assert_eq!(class("180+2"), json!("blitz"));
+        assert_eq!(class("40/7200:3600"), json!("rapid"));
+        assert_eq!(class("-"), Value::Null);
+        assert_eq!(class("?"), Value::Null);
+    }
     #[test]
     fn cancelled_result_save_does_not_wait_for_an_external_writer() {
         use std::sync::atomic::{AtomicBool, Ordering};

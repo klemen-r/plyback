@@ -347,24 +347,35 @@ impl Insights {
             .query("SELECT * FROM reports WHERE status='analyzing'", &[])?
         {
             let rid = rep["id"].as_i64().unwrap_or(0);
-            self.freeze(&rep)?;
-            let (total, analyzed, pending) = self.progress(rid)?;
-            self.db.execute("UPDATE reports SET total_games=?,analyzed_games=? WHERE id=? AND status='analyzing'",&[json!(total),json!(analyzed),json!(rid)])?;
-            if pending == 0
-                && let Err(e) = self.build_snapshot(rid)
-            {
-                if e.downcast_ref::<ApiError>().is_some_and(|e| e.0 == 503) {
-                    continue;
-                }
-                tracing::error!(report_id=rid,error=%e,"Report snapshot failed");
-                self.db.execute(
-                    "UPDATE reports SET status='failed',error=? WHERE id=? AND status!='ready'",
-                    &[
-                        json!("Could not build this report. Check the server log and try again."),
-                        json!(rid),
-                    ],
-                )?;
+            // An error on one report must not hold back the others; it is retried next tick.
+            if let Err(e) = self.tick_one(&rep, rid) {
+                tracing::warn!(report_id=rid,error=%e,"Report progress update failed");
             }
+        }
+        Ok(())
+    }
+    fn tick_one(&self, rep: &Value, rid: i64) -> Result<()> {
+        self.freeze(rep)?;
+        let (total, analyzed, pending) = self.progress(rid)?;
+        self.db.execute(
+            "UPDATE reports SET total_games=?,analyzed_games=? WHERE id=? AND status='analyzing'",
+            &[json!(total), json!(analyzed), json!(rid)],
+        )?;
+        if pending == 0
+            && let Err(e) = self.build_snapshot(rid)
+        {
+            // Analysis rows are still changing: try again on the next tick.
+            if e.downcast_ref::<ApiError>().is_some_and(|e| e.0 == 503) {
+                return Ok(());
+            }
+            tracing::error!(report_id=rid,error=%e,"Report snapshot failed");
+            self.db.execute(
+                "UPDATE reports SET status='failed',error=? WHERE id=? AND status!='ready'",
+                &[
+                    json!("Could not build this report. Check the server log and try again."),
+                    json!(rid),
+                ],
+            )?;
         }
         Ok(())
     }

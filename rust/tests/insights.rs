@@ -236,6 +236,23 @@ fn old_ready_report_is_not_rebuilt_and_old_pending_report_freezes_once() {
 }
 
 #[test]
+fn a_report_that_cannot_be_frozen_does_not_hold_back_later_reports() {
+    let db = fixture();
+    // Stored filters that no longer validate make freezing this report fail on every tick.
+    db.execute("INSERT INTO reports(account_id,title,filters_json,status,total_games,created_at) VALUES(1,'Broken','{\"time_classes\":[\"nope\"]}','analyzing',0,0)",&[]).unwrap();
+    db.execute("INSERT INTO reports(account_id,title,filters_json,status,total_games,created_at) VALUES(1,'Fine','{}','analyzing',0,0)",&[]).unwrap();
+    let service = runtime(db.clone());
+    service.tick().unwrap();
+    let status = |id: i64| {
+        db.scalar("SELECT status FROM reports WHERE id=?", &[json!(id)])
+            .unwrap()
+    };
+    assert_eq!(status(1), json!("analyzing"));
+    assert_eq!(status(2), json!("ready"));
+    service.stop();
+}
+
+#[test]
 fn response_cache_is_owned_by_database_and_refreshes_same_second_changes() {
     let a = fixture();
     let b = fixture();

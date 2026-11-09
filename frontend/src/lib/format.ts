@@ -47,10 +47,11 @@ export function timeAgo(ts: number | null | undefined): string {
 
 export function fmtDuration(sec: number | null | undefined): string {
   if (sec === null || sec === undefined) return '—'
-  if (sec < 60) return `${Math.round(sec)}s`
-  if (sec < 3600) return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`
-  const h = Math.floor(sec / 3600)
-  return `${h}h ${Math.floor((sec % 3600) / 60)}m`
+  // Round once up front so 59.6 s reads 1m 0s, not 60s, and 119.6 s reads 2m 0s, not 1m 60s.
+  const s = Math.round(sec)
+  if (s < 60) return `${s}s`
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
 }
 
 export function fmtClock(sec: number | null | undefined): string {
@@ -66,13 +67,20 @@ export function fmtClock(sec: number | null | undefined): string {
 }
 
 export function fmtTimeControl(tc: string | null | undefined): string {
-  if (!tc) return '—'
-  if (tc.includes('/')) {
-    const days = Number(tc.split('/')[1]) / 86400
-    return `${days} day${days === 1 ? '' : 's'}`
+  if (!tc || tc === '?') return '—'
+  // PGN "-" means no time limit (e.g. Chess.com daily games against a coach bot).
+  if (tc === '-') return 'Untimed'
+  const daily = /^1\/(\d+)$/.exec(tc)
+  if (daily) {
+    const days = Number(daily[1]) / 86400
+    return `${+days.toFixed(2)} day${days === 1 ? '' : 's'}`
   }
-  const [base, inc] = tc.split('+').map(Number)
-  const b = base >= 60 ? `${base / 60}` : `${base}s`
+  const live = /^(\d+)(?:\+(\d+(?:\.\d+)?))?$/.exec(tc)
+  // Other PGN forms (e.g. "40/7200:3600") are shown as written.
+  if (!live) return tc
+  const base = Number(live[1])
+  const inc = Number(live[2] ?? 0)
+  const b = base >= 60 ? `${+(base / 60).toFixed(2)}` : `${base}s`
   return inc ? `${b}+${inc}` : `${b} min`
 }
 

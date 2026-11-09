@@ -43,7 +43,12 @@ export default function ReportView() {
           </div>
         </Card>
       )}
-      {r.status === 'failed' && <ErrorNote error={r.error ?? 'Report failed'} />}
+      {r.status === 'failed' && (
+        <div className="space-y-3">
+          <ErrorNote error={r.error ?? 'Report failed'} />
+          <Button size="sm" onClick={() => finalize.mutate()} loading={finalize.isPending}>Try again</Button>
+        </div>
+      )}
       {finalize.error && <ErrorNote error={finalize.error} />}
       {r.status === 'ready' && r.report && <InsightsView data={r.report} />}
     </div>

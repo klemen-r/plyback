@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fmtClock, fmtTimeControl, formatEval, mateIn, moveLabel, moveNumber, winWhite } from '../format'
+import { fmtClock, fmtDuration, fmtTimeControl, formatEval, mateIn, moveLabel, moveNumber, winWhite } from '../format'
 import { restoreFilters, toInsightFilters, type FilterState } from '../filters'
 
 describe('format helpers', () => {
@@ -22,6 +22,17 @@ describe('format helpers', () => {
     expect(fmtTimeControl('180+2')).toBe('3+2')
     expect(fmtTimeControl('60')).toBe('1 min')
     expect(fmtTimeControl('1/86400')).toBe('1 day')
+    expect(fmtTimeControl('1/259200')).toBe('3 days')
+    expect(fmtTimeControl('-')).toBe('Untimed')
+    expect(fmtTimeControl('?')).toBe('—')
+    expect(fmtTimeControl('40/7200:3600')).toBe('40/7200:3600')
+    expect(fmtTimeControl('90+0.5')).toBe('1.5+0.5')
+  })
+  it('rounds durations before splitting them into units', () => {
+    expect(fmtDuration(59.6)).toBe('1m 0s')
+    expect(fmtDuration(119.6)).toBe('2m 0s')
+    expect(fmtDuration(3599.7)).toBe('1h 0m')
+    expect(fmtDuration(42.4)).toBe('42s')
   })
   it('converts filter state to API filters', () => {
     const f = toInsightFilters({ period: 'all', time_classes: ['blitz'], color: 'white', rated: 'true', opening: '' })
