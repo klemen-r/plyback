@@ -55,7 +55,7 @@ function Preview({ g, onClose }: { g: GameSummary; onClose: () => void }) {
 }
 
 export default function Games() {
-  const { account } = useAccount()
+  const { account, loading: accountsLoading } = useAccount()
   const [sp, setSp] = useSearchParams()
   const [search, setSearch] = useState(sp.get('q') ?? '')
   const [selected, setSelected] = useState<GameSummary | null>(null)
@@ -80,13 +80,17 @@ export default function Games() {
   // A hand-edited or stale ?page= (0, -2, 2.5, abc) falls back to the first page.
   const rawPage = Number(get('page') || 1)
   const page = Number.isInteger(rawPage) && rawPage >= 1 ? rawPage : 1
+  // Result, ending, colour and "contains" are an account's filters (their controls only show
+  // with one), so a link carrying them does not filter a library without accounts.
+  const mine = (k: string) => account ? get(k) || undefined : undefined
   const query: GameQuery = {
-    account_id: account?.id, page, page_size: PAGE, time_class: get('time_class') || undefined, outcome: get('outcome') || undefined, ending: get('ending') || undefined,
-    color: get('color') || undefined, opening: get('opening') || undefined, q: get('q') || undefined,
-    analyzed: get('analyzed') ? get('analyzed') === '1' : undefined, classification: get('classification') || undefined,
+    account_id: account?.id, page, page_size: PAGE, time_class: get('time_class') || undefined, outcome: mine('outcome'), ending: mine('ending'),
+    color: mine('color'), opening: get('opening') || undefined, q: get('q') || undefined,
+    analyzed: get('analyzed') ? get('analyzed') === '1' : undefined, classification: mine('classification'),
     sort: get('sort') || undefined,
   }
-  const q = useQuery({ queryKey: ['games', query], queryFn: () => api.games(query), placeholderData: p => p, refetchInterval: 15000 })
+  // Wait for the accounts so the first request already has the account's perspective.
+  const q = useQuery({ queryKey: ['games', query], queryFn: () => api.games(query), enabled: !accountsLoading, placeholderData: p => p, refetchInterval: 15000 })
   const openings = useQuery({ queryKey: ['openings', account?.id], queryFn: () => api.openings(account?.id) })
   const pages = q.data ? Math.max(1, Math.ceil(q.data.total / PAGE)) : 1
   // Another account starts on its first page. A page past the end (fewer games than before)
@@ -150,7 +154,7 @@ export default function Games() {
       <div className={selected && wide ? 'grid grid-cols-[minmax(0,1fr)_340px] items-start gap-6' : ''}>
         <div>
           <Card padded={false} className="overflow-hidden">
-            {q.isLoading ? <Loading /> : q.error ? <div className="p-4"><ErrorNote error={q.error} /></div> : q.data?.items.length
+            {q.isPending ? <Loading /> : q.error ? <div className="p-4"><ErrorNote error={q.error} /></div> : q.data?.items.length
               ? <GameTable games={q.data.items} selected={selected?.id} onSelect={wide ? g => setSelected(s => (s?.id === g.id ? null : g)) : undefined} />
               : <Empty title="No games match these filters">Clear some filters, or connect an account to import games.</Empty>}
           </Card>

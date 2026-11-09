@@ -100,7 +100,9 @@ function returnsIn(due: number) {
   const s = Math.max(0, due - nowTs())
   if (s < 3600) return 'later in this session'
   if (s < 43200) return `in ${fmtDuration(s)}`
-  const days = Math.max(1, Math.round(s / 86400))
+  // Calendar days: positions are due from the start of their day, not the second answered.
+  const day = (t: number) => { const d = new Date(t * 1000); return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000 }
+  const days = Math.max(1, day(due) - day(nowTs()))
   return days === 1 ? 'tomorrow' : `in ${days} days`
 }
 

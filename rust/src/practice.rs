@@ -7,7 +7,8 @@
 //! checked against the stored review without any new engine work.
 //!
 //! Scheduling is a small Leitner system: a correct answer moves the position up
-//! one box and schedules it after that box's interval; a wrong answer sends it
+//! one box and schedules it after that box's interval in days (less
+//! `DAY_SLACK_SECONDS`, so it is due that day rather than at that second); a wrong answer sends it
 //! back to the first box and brings it back after `RETRY_SECONDS`.
 use crate::{
     ApiResult, Query, analysis::expected_points, api_error, db::Database, now, pgn, tactics,
@@ -25,6 +26,10 @@ pub const MIN_GAP: f64 = 0.05;
 pub const INTERVAL_DAYS: [i64; 6] = [1, 3, 7, 16, 35, 80];
 /// A missed position comes back within the same sitting.
 pub const RETRY_SECONDS: i64 = 600;
+/// A position scheduled `n` days out is due this much earlier, so it is waiting at
+/// any time of day `n` days later rather than at the exact second it was answered
+/// (answered Monday 21:00, it is due again from Tuesday 09:00).
+pub const DAY_SLACK_SECONDS: i64 = 12 * 3600;
 /// Positions at or above this box count as mastered.
 pub const MASTERED_BOX: i64 = 4;
 const KINDS: [&str; 3] = ["blunder", "mistake", "miss"];
@@ -336,7 +341,10 @@ fn normalize(fen: &str, raw: &str) -> Result<String> {
 pub fn schedule(box_: i64, correct: bool, at: i64) -> (i64, i64) {
     if correct {
         let index = box_.clamp(0, INTERVAL_DAYS.len() as i64 - 1) as usize;
-        (box_ + 1, at + INTERVAL_DAYS[index] * 86_400)
+        (
+            box_ + 1,
+            at + INTERVAL_DAYS[index] * 86_400 - DAY_SLACK_SECONDS,
+        )
     } else {
         (0, at + RETRY_SECONDS)
     }
@@ -494,10 +502,21 @@ mod tests {
 
     #[test]
     fn schedule_climbs_boxes_and_resets_on_a_miss() {
-        assert_eq!(schedule(0, true, 0), (1, 86_400));
-        assert_eq!(schedule(1, true, 0), (2, 3 * 86_400));
-        assert_eq!(schedule(9, true, 0), (10, 80 * 86_400));
+        assert_eq!(schedule(0, true, 0), (1, 86_400 - DAY_SLACK_SECONDS));
+        assert_eq!(schedule(1, true, 0), (2, 3 * 86_400 - DAY_SLACK_SECONDS));
+        assert_eq!(schedule(9, true, 0), (10, 80 * 86_400 - DAY_SLACK_SECONDS));
         assert_eq!(schedule(5, false, 100), (0, 100 + RETRY_SECONDS));
+    }
+
+    #[test]
+    fn a_position_due_tomorrow_is_due_at_any_time_tomorrow() {
+        // Answered Monday 2026-11-09 21:00 UTC; Tuesday's 09:00 sitting should include it.
+        let monday_evening = 1_794_258_000;
+        let tuesday_morning = monday_evening + 12 * 3600;
+        let (_, due) = schedule(0, true, monday_evening);
+        assert!(due <= tuesday_morning, "due {due} after Tuesday 09:00");
+        // ... but not still on Monday evening.
+        assert!(due > monday_evening + 6 * 3600);
     }
 
     #[test]

@@ -20,7 +20,8 @@ export default function Reports() {
     refetchInterval: q => (q.state.data?.some(r => r.status === 'analyzing') ? 3000 : false),
   })
   const create = useMutation({ mutationFn: () => api.createReport(account!.id, toInsightFilters(fs), title || undefined), onSuccess: r => nav(`/reports/${r.id}`) })
-  const del = useMutation({ mutationFn: (id: number) => api.deleteReport(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['reports'] }) })
+  // A report already deleted elsewhere answers 404; refreshing still drops it from the list.
+  const del = useMutation({ mutationFn: (id: number) => api.deleteReport(id), onSettled: () => qc.invalidateQueries({ queryKey: ['reports'] }) })
   // Reports are frozen snapshots that cannot be recreated, so deleting one asks first.
   const [confirming, setConfirming] = useState<number | null>(null)
   const cancelDelete = (id: number) => { setConfirming(null); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`[data-report-delete="${id}"]`)?.focus()) }
@@ -34,7 +35,7 @@ export default function Reports() {
         <div className="space-y-3">
           <FilterBar value={fs} onChange={setFs} />
           <div className="flex flex-wrap gap-2">
-            <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Title (optional)" aria-label="Report title" className="min-w-48 flex-1" />
+            <Input value={title} onChange={e => setTitle(e.target.value)} maxLength={120} placeholder="Title (optional)" aria-label="Report title" className="min-w-48 flex-1" />
             <Button variant="primary" onClick={() => create.mutate()} loading={create.isPending}><Plus className="h-4 w-4" />Analyse & create report</Button>
           </div>
           {create.error && <ErrorNote error={create.error} />}

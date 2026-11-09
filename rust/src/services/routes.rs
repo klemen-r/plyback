@@ -410,18 +410,36 @@ impl Services {
             ));
             params.extend(classes.into_iter().map(|c| json!(c)));
         }
-        if account.is_some() {
-            if let Some(color) = q.get("color") {
-                conditions.push("ag.color=?".into());
-                params.push(json!(color));
+        // Colour, result and "contains" read a game from a player's side: the account's
+        // side when one is given, otherwise any connected account's side (so a request made
+        // before the page knows the account still filters, instead of silently not).
+        let side = |condition: &str| {
+            if account.is_some() {
+                condition.to_string()
+            } else {
+                format!(
+                    "EXISTS(SELECT 1 FROM account_games ag WHERE ag.game_id=g.id AND {condition})"
+                )
             }
-            if let Some(outcome) = q.get("outcome") {
-                match outcome.as_str(){"win"=>conditions.push("((ag.color='white' AND g.white_result='win') OR (ag.color='black' AND g.black_result='win'))".into()),"loss"=>conditions.push("((ag.color='white' AND g.black_result='win') OR (ag.color='black' AND g.white_result='win'))".into()),"draw"=>conditions.push("g.white_result!='win' AND g.black_result!='win'".into()),_=>{}}
+        };
+        if let Some(color) = q.get("color").filter(|s| !s.is_empty()) {
+            if !matches!(color.as_str(), "white" | "black") {
+                return Err(api_error(422, "color must be white or black"));
             }
-            if let Some(class) = q.get("classification") {
-                conditions.push("EXISTS(SELECT 1 FROM moves m WHERE m.game_id=g.id AND m.classification=? AND m.color=substr(ag.color,1,1))".into());
-                params.push(json!(class));
-            }
+            conditions.push(side("ag.color=?"));
+            params.push(json!(color));
+        }
+        if let Some(outcome) = q.get("outcome").filter(|s| !s.is_empty()) {
+            conditions.push(match outcome.as_str() {
+                "win" => side("((ag.color='white' AND g.white_result='win') OR (ag.color='black' AND g.black_result='win'))"),
+                "loss" => side("((ag.color='white' AND g.black_result='win') OR (ag.color='black' AND g.white_result='win'))"),
+                "draw" => "g.white_result!='win' AND g.black_result!='win'".into(),
+                _ => return Err(api_error(422, "outcome must be win, loss or draw")),
+            });
+        }
+        if let Some(class) = q.get("classification").filter(|s| !s.is_empty()) {
+            conditions.push(side("EXISTS(SELECT 1 FROM moves m WHERE m.game_id=g.id AND m.classification=? AND m.color=substr(ag.color,1,1))"));
+            params.push(json!(class));
         }
         if let Some(ending) = q.get("ending").filter(|e| !e.is_empty()) {
             // The losing side's result code says how a decisive game ended.
@@ -768,6 +786,55 @@ mod tests {
         assert_eq!(ids("time"), [2, 3]);
         assert_eq!(ids("checkmate"), [1]);
         assert_eq!(ids("resignation"), [4]);
+        // Player-side filters with and without an account (all connected accounts).
+        db.execute(
+            "INSERT INTO accounts(id,username,added_at) VALUES(1,'a',0),(2,'b',0)",
+            &[],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO account_games(account_id,game_id,color) VALUES(1,1,'white'),(1,2,'white'),(2,4,'black')",
+            &[],
+        )
+        .unwrap();
+        let side = |pairs: &[(&str, &str)]| {
+            let q: Query = pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            s.list_games(&q).map(|(_, v)| {
+                let mut ids: Vec<i64> = v["items"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|g| g["id"].as_i64().unwrap())
+                    .collect();
+                ids.sort_unstable();
+                ids
+            })
+        };
+        assert_eq!(side(&[("outcome", "win")]).unwrap(), [1, 4]);
+        assert_eq!(
+            side(&[("outcome", "win"), ("account_id", "1")]).unwrap(),
+            [1]
+        );
+        assert_eq!(side(&[("outcome", "loss")]).unwrap(), [2]);
+        assert_eq!(side(&[("color", "black")]).unwrap(), [4]);
+        assert_eq!(
+            side(&[("color", "white"), ("account_id", "2")]).unwrap(),
+            Vec::<i64>::new()
+        );
+        assert_eq!(side(&[("outcome", "draw")]).unwrap(), [5]);
+        for bad in [("color", "purple"), ("outcome", "maybe")] {
+            assert_eq!(
+                side(&[bad])
+                    .unwrap_err()
+                    .downcast_ref::<crate::ApiError>()
+                    .unwrap()
+                    .0,
+                422
+            );
+        }
         assert_eq!(ids(""), [1, 2, 3, 4, 5]);
         let q: Query = [("ending".to_string(), "boredom".to_string())]
             .into_iter()

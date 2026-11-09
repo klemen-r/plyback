@@ -38,6 +38,10 @@ pub struct Services {
     engine_error: Mutex<Option<String>>,
     worker_count: AtomicU64,
     requested: Mutex<HashSet<i64>>,
+    /// Deeper analyses asked for while the game's job was already running, by game:
+    /// (priority, depth). They are queued once that job finishes. Kept in memory only:
+    /// after a restart the interrupted job resumes at its own depth.
+    followups: Mutex<HashMap<i64, (i64, i64)>>,
     current_sync: Mutex<Option<i64>>,
     /// Accounts whose last sync found the database busy, and when to try them again.
     sync_busy_until: Mutex<HashMap<i64, std::time::Instant>>,
@@ -68,6 +72,7 @@ impl Services {
             engine_error: Mutex::new(None),
             worker_count: AtomicU64::new(0),
             requested: Mutex::new(HashSet::new()),
+            followups: Mutex::new(HashMap::new()),
             current_sync: Mutex::new(None),
             sync_busy_until: Mutex::new(HashMap::new()),
             client: sync::ChessComClient::new()?,

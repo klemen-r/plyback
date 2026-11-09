@@ -108,10 +108,24 @@ impl Services {
                         continue;
                     }
                 }
-                let active=tx.query_row("SELECT id,status FROM jobs WHERE game_id=? AND status IN ('queued','running')",[id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?))).optional()?;
-                if let Some((job, status)) = active {
+                let active=tx.query_row("SELECT id,status,COALESCE(depth,0) FROM jobs WHERE game_id=? AND status IN ('queued','running')",[id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?))).optional()?;
+                if let Some((job, status, running_depth)) = active {
                     if status == "queued" {
                         tx.execute("UPDATE jobs SET priority=MAX(priority,?),depth=MAX(COALESCE(depth,0),?) WHERE id=?",rusqlite::params![priority,depth,job])?;
+                    } else if account.is_none() {
+                        // A game has one active job, so a deeper request made while it runs is
+                        // remembered and queued when that job finishes (`queue_followup`).
+                        // Recorded inside this write transaction: the worker marks the job done
+                        // in its own write transaction before it looks for a follow-up.
+                        if running_depth < depth {
+                            let mut followups = self.followups.lock().unwrap();
+                            let entry = followups.entry(id).or_insert((priority, depth));
+                            *entry = (entry.0.max(priority), entry.1.max(depth));
+                            added += 1;
+                        } else if force {
+                            // The running job is already a fresh analysis at this depth or deeper.
+                            added += 1;
+                        }
                     }
                     continue;
                 }
@@ -351,7 +365,7 @@ impl Services {
                 .unwrap()
                 .remove(job["claim_token"].as_str().unwrap());
             match result {
-                Ok(true) => {}
+                Ok(true) => self.queue_followup(game_id),
                 Ok(false) => self.release_job(&job, None),
                 Err(_)
                     if cancel.load(Ordering::SeqCst)
@@ -492,6 +506,15 @@ impl Services {
         });
         Ok(true)
     }
+    /// Queues the deeper analysis requested while this game's job was running.
+    fn queue_followup(&self, game_id: i64) {
+        let Some((priority, depth)) = self.followups.lock().unwrap().remove(&game_id) else {
+            return;
+        };
+        if let Err(error) = self.enqueue(&[game_id], priority, Some(depth), false) {
+            tracing::warn!(%error, game_id, "Could not queue the requested deeper analysis");
+        }
+    }
     pub(super) fn backfill(&self, account: i64) -> Result<usize> {
         let rows=self.db.query("SELECT ag.game_id FROM account_games ag JOIN games g ON g.id=ag.game_id LEFT JOIN game_analysis ga ON ga.game_id=g.id LEFT JOIN jobs j ON j.game_id=g.id WHERE ag.account_id=? AND ga.game_id IS NULL AND j.id IS NULL AND g.rules IN ('chess','chess960')",&[json!(account)])?;
         self.enqueue(
@@ -614,6 +637,53 @@ mod tests {
             1
         );
         assert_eq!(db.scalar("SELECT game_id FROM jobs", &[]).unwrap(), 2);
+    }
+    #[test]
+    fn deeper_request_for_a_running_game_is_queued_when_the_job_finishes() {
+        let db = Arc::new(Database::open(":memory:").unwrap());
+        db.execute(
+            "INSERT INTO games(id,uuid,pgn,imported_at) VALUES(1,'one','1. e4 e5 *',0)",
+            &[],
+        )
+        .unwrap();
+        let service = Services::new(db.clone()).unwrap();
+        assert_eq!(service.enqueue(&[1], 10, Some(16), false).unwrap(), 1);
+        let job = service.claim(&AtomicBool::new(false)).unwrap().unwrap();
+        // Same depth while running: already being done; deeper: remembered.
+        assert_eq!(service.enqueue(&[1], 100, Some(16), false).unwrap(), 0);
+        assert_eq!(service.enqueue(&[1], 100, Some(16), true).unwrap(), 1);
+        assert_eq!(service.enqueue(&[1], 100, Some(24), true).unwrap(), 1);
+        assert_eq!(
+            db.scalar("SELECT COUNT(*) FROM jobs", &[]).unwrap(),
+            json!(1)
+        );
+        // The worker stores the result (marking the job done), then queues the follow-up.
+        db.execute(
+            "UPDATE jobs SET status='done',finished_at=? WHERE id=?",
+            &[json!(now()), job["id"].clone()],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO game_analysis(game_id,depth,multipv,engine,version,analyzed_at) VALUES(1,16,2,'test',?,0)",
+            &[json!(ANALYSIS_VERSION)],
+        )
+        .unwrap();
+        service.queue_followup(1);
+        let queued = db
+            .one("SELECT priority,depth FROM jobs WHERE status='queued'", &[])
+            .unwrap()
+            .expect("deeper analysis queued");
+        assert_eq!(
+            (queued["priority"].clone(), queued["depth"].clone()),
+            (json!(100), json!(24))
+        );
+        // Only once.
+        service.queue_followup(1);
+        assert_eq!(
+            db.scalar("SELECT COUNT(*) FROM jobs WHERE status='queued'", &[])
+                .unwrap(),
+            json!(1)
+        );
     }
     fn wait_until(mut check: impl FnMut() -> bool, seconds: u64) -> bool {
         let until = Instant::now() + Duration::from_secs(seconds);

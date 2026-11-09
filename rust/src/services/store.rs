@@ -205,15 +205,70 @@ pub fn game_row_from_pgn(text: &str) -> Result<Value> {
         && let Some(url) = get("ECOUrl")
         && let Some(name) = url.strip_prefix("https://www.chess.com/openings/")
     {
-        let name = name.split('?').next().unwrap_or(name).replace('-', " ");
-        if !name.is_empty() {
-            row["opening_name"] = json!(name);
-            row["opening_family"] = row["opening_name"].clone();
+        let name = name.split('?').next().unwrap_or(name);
+        if let Some((family, variation)) = eco_url_family(name) {
+            row["opening_name"] = json!(name.replace('-', " "));
+            row["opening_family"] = json!(family);
             row["opening_eco"] = json!(get("ECO"));
-            row["opening_variation"] = json!("");
+            row["opening_variation"] = json!(variation);
         }
     }
     Ok(row)
+}
+
+/// Family and variation of a Chess.com ECOUrl name such as
+/// "Sicilian-Defense-Old-Sicilian-Variation-3.d4", so these games join their family
+/// ("Sicilian Defense") instead of each line becoming a family of its own. The family is
+/// the longest bundled family whose words begin the name, else the name up to its first
+/// family word (Opening, Defense, Game, ...), else the whole name.
+fn eco_url_family(name: &str) -> Option<(String, String)> {
+    fn key(word: &str) -> String {
+        word.chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect()
+    }
+    static FAMILIES: std::sync::OnceLock<Vec<(Vec<String>, &'static str)>> =
+        std::sync::OnceLock::new();
+    let families = FAMILIES.get_or_init(|| {
+        analysis::opening_families()
+            .iter()
+            .map(|family| {
+                let words = family
+                    .split(|c: char| c.is_whitespace() || c == '-')
+                    .map(key)
+                    .filter(|w| !w.is_empty())
+                    .collect();
+                (words, family.as_str())
+            })
+            .collect()
+    });
+    let words = name
+        .split('-')
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>();
+    if words.is_empty() {
+        return None;
+    }
+    let keys = words.iter().map(|w| key(w)).collect::<Vec<_>>();
+    let (len, family) = families
+        .iter()
+        .filter(|(f, _)| !f.is_empty() && keys.starts_with(f))
+        .max_by_key(|(f, _)| f.len())
+        .map(|(f, family)| (f.len(), family.to_string()))
+        .unwrap_or_else(|| {
+            let len = keys
+                .iter()
+                .position(|k| {
+                    matches!(
+                        k.as_str(),
+                        "opening" | "defense" | "defence" | "game" | "gambit" | "attack" | "system"
+                    )
+                })
+                .map_or(words.len(), |i| i + 1);
+            (len, words[..len].join(" "))
+        });
+    Some((family, words[len..].join(" ")))
 }
 
 pub fn game_row_from_chesscom(game: &Value) -> Result<Option<Value>> {
@@ -456,6 +511,35 @@ mod tests {
         assert_eq!(class("40/7200:3600"), json!("rapid"));
         assert_eq!(class("-"), Value::Null);
         assert_eq!(class("?"), Value::Null);
+    }
+    #[test]
+    fn eco_url_names_fall_back_to_their_family() {
+        // An odds game: no indexed opening position, so only the ECOUrl names it.
+        let row = |url: &str| {
+            game_row_from_pgn(&format!(
+                "[SetUp \"1\"]\n[FEN \"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBN1 w Qkq - 0 1\"]\n[ECOUrl \"https://www.chess.com/openings/{url}\"]\n\n1. e4 c5 *"
+            ))
+            .unwrap()
+        };
+        let sicilian = row("Sicilian-Defense-Old-Sicilian-Variation-3.d4");
+        assert_eq!(sicilian["opening_family"], "Sicilian Defense");
+        assert_eq!(sicilian["opening_variation"], "Old Sicilian Variation 3.d4");
+        assert_eq!(
+            sicilian["opening_name"],
+            "Sicilian Defense Old Sicilian Variation 3.d4"
+        );
+        // The bundled spelling joins games the index named directly.
+        assert_eq!(
+            row("Caro-Kann-Defense-Advance-Variation")["opening_family"],
+            "Caro-Kann Defense"
+        );
+        // Not in the index: up to the first family word.
+        assert_eq!(
+            row("Queens-Pawn-Opening-Zukertort-Variation-2...c6")["opening_family"],
+            "Queens Pawn Opening"
+        );
+        assert_eq!(row("Some-Odd-Line")["opening_family"], "Some Odd Line");
+        assert_eq!(row("")["opening_family"], Value::Null);
     }
     #[test]
     fn cancelled_result_save_does_not_wait_for_an_external_writer() {

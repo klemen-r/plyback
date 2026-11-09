@@ -399,3 +399,59 @@ fn quarter_hour_buckets_agree_with_utc_hours() {
         }
     }
 }
+fn status(service: &Insights, method: &str, path: &str, body: Value) -> u16 {
+    match service.handle(method, path, &Query::new(), &body).unwrap() {
+        Ok((status, _)) => status,
+        Err(error) => error.downcast_ref::<plyback::ApiError>().unwrap().0,
+    }
+}
+#[test]
+fn report_titles_are_trimmed_and_missing_reports_cannot_be_deleted() {
+    let db = fixture();
+    let service = runtime(db.clone());
+    let blank = call(
+        &service,
+        "POST",
+        "/api/accounts/1/reports",
+        json!({"title":"   "}),
+    );
+    let default = call(&service, "POST", "/api/accounts/1/reports", json!({}));
+    assert_eq!(blank["title"], default["title"]);
+    assert!(!blank["title"].as_str().unwrap().trim().is_empty());
+    let padded = call(
+        &service,
+        "POST",
+        "/api/accounts/1/reports",
+        json!({"title":"  Blitz form  "}),
+    );
+    assert_eq!(padded["title"], "Blitz form");
+    // The limit applies to the trimmed title.
+    let long = format!(" {} ", "x".repeat(120));
+    assert_eq!(
+        status(
+            &service,
+            "POST",
+            "/api/accounts/1/reports",
+            json!({ "title": long })
+        ),
+        201
+    );
+    assert_eq!(
+        status(
+            &service,
+            "POST",
+            "/api/accounts/1/reports",
+            json!({"title":"x".repeat(121)})
+        ),
+        422
+    );
+    let id = padded["id"].as_i64().unwrap();
+    let path = format!("/api/reports/{id}");
+    assert_eq!(status(&service, "DELETE", &path, Value::Null), 200);
+    assert_eq!(status(&service, "DELETE", &path, Value::Null), 404);
+    assert_eq!(
+        status(&service, "DELETE", "/api/reports/999999", Value::Null),
+        404
+    );
+    service.stop();
+}

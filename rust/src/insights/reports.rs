@@ -395,7 +395,7 @@ impl Insights {
                 match (method,parts[3]) {
                     ("GET","insights")=>{let raw=q.iter().map(|(k,v)|(k.clone(),json!(v))).collect::<serde_json::Map<_,_>>();let f=normalize_filters(&json!(raw))?;Ok((200,self.cached(id,&f)?))},
                     ("GET","reports")=>Ok((200,json!(self.db.query("SELECT * FROM reports WHERE account_id=? ORDER BY created_at DESC,id DESC",&[json!(id)])?.iter().map(|r|public(r,false)).collect::<Vec<_>>()))),
-                    ("POST","reports")=>{if !body.is_object(){return Err(api_error(422,"Expected a report object"))}let f=normalize_filters(&body["filters"])?;let title=if body["title"].is_null(){default_title(&f)}else{let s=body["title"].as_str().filter(|s|s.chars().count()<=120).ok_or_else(||api_error(422,"title must be text of at most 120 characters"))?;if s.is_empty(){default_title(&f)}else{s.to_string()}};Ok((201,self.create(id,f,title)?))},
+                    ("POST","reports")=>{if !body.is_object(){return Err(api_error(422,"Expected a report object"))}let f=normalize_filters(&body["filters"])?;let title=report_title(&body["title"],&f)?;Ok((201,self.create(id,f,title)?))},
                     _=>Err(api_error(405,"Method not allowed")),
                 }
             })();
@@ -409,8 +409,13 @@ impl Insights {
                 match (method, parts.get(3).copied()) {
                     ("GET", None) => Ok((200, public(&self.get_report(id)?, true))),
                     ("DELETE", None) => {
-                        self.db
-                            .execute("DELETE FROM reports WHERE id=?", &[json!(id)])?;
+                        if self
+                            .db
+                            .execute("DELETE FROM reports WHERE id=?", &[json!(id)])?
+                            == 0
+                        {
+                            return Err(api_error(404, "Report not found"));
+                        }
                         Ok((200, json!({"deleted":true})))
                     }
                     ("POST", Some("finalize")) => {
@@ -465,6 +470,31 @@ fn public(r: &Value, full: bool) -> Value {
     }
     out
 }
+/// Longest report title, in characters (the Reports page input uses the same limit).
+const MAX_TITLE_CHARS: usize = 120;
+
+/// The title to save: trimmed, and the default for a missing or blank one.
+fn report_title(title: &Value, f: &Value) -> Result<String> {
+    if title.is_null() {
+        return Ok(default_title(f));
+    }
+    let title = title
+        .as_str()
+        .map(str::trim)
+        .filter(|s| s.chars().count() <= MAX_TITLE_CHARS)
+        .ok_or_else(|| {
+            api_error(
+                422,
+                format!("title must be text of at most {MAX_TITLE_CHARS} characters"),
+            )
+        })?;
+    Ok(if title.is_empty() {
+        default_title(f)
+    } else {
+        title.to_string()
+    })
+}
+
 fn default_title(f: &Value) -> String {
     let mut parts = Vec::new();
     if let Some(a) = f["time_classes"].as_array() {

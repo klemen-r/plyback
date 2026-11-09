@@ -154,6 +154,21 @@ pub fn opening_at(epd: &str) -> Option<(String, String)> {
         .map(|(eco, name, _)| (eco.clone(), name.clone()))
 }
 
+/// The opening families in the bundled index ("Sicilian Defense", "Caro-Kann Defense").
+pub fn opening_families() -> &'static [String] {
+    static FAMILIES: OnceLock<Vec<String>> = OnceLock::new();
+    FAMILIES.get_or_init(|| {
+        let mut families = openings()
+            .named
+            .values()
+            .map(|(_, name, _)| name.split(':').next().unwrap_or(name).trim().to_string())
+            .collect::<Vec<_>>();
+        families.sort_unstable();
+        families.dedup();
+        families
+    })
+}
+
 /// Matches verified positions from the preserved CC0 Lichess opening dataset.
 /// Leading book coverage stops at the first unknown position; transpositions
 /// can still identify a later named opening but never relabel the intervening play.
