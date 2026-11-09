@@ -72,7 +72,7 @@ struct Reached {
     paths: HashSet<String>,
 }
 impl Reached {
-    fn visit(&mut self, game: i64, score: f64, path: &str) {
+    fn visit(&mut self, game: i64, score: Option<f64>, path: &str) {
         // Rows are grouped by game, so the last id suffices to deduplicate. A game that
         // comes back to the position (a repetition) is not another move order either.
         if self.games > 0 && self.last_game == game {
@@ -81,18 +81,29 @@ impl Reached {
         self.paths.insert(path.to_owned());
         self.last_game = game;
         self.games += 1;
-        match score {
-            s if s >= 1.0 => self.wins += 1,
-            s if s > 0.0 => self.draws += 1,
-            _ => self.losses += 1,
-        }
+        tally(score, &mut self.wins, &mut self.draws, &mut self.losses);
     }
+}
+
+/// Counts a result; a game without one (PGN `*`) is a game but no win, draw or loss.
+fn tally(score: Option<f64>, wins: &mut i64, draws: &mut i64, losses: &mut i64) {
+    match score {
+        Some(s) if s >= 1.0 => *wins += 1,
+        Some(s) if s > 0.0 => *draws += 1,
+        Some(_) => *losses += 1,
+        None => {}
+    }
+}
+
+/// Points per decided game; games without a result are left out.
+fn score_of(wins: i64, draws: i64, losses: i64) -> f64 {
+    (wins as f64 + 0.5 * draws as f64) / (wins + draws + losses).max(1) as f64
 }
 
 struct MoveRow {
     game: i64,
     end_time: i64,
-    score: f64,
+    score: Option<f64>,
     ply: i64,
     san: String,
     is_book: bool,
@@ -100,13 +111,15 @@ struct MoveRow {
     ep_loss: Option<f64>,
 }
 
-fn outcome(mine: &str, theirs: &str) -> f64 {
-    if mine == "win" {
-        1.0
+fn outcome(mine: &str, theirs: &str) -> Option<f64> {
+    if mine.is_empty() && theirs.is_empty() {
+        None
+    } else if mine == "win" {
+        Some(1.0)
     } else if DRAWS.contains(&mine) || DRAWS.contains(&theirs) {
-        0.5
+        Some(0.5)
     } else {
-        0.0
+        Some(0.0)
     }
 }
 
@@ -202,11 +215,7 @@ pub fn compute(
         let Some(first) = moves.first() else { continue };
         let score = first.score;
         games += 1;
-        match score {
-            s if s >= 1.0 => wins += 1,
-            s if s > 0.0 => draws += 1,
-            _ => losses += 1,
-        }
+        tally(score, &mut wins, &mut draws, &mut losses);
         let mut path = String::new();
         let mut in_book = true;
         let mut position = Chess::default();
@@ -247,11 +256,7 @@ pub fn compute(
             node.recent.truncate(RECENT_GAMES);
             node.san.clone_from(&m.san);
             node.games += 1;
-            match score {
-                s if s >= 1.0 => node.wins += 1,
-                s if s > 0.0 => node.draws += 1,
-                _ => node.losses += 1,
-            }
+            tally(score, &mut node.wins, &mut node.draws, &mut node.losses);
             node.last_played = node.last_played.max(m.end_time);
             if m.is_book {
                 node.book += 1;
@@ -300,7 +305,7 @@ pub fn compute(
         })
         .collect();
     nodes.sort_by(|a, b| a.0.cmp(&b.0));
-    let score = |n: &Node| (n.wins as f64 + 0.5 * n.draws as f64) / n.games.max(1) as f64;
+    let score = |n: &Node| score_of(n.wins, n.draws, n.losses);
     let own = |n: &Node| (n.ply % 2 == 1) == (mine == "w");
     let public = |path: &str, n: &Node| {
         json!({
@@ -336,7 +341,8 @@ pub fn compute(
         .filter(|(_, n)| {
             own(n)
                 && n.games >= PROBLEM_MIN_GAMES
-                && (n.errors * 2 >= n.games || (n.games >= 4 && score(n) <= 0.35))
+                && (n.errors * 2 >= n.games
+                    || (n.wins + n.draws + n.losses >= 4 && score(n) <= 0.35))
         })
         .collect();
     problems.sort_by(|a, b| {
@@ -361,7 +367,7 @@ pub fn compute(
             "wins": p.wins,
             "draws": p.draws,
             "losses": p.losses,
-            "score": (p.wins as f64 + 0.5 * p.draws as f64) / p.games.max(1) as f64,
+            "score": score_of(p.wins, p.draws, p.losses),
             "orders": p.paths.len(),
         })).collect::<Vec<_>>(),
         "problems": problems.iter().take(8).map(|e| public(&e.0, &e.1)).collect::<Vec<_>>(),

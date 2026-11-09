@@ -365,3 +365,34 @@ fn invalid_requests_are_rejected() {
     );
     assert!(repertoire::handle(&db, "GET", "/api/accounts/1/insights", &Query::new()).is_none());
 }
+
+#[test]
+fn a_game_without_a_result_is_no_loss() {
+    let db = fixture(&[
+        (1, "white", "win", "resigned", 100, "chess", SICILIAN),
+        (2, "white", "", "", 200, "chess", SICILIAN),
+    ]);
+    // Stored from a PGN `*`: no result for either side.
+    db.execute(
+        "UPDATE games SET white_result=NULL, black_result=NULL WHERE id=2",
+        &[],
+    )
+    .unwrap();
+    let tree = get(&db, &[]);
+    assert_eq!(tree["games"], 2);
+    assert_eq!(
+        (&tree["wins"], &tree["draws"], &tree["losses"]),
+        (&Value::from(1), &Value::from(0), &Value::from(0))
+    );
+    let e4 = node(&tree, "e4");
+    assert_eq!(
+        (&e4["games"], &e4["losses"]),
+        (&Value::from(2), &Value::from(0))
+    );
+    assert_eq!(e4["score"], 1.0);
+    let root = &tree["positions"][0];
+    assert_eq!(
+        (&root["games"], &root["score"]),
+        (&Value::from(2), &Value::from(1.0))
+    );
+}

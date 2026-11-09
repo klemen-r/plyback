@@ -217,8 +217,8 @@ export default function Openings() {
             <Card padded={false}
               title={opening ? <>{opening.name}{opening.eco && <span className="ml-2 font-normal text-fg-3">{opening.eco}</span>}</> : line.length ? 'Unnamed position' : 'Starting position'}
               subtitle={reached
-                ? `${reached.games} of your games reached this position${reached.orders > 1 ? ` by ${reached.orders} move orders` : ''} · you scored ${pct(((reached.wins + reached.draws / 2) / reached.games) * 100)}`
-                : `${d.games} reviewed games as ${color === 'white' ? 'White' : 'Black'} · you scored ${pct(((d.wins + d.draws / 2) / d.games) * 100)}`}>
+                ? `${reached.games} of your games reached this position${reached.orders > 1 ? ` by ${reached.orders} move orders` : ''} · you scored ${pct(reached.score * 100)}`
+                : `${d.games} reviewed games as ${color === 'white' ? 'White' : 'Black'} · you scored ${pct(((d.wins + d.draws / 2) / (d.wins + d.draws + d.losses)) * 100)}`}>
               <p className="border-b border-line px-4 py-2.5 text-[13px] text-fg-2">
                 {yourTurn ? 'Your moves from here.' : 'What your opponents played here.'} Pick one, or play it on the board.
               </p>

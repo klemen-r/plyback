@@ -692,18 +692,21 @@ fn crate_id(raw: &str) -> Result<i64> {
     id(raw)
 }
 fn game_summary(r: &Value, job: Option<&Value>) -> Value {
-    let outcome = r["user_color"].as_str().map(|color| {
+    let outcome = r["user_color"].as_str().and_then(|color| {
         let (res, other) = if color == "white" {
             (&r["white_result"], &r["black_result"])
         } else {
             (&r["black_result"], &r["white_result"])
         };
         if res == "win" {
-            "win"
+            Some("win")
         } else if other == "win" {
-            "loss"
+            Some("loss")
+        } else if res.is_null() && other.is_null() {
+            // Stored without a result (PGN `*`): neither a draw nor in the draw filter.
+            None
         } else {
-            "draw"
+            Some("draw")
         }
     });
     let mut out = json!({"white":{"username":r["white_username"],"rating":r["white_rating"],"result":r["white_result"],"accuracy":r["accuracy_white"],"chesscom_accuracy":r["chesscom_accuracy_white"]},"black":{"username":r["black_username"],"rating":r["black_rating"],"result":r["black_result"],"accuracy":r["accuracy_black"],"chesscom_accuracy":r["chesscom_accuracy_black"]},"opening":{"eco":r["opening_eco"],"name":r["opening_name"],"family":r["opening_family"]},"user_color":r["user_color"],"outcome":outcome,"analyzed":!r["analyzed_at"].is_null(),"analysis_depth":r["depth"],"counts":decode(&r["counts_json"],Value::Null),"rated":r["rated"].as_i64().map(|v|v!=0),"job":job.map(|j|{let mut out=json!({});for key in ["status","error","progress","total"]{if let Some(v)=j.get(key){out[key]=v.clone();}}out})});
@@ -847,6 +850,49 @@ mod tests {
                 .0,
             422
         );
+    }
+    #[test]
+    fn a_game_without_a_result_is_not_a_draw() {
+        let db = Arc::new(Database::open(":memory:").unwrap());
+        let s = Services::new(Arc::clone(&db)).unwrap();
+        db.execute(
+            "INSERT INTO accounts(id,username,added_at) VALUES (1,'me',0)",
+            &[],
+        )
+        .unwrap();
+        for (id, white, black) in [
+            (1, json!("agreed"), json!("agreed")),
+            (2, json!(null), json!(null)),
+        ] {
+            db.execute(
+                "INSERT INTO games(id,uuid,pgn,white_result,black_result,imported_at) VALUES (?,?,'',?,?,0)",
+                &[json!(id), json!(id.to_string()), white, black],
+            )
+            .unwrap();
+            db.execute(
+                "INSERT INTO account_games(account_id,game_id,color) VALUES (1,?,'white')",
+                &[json!(id)],
+            )
+            .unwrap();
+        }
+        let list = |outcome: &str| {
+            let q: Query = [("account_id", "1"), ("outcome", outcome)]
+                .into_iter()
+                .filter(|(_, v)| !v.is_empty())
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            let (_, v) = s.list_games(&q).unwrap();
+            v["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|g| (g["id"].as_i64().unwrap(), g["outcome"].clone()))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        let all = list("");
+        assert_eq!(all[&1], "draw");
+        assert!(all[&2].is_null(), "{}", all[&2]);
+        assert_eq!(list("draw").keys().copied().collect::<Vec<_>>(), [1]);
     }
     #[test]
     fn queue_reuses_completed_depth_and_bumps_queued_work() {

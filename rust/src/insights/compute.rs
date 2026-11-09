@@ -430,7 +430,9 @@ struct Game {
     id: i64,
     row: Value,
     color: String,
-    score: f64,
+    /// 1, 0.5 or 0; `None` with outcome "unknown" for a game stored without a result
+    /// (PGN `*`), which is left out of every score and win/draw/loss count.
+    score: Option<f64>,
     outcome: &'static str,
     reason: String,
     user_rating: Option<f64>,
@@ -461,6 +463,37 @@ impl Game {
             100.0 - m.after.unwrap_or(50.0)
         }
     }
+}
+const DRAWS: &[&str] = &[
+    "agreed",
+    "repetition",
+    "stalemate",
+    "insufficient",
+    "50move",
+    "timevsinsufficient",
+];
+/// Score, outcome and how the game ended, from the side with result `ures`.
+fn judge<'a>(ures: &'a str, ores: &'a str) -> (Option<f64>, &'static str, &'a str) {
+    if ures.is_empty() && ores.is_empty() {
+        (None, "unknown", "")
+    } else if ures == "win" {
+        (Some(1.0), "win", loss_reason(ores))
+    } else if DRAWS.contains(&ures) || DRAWS.contains(&ores) {
+        (
+            Some(0.5),
+            "draw",
+            if DRAWS.contains(&ures) { ures } else { ores },
+        )
+    } else {
+        (Some(0.0), "loss", loss_reason(ures))
+    }
+}
+fn decided<'a>(games: &[&'a Game]) -> Vec<&'a Game> {
+    games
+        .iter()
+        .copied()
+        .filter(|g| g.score.is_some())
+        .collect()
 }
 fn loss_reason(s: &str) -> &str {
     match s {
@@ -499,21 +532,7 @@ fn load(db: &Database, account: i64, filters: &Value, report_id: Option<i64>) ->
         };
         let ures = text(&row[format!("{us}_result")]);
         let ores = text(&row[format!("{them}_result")]);
-        const DRAWS: &[&str] = &[
-            "agreed",
-            "repetition",
-            "stalemate",
-            "insufficient",
-            "50move",
-            "timevsinsufficient",
-        ];
-        let (score, outcome, reason) = if ures == "win" {
-            (1.0, "win", loss_reason(ores))
-        } else if DRAWS.contains(&ures) || DRAWS.contains(&ores) {
-            (0.5, "draw", if DRAWS.contains(&ures) { ures } else { ores })
-        } else {
-            (0.0, "loss", loss_reason(ures))
-        };
+        let (score, outcome, reason) = judge(ures, ores);
         games.push(Game {
             id: integer(&row["id"]),
             color: text(&row["color"]).into(),
@@ -634,6 +653,7 @@ fn groups<'a, T>(items: &[&'a T], key: impl Fn(&T) -> String) -> Vec<(String, Ve
     out
 }
 fn wdl(gs: &[&Game]) -> Value {
+    let gs = decided(gs);
     let n = gs.len();
     let w = gs.iter().filter(|g| g.outcome == "win").count();
     let d = gs.iter().filter(|g| g.outcome == "draw").count();
@@ -713,7 +733,7 @@ fn overview(games: &[&Game], analyzed: &[&Game]) -> Value {
     let by_tc=tcs.into_iter().map(|(tc,gs)|extend(wdl(&gs),json!({"time_class":tc,"accuracy":avg(gs.iter().filter(|g|g.analyzed).map(|g|g.accuracy))}))).collect::<Vec<_>>();
     let rated = games
         .iter()
-        .filter(|g| g.opp_rating.is_some_and(|r| r != 0.0))
+        .filter(|g| g.score.is_some() && g.opp_rating.is_some_and(|r| r != 0.0))
         .collect::<Vec<_>>();
     let avg_opp = if rated.is_empty() {
         None
@@ -771,6 +791,7 @@ fn ratings(games: &[&Game]) -> Value {
 }
 
 fn results(games: &[&Game]) -> Value {
+    let games = &decided(games);
     let reasons = |outcome: &str| {
         let mut map = BTreeMap::<String, usize>::new();
         for g in games.iter().filter(|g| g.outcome == outcome) {
@@ -810,14 +831,14 @@ fn results(games: &[&Game]) -> Value {
             json!({"label":label,"expected":round(100.0*expected,1)}),
         ));
     }
-    let hours=(0..24).map(|h|{let sub=games.iter().filter(|g|g.end!=0&&DateTime::from_timestamp(g.end,0).is_some_and(|d|d.hour()==h)).collect::<Vec<_>>();json!({"hour_utc":h,"games":sub.len(),"score":pct(sub.iter().map(|g|g.score).sum(),sub.len())})}).collect::<Vec<_>>();
+    let hours=(0..24).map(|h|{let sub=games.iter().filter(|g|g.end!=0&&DateTime::from_timestamp(g.end,0).is_some_and(|d|d.hour()==h)).collect::<Vec<_>>();json!({"hour_utc":h,"games":sub.len(),"score":pct(sub.iter().filter_map(|g|g.score).sum(),sub.len())})}).collect::<Vec<_>>();
     // Native extension: 15-minute UTC buckets as [index, games, score points], so the browser can
     // place each game in the local hour that applied on its date, summer time included.
     let mut quarters = BTreeMap::<i64, (usize, f64)>::new();
     for g in games.iter().filter(|g| g.end != 0) {
         let bucket = quarters.entry(g.end.div_euclid(900)).or_default();
         bucket.0 += 1;
-        bucket.1 += g.score;
+        bucket.1 += g.score.unwrap_or(0.0);
     }
     let by_quarter_hour = quarters
         .into_iter()
@@ -842,7 +863,54 @@ fn results(games: &[&Game]) -> Value {
     json!({"wins_by":reasons("win"),"losses_by":reasons("loss"),"draws_by":reasons("draw"),"by_opponent":by_opp,"by_hour_utc":hours,"by_quarter_hour":by_quarter_hour,"by_length":lengths})
 }
 
-fn sessions(games: &[&Game]) -> Value {
+/// One game of the account in time order, whatever the filters, for session detection.
+struct Sitting {
+    id: i64,
+    daily: bool,
+    start: i64,
+    end: i64,
+    outcome: &'static str,
+}
+impl Sitting {
+    fn of(id: i64, time_class: &str, start: Option<i64>, end: i64, outcome: &'static str) -> Self {
+        Sitting {
+            id,
+            daily: time_class == "daily",
+            start: start.filter(|t| *t != 0).unwrap_or(end),
+            end,
+            outcome,
+        }
+    }
+}
+/// Every game of the account, ordered like `load`. Sessions are sittings at the board, so a
+/// filtered view (one colour, one opening) still needs the games it hides to find them.
+fn timeline(db: &Database, account: i64) -> Result<Vec<Sitting>> {
+    db.read(|c| {
+        let mut statement = c.prepare_cached(
+            "SELECT g.id, g.time_class, g.start_time, g.end_time, ag.color, g.white_result, g.black_result
+             FROM account_games ag JOIN games g ON g.id = ag.game_id
+             WHERE ag.account_id = ? ORDER BY g.end_time, g.id",
+        )?;
+        let rows = statement.query_map([account], |r| {
+            let white = r.get_ref(4)?.as_str().ok() == Some("white");
+            let wr = r.get::<_, Option<String>>(5)?.unwrap_or_default();
+            let br = r.get::<_, Option<String>>(6)?.unwrap_or_default();
+            let (ures, ores) = if white { (&wr, &br) } else { (&br, &wr) };
+            Ok(Sitting::of(
+                r.get(0)?,
+                r.get::<_, Option<String>>(1)?.as_deref().unwrap_or(""),
+                r.get(2)?,
+                r.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                judge(ures, ores).1,
+            ))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    })
+}
+
+/// Session statistics of the shown `games`, with sessions found on the whole account `timeline`.
+fn sessions(games: &[&Game], timeline: &[Sitting]) -> Value {
+    let shown = games.iter().map(|g| (g.id, *g)).collect::<HashMap<_, _>>();
     let mut after = HashMap::from([
         ("win", Vec::new()),
         ("loss", Vec::new()),
@@ -851,51 +919,61 @@ fn sessions(games: &[&Game]) -> Value {
     let mut positions: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
     let mut n = 0;
     let mut idx = 0;
-    let mut prev: Option<&Game> = None;
-    for &g in games {
+    let mut counted = false;
+    let mut prev: Option<&Sitting> = None;
+    for s in timeline {
         // A daily game lasts days, so it is not part of a sitting and must not become the
         // "previous game" of the live game played next.
-        if g.row["time_class"] == "daily" {
+        if s.daily {
             continue;
         }
-        let start = g.row["start_time"]
-            .as_i64()
-            .filter(|t| *t != 0)
-            .unwrap_or(g.end);
         // A game that started before the previous one ended (overlapping games) is not its
         // continuation either.
-        if prev.is_none_or(|p| g.end == 0 || !(0..=1800).contains(&(start - p.end))) {
-            n += 1;
+        let new = prev.is_none_or(|p| s.end == 0 || !(0..=1800).contains(&(s.start - p.end)));
+        if new {
             idx = 0;
-        } else if let Some(p) = prev {
-            after.get_mut(p.outcome).unwrap().push(g.score);
+            counted = false;
         }
         idx += 1;
-        positions
-            .entry(if idx <= 3 {
-                "1–3"
-            } else if idx <= 6 {
-                "4–6"
-            } else {
-                "7+"
-            })
-            .or_default()
-            .push(g.score);
-        prev = Some(g);
+        // A hidden game still takes its place in the session and is the game before the next.
+        if let Some(g) = shown.get(&s.id) {
+            if !counted {
+                n += 1;
+                counted = true;
+            }
+            if let Some(score) = g.score {
+                if !new && let Some(list) = prev.and_then(|p| after.get_mut(p.outcome)) {
+                    list.push(score);
+                }
+                positions
+                    .entry(if idx <= 3 {
+                        "1–3"
+                    } else if idx <= 6 {
+                        "4–6"
+                    } else {
+                        "7+"
+                    })
+                    .or_default()
+                    .push(score);
+            }
+        }
+        prev = Some(s);
     }
+    let games = decided(games);
     let base = if games.is_empty() {
         0.0
     } else {
-        games.iter().map(|g| g.score).sum::<f64>() / games.len() as f64
+        games.iter().filter_map(|g| g.score).sum::<f64>() / games.len() as f64
     };
     let mut res = json!({});
     for (k, v) in &after {
         res[*k] = json!({"games":v.len(),"score":pct(v.iter().sum(),v.len()),"confidence":confidence(v.len(),10,30,80)});
     }
     let losses = &after["loss"];
-    let tilt = if losses.len() >= 20 {
+    // Shown from the same sample size at which the after-loss figures stop being "insufficient".
+    let tilt = if confidence(losses.len(), 10, 30, 80) != "insufficient" {
         let sum = losses.iter().sum::<f64>();
-        json!({"score_after_loss":res["loss"]["score"],"baseline":round(100.0*base,1),"difference":round(100.0*(sum/losses.len() as f64-base),1),"significant":wilson(sum,losses.len()).1<base})
+        json!({"score_after_loss":res["loss"]["score"],"baseline":round(100.0*base,1),"difference":round(100.0*(sum/losses.len() as f64-base),1),"significant":wilson(sum,losses.len()).1<base,"confidence":res["loss"]["confidence"]})
     } else {
         Value::Null
     };
@@ -934,7 +1012,11 @@ fn trend(games: &[&Game]) -> Value {
         }
     });
     buckets.sort_by(|a, b| a.0.cmp(&b.0));
-    json!(buckets.into_iter().map(|(period,sub)|{let an=sub.iter().copied().filter(|g|g.analyzed).collect::<Vec<_>>();json!({"period":period,"games":sub.len(),"score":pct(sub.iter().map(|g|g.score).sum(),sub.len()),"accuracy":avg(an.iter().map(|g|g.accuracy)),"analyzed":an.len(),"blunders_per_game":if an.is_empty(){Value::Null}else{json!(round(an.iter().flat_map(|g|&g.user).filter(|m|m.class=="blunder").count() as f64/an.len() as f64,2))},"rating":sub.last().unwrap().user_rating})}).collect::<Vec<_>>())
+    json!(buckets.into_iter().map(|(period,sub)|{let an=sub.iter().copied().filter(|g|g.analyzed).collect::<Vec<_>>();let scored=decided(&sub);
+        // Ratings of different time classes are separate pools: a period that mixes them has no
+        // single rating, and its last game's rating would jump between pools.
+        let one_pool=sub.iter().all(|g|g.row["time_class"]==sub[0].row["time_class"]);
+        json!({"period":period,"games":sub.len(),"score":pct(scored.iter().filter_map(|g|g.score).sum(),scored.len()),"accuracy":avg(an.iter().map(|g|g.accuracy)),"analyzed":an.len(),"blunders_per_game":if an.is_empty(){Value::Null}else{json!(round(an.iter().flat_map(|g|&g.user).filter(|m|m.class=="blunder").count() as f64/an.len() as f64,2))},"rating":if one_pool{sub.last().unwrap().user_rating}else{None}})}).collect::<Vec<_>>())
 }
 
 fn openings(games: &[&Game], overall: f64) -> Value {
@@ -978,15 +1060,16 @@ fn openings(games: &[&Game], overall: f64) -> Value {
                 })
                 .collect::<Vec<_>>();
             let stats = wdl(&gs);
+            let decided = integer(&stats["games"]);
             let mut flag = None;
-            if gs.len() >= 5 {
+            if decided >= 5 {
                 let score = number(&stats["score"]);
                 if number(&stats["score_ci"][1]) < overall
-                    || (score <= overall - 15.0 && gs.len() >= 8)
+                    || (score <= overall - 15.0 && decided >= 8)
                 {
                     flag = Some("weakness");
                 } else if number(&stats["score_ci"][0]) > overall
-                    || (score >= overall + 15.0 && gs.len() >= 8)
+                    || (score >= overall + 15.0 && decided >= 8)
                 {
                     flag = Some("strength");
                 }
@@ -1100,7 +1183,8 @@ fn errors(analyzed: &[&Game]) -> Value {
             }
         }
     }
-    let user_tag = |m: &Move, t: &str| {
+    // The same predicate for both sides, so the opponents' figure is comparable.
+    let counts = |m: &Move, t: &str| {
         m.tag(t)
             && (m.error()
                 || (t == "missed_mate"
@@ -1109,12 +1193,12 @@ fn errors(analyzed: &[&Game]) -> Value {
     for (tag, label) in TAG_LABELS {
         let u = analyzed
             .iter()
-            .flat_map(|g| g.user.iter().filter(|m| user_tag(m, tag)).map(|m| (*g, m)))
+            .flat_map(|g| g.user.iter().filter(|m| counts(m, tag)).map(|m| (*g, m)))
             .collect::<Vec<_>>();
         let o = analyzed
             .iter()
             .flat_map(|g| &g.opp)
-            .filter(|m| m.error() && m.tag(tag))
+            .filter(|m| counts(m, tag))
             .count();
         rows.push(json!({"tag":tag,"label":label,"count":u.len(),"per_game":round(u.len() as f64/n,2),"opp_per_game":round(o as f64/n,2),"ep_lost_per_game":round(u.iter().map(|(_,m)|m.ep).sum::<f64>()/n,3),"examples":top_examples(u.clone(),3),"confidence":conf(u.len())}));
     }
@@ -1219,8 +1303,10 @@ fn time_info(analyzed: &[&Game], games: &[&Game]) -> Value {
         if had_low {
             trouble.push(g);
         }
-        if let Some(c) = g.user.iter().rev().find_map(|m| m.clock) {
-            endings.get_mut(g.outcome).unwrap().push(100.0 * c / base);
+        if let Some(c) = g.user.iter().rev().find_map(|m| m.clock)
+            && let Some(ending) = endings.get_mut(g.outcome)
+        {
+            ending.push(100.0 * c / base);
         }
     }
     let mut avg_time = json!({});
@@ -1261,7 +1347,8 @@ fn advantage(analyzed: &[&Game]) -> Value {
     let mut lost = Vec::new();
     type Decisive<'a> = (String, usize, Vec<(&'a Game, &'a Move)>);
     let mut decisive: Vec<Decisive<'_>> = Vec::new();
-    for &g in analyzed {
+    // Without a result a game was neither converted, saved nor lost.
+    for g in decided(analyzed) {
         let ms = g.moves();
         let series = ms
             .iter()
@@ -1584,7 +1671,7 @@ fn priorities(analyzed: &[&Game], openings: &Value, time: &Value, sessions: &Val
     }
     let tilt = &sessions["tilt"];
     if tilt["significant"] == true {
-        ranked.push(json!({"key":"tilt","title":"Playing on after losses (tilt)","rank":ranked.len()+1,"confidence":"moderate","score":0,"summary":format!("You score {}% in games started right after a loss, versus {}% overall. Taking a short break after a loss may help.",tilt["score_after_loss"],tilt["baseline"]),"examples":[],"resources":resources("tilt")}));
+        ranked.push(json!({"key":"tilt","title":"Playing on after losses (tilt)","rank":ranked.len()+1,"confidence":tilt["confidence"],"score":0,"summary":format!("You score {}% in games started right after a loss, versus {}% overall. Taking a short break after a loss may help.",tilt["score_after_loss"],tilt["baseline"]),"examples":[],"resources":resources("tilt")}));
     }
     ranked.extend(rest);
     json!(ranked)
@@ -1724,7 +1811,24 @@ fn compute_once(
         .collect::<Vec<_>>();
     let overview = overview(&games, &analyzed);
     let openings = openings(&games, number(&overview["score"]));
-    let sessions = sessions(&games);
+    // Unfiltered, the loaded games are the whole timeline; otherwise read the hidden ones too.
+    let timeline = if report_id.is_none() && f.as_object().is_some_and(|o| o.is_empty()) {
+        games
+            .iter()
+            .map(|g| {
+                Sitting::of(
+                    g.id,
+                    text(&g.row["time_class"]),
+                    g.row["start_time"].as_i64(),
+                    g.end,
+                    g.outcome,
+                )
+            })
+            .collect()
+    } else {
+        timeline(db, account_id)?
+    };
+    let sessions = sessions(&games, &timeline);
     let time = time_info(&analyzed, &games);
     let mut notes = Vec::new();
     if analyzed.len() < 10 {
@@ -1745,6 +1849,12 @@ fn compute_once(
     // in the interface names them separately.
     if !un.is_empty() {
         notes.push(format!("{} game(s) in this selection are not analysed yet; result statistics include them, engine statistics do not.",un.len()));
+    }
+    let unknown = games.len() - decided(&games).len();
+    if unknown > 0 {
+        notes.push(format!(
+            "{unknown} game(s) in this selection have no recorded result; scores leave them out."
+        ));
     }
     let mut result = json!({"filters":f,"data_quality":{"games":games.len(),"analyzed":analyzed.len(),"coverage":pct(analyzed.len() as f64,games.len()),"unanalyzed_ids":&un[un.len().saturating_sub(2000)..],"notes":notes,"confidence":confidence(analyzed.len(),10,40,150)},"overview":overview,"ratings":ratings(&games),"results":results(&games),"sessions":sessions,"trend":trend(&games),"openings":openings,"phases":phases(&analyzed),"errors":errors(&analyzed),"time":time,"advantage":advantage(&analyzed),"missed":missed(&analyzed),"recurring":recurring(&analyzed),"priorities":priorities(&analyzed,&openings,&time,&sessions)});
     let aggregated_at = std::time::Instant::now();
@@ -1840,5 +1950,64 @@ mod tests {
         assert_eq!(conf(3), "insufficient");
         assert_eq!(conf(50), "high");
         assert_eq!(pct(2.5, 4), json!(62.5));
+    }
+    fn game(id: i64, end: i64, score: f64) -> Game {
+        let outcome = if score == 1.0 { "win" } else { "loss" };
+        Game {
+            id,
+            row: json!({"time_class":"blitz","start_time":end - 300}),
+            color: "white".into(),
+            score: Some(score),
+            outcome,
+            reason: String::new(),
+            user_rating: None,
+            opp_rating: None,
+            opponent: "?".into(),
+            end,
+            analyzed: false,
+            accuracy: None,
+            opp_accuracy: None,
+            acpl: None,
+            chesscom_accuracy: None,
+            user: vec![],
+            opp: vec![],
+        }
+    }
+    #[test]
+    fn tilt_confidence_follows_the_after_loss_sample() {
+        // Twelve sittings of two losses and forty single wins: twelve games after a loss,
+        // all lost, against a 62.5% baseline.
+        let mut games = Vec::new();
+        let mut t = 0;
+        for i in 0..12 {
+            t += 10_000;
+            games.push(game(2 * i, t, 0.0));
+            games.push(game(2 * i + 1, t + 600, 0.0));
+        }
+        for i in 0..40 {
+            t += 10_000;
+            games.push(game(100 + i, t, 1.0));
+        }
+        let shown = games.iter().collect::<Vec<_>>();
+        let line = shown
+            .iter()
+            .map(|g| Sitting::of(g.id, "blitz", Some(g.end - 300), g.end, g.outcome))
+            .collect::<Vec<_>>();
+        let s = sessions(&shown, &line);
+        assert_eq!(s["after"]["loss"]["games"], 12);
+        assert_eq!(s["after"]["loss"]["confidence"], "low");
+        assert_eq!(s["tilt"]["significant"], true);
+        assert_eq!(s["tilt"]["confidence"], "low");
+        // A ranked tilt priority carries the same confidence (it needs one analysed game).
+        let mut analyzed = game(999, 1, 1.0);
+        analyzed.analyzed = true;
+        let list = priorities(&[&analyzed], &json!({}), &json!({}), &s);
+        let tilt = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["key"] == "tilt")
+            .unwrap();
+        assert_eq!(tilt["confidence"], "low");
     }
 }

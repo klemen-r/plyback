@@ -455,3 +455,95 @@ fn report_titles_are_trimmed_and_missing_reports_cannot_be_deleted() {
     );
     service.stop();
 }
+#[test]
+fn games_without_a_result_are_left_out_of_scores() {
+    let db = fixture();
+    let before = compute(&db, 1, &json!({})).unwrap();
+    // Game 11 (a black win right after the black loss in game 10) stored as PGN `*`.
+    db.execute(
+        "UPDATE games SET white_result=NULL, black_result=NULL, result='*' WHERE id=11",
+        &[],
+    )
+    .unwrap();
+    let after = compute(&db, 1, &json!({})).unwrap();
+    let (o, was) = (&after["overview"], &before["overview"]);
+    let less = |v: &Value, by: i64| json!(v.as_i64().unwrap() - by);
+    assert_eq!(after["data_quality"]["games"], 11);
+    assert_eq!(o["games"], less(&was["games"], 1));
+    assert_eq!(o["wins"], less(&was["wins"], 1));
+    assert_eq!(o["draws"], was["draws"]);
+    assert_eq!(o["losses"], was["losses"]);
+    assert_eq!(o["black"]["games"], less(&was["black"]["games"], 1));
+    assert_eq!(o["black"]["losses"], was["black"]["losses"]);
+    assert!(
+        after["data_quality"]["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n
+                .as_str()
+                .unwrap()
+                .starts_with("1 game(s) in this selection have no recorded result"))
+    );
+    // Neither a game after a loss nor a loss itself.
+    let s = &after["sessions"]["after"];
+    assert_eq!(
+        s["loss"]["games"],
+        less(&before["sessions"]["after"]["loss"]["games"], 1)
+    );
+    let losses_by: i64 = after["results"]["losses_by"]
+        .as_object()
+        .unwrap()
+        .values()
+        .map(|v| v.as_i64().unwrap())
+        .sum();
+    assert_eq!(json!(losses_by), o["losses"]);
+}
+#[test]
+fn sessions_include_games_hidden_by_filters() {
+    let db = fixture();
+    // As black: game 2 follows the white loss in game 1 (467 s later) and game 10 the white
+    // loss in game 9; both are games after a loss although the filter hides that loss.
+    let black = compute(&db, 1, &json!({"color":"black"})).unwrap();
+    let s = &black["sessions"];
+    assert_eq!(s["after"]["loss"]["games"], 3);
+    assert_eq!(s["after"]["loss"]["score"], 66.7);
+    assert_eq!(s["after"]["win"]["games"], 0);
+    assert_eq!(s["sessions"], 5);
+    // Game 10 is the third game of its sitting and game 11 the fourth.
+    assert_eq!(s["by_game_in_session"]["4–6"]["games"], 1);
+    // Unfiltered, the same sittings.
+    let all = compute(&db, 1, &json!({})).unwrap();
+    assert_eq!(all["sessions"]["sessions"], 5);
+}
+#[test]
+fn trend_rating_is_null_when_a_period_mixes_time_classes() {
+    let db = fixture();
+    // All eleven games share one ISO week; the daily game 7 is in another rating pool.
+    let all = compute(&db, 1, &json!({})).unwrap();
+    let week = &all["trend"][0];
+    assert_eq!(week["games"], 11);
+    assert!(week["rating"].is_null(), "{week}");
+    let blitz = compute(&db, 1, &json!({"time_classes":"blitz"})).unwrap();
+    assert_eq!(blitz["trend"][0]["rating"].as_f64(), Some(597.0));
+}
+#[test]
+fn missed_mates_count_alike_for_both_sides() {
+    let db = fixture();
+    // Game 1: the account is white, so ply 8 is the opponent's. An inaccuracy that misses a
+    // mate counts for the account (see the oracle fixture) and so must count for them too.
+    db.execute(
+        "UPDATE moves SET classification='inaccuracy', tags='{\"missed_mate\":{\"mate\":3}}' WHERE game_id=1 AND ply=8",
+        &[],
+    )
+    .unwrap();
+    let r = compute(&db, 1, &json!({})).unwrap();
+    let row = r["errors"]["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["tag"] == "missed_mate")
+        .unwrap()
+        .clone();
+    assert!(row["opp_per_game"].as_f64().unwrap() > 0.0, "{row}");
+}

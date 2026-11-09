@@ -238,7 +238,7 @@ export interface Insights {
     sessions: number
     after: Record<'win' | 'loss' | 'draw', { games: number; score: number | null; confidence: Confidence }>
     by_game_in_session: Record<string, { games: number; score: number | null }>
-    tilt: { score_after_loss: number; baseline: number; difference: number; significant: boolean } | null
+    tilt: { score_after_loss: number; baseline: number; difference: number; significant: boolean; confidence: Confidence } | null
   }
   trend: { period: string; games: number; score: number | null; accuracy: number | null; analyzed: number; blunders_per_game: number | null; rating: number | null }[]
   openings: Record<Color, { families: OpeningFamily[]; first_moves: (WDL & { move: string })[] }>

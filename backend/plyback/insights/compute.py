@@ -155,8 +155,8 @@ class G:
     id: int
     row: dict
     color: str  # 'white' / 'black'
-    score: float  # 1 / 0.5 / 0
-    outcome: str  # win / draw / loss
+    score: float | None  # 1 / 0.5 / 0; None when stored without a result (PGN "*")
+    outcome: str  # win / draw / loss / unknown
     reason: str  # how it ended
     user_rating: int | None
     opp_rating: int | None
@@ -278,6 +278,40 @@ def _move_cache(db: Database) -> MoveCache:
         return cache
 
 
+def _judge(ures: str | None, ores: str | None) -> tuple[float | None, str, str]:
+    """Score, outcome and how it ended. A game without a result is left out of every score."""
+    if not ures and not ores:
+        return None, "unknown", ""
+    if ures == "win":
+        return 1.0, "win", LOSS_REASONS.get(ores, "other")
+    if ures in DRAWS or ores in DRAWS:
+        return 0.5, "draw", ures if ures in DRAWS else ores
+    return 0.0, "loss", LOSS_REASONS.get(ures, "other")
+
+
+def _decided(games: list[G]) -> list[G]:
+    return [g for g in games if g.score is not None]
+
+
+def _timeline(db: Database, account_id: int) -> list[tuple]:
+    """Every game of the account in time order: (id, daily, start, end, outcome).
+
+    Sessions are sittings at the board, so a filtered view still needs the games it hides."""
+    rows = db.query(
+        """SELECT g.id, g.time_class, g.start_time, g.end_time, ag.color, g.white_result, g.black_result
+           FROM account_games ag JOIN games g ON g.id = ag.game_id
+           WHERE ag.account_id = ? ORDER BY g.end_time, g.id""",
+        [account_id],
+    )
+    out = []
+    for r in rows:
+        white = r["color"] == "white"
+        ures, ores = (r["white_result"], r["black_result"]) if white else (r["black_result"], r["white_result"])
+        end = r["end_time"] or 0
+        out.append((r["id"], r["time_class"] == "daily", r["start_time"] or end, end, _judge(ures, ores)[1]))
+    return out
+
+
 def _load(db: Database, account_id: int, f: Filters) -> list[G]:
     where = ["ag.account_id = ?"]
     params: list = [account_id]
@@ -319,12 +353,7 @@ def _load(db: Database, account_id: int, f: Filters) -> list[G]:
         white = r["color"] == "white"
         ures = r["white_result"] if white else r["black_result"]
         ores = r["black_result"] if white else r["white_result"]
-        if ures == "win":
-            score, outcome, reason = 1.0, "win", LOSS_REASONS.get(ores, "other")
-        elif ures in DRAWS or ores in DRAWS:
-            score, outcome, reason = 0.5, "draw", ures if ures in DRAWS else ores
-        else:
-            score, outcome, reason = 0.0, "loss", LOSS_REASONS.get(ures, "other")
+        score, outcome, reason = _judge(ures, ores)
         g = G(
             id=r["id"],
             row=r,
@@ -353,6 +382,7 @@ def _load(db: Database, account_id: int, f: Filters) -> list[G]:
 
 # --- helpers ------------------------------------------------------------------------------
 def _wdl(gs: list[G]) -> dict:
+    gs = _decided(gs)
     n = len(gs)
     w = sum(1 for g in gs if g.outcome == "win")
     d = sum(1 for g in gs if g.outcome == "draw")
@@ -459,7 +489,7 @@ def _overview(games: list[G], analyzed: list[G]) -> dict:
         sub = [g for g in games if g.row["time_class"] == tc]
         by_tc.append({"time_class": tc, **_wdl(sub), "accuracy": _avg(g.accuracy for g in sub if g.analyzed)})
     perf = None
-    rated = [g for g in games if g.opp_rating]
+    rated = [g for g in games if g.opp_rating and g.score is not None]
     if rated:
         avg_opp = sum(g.opp_rating for g in rated) / len(rated)
         w = sum(1 for g in rated if g.outcome == "win")
@@ -510,6 +540,7 @@ def _ratings(games: list[G]) -> dict:
 
 
 def _results(games: list[G]) -> dict:
+    games = _decided(games)
     wins = Counter(g.reason for g in games if g.outcome == "win")
     losses = Counter(g.reason for g in games if g.outcome == "loss")
     draws = Counter(g.reason for g in games if g.outcome == "draw")
@@ -550,34 +581,46 @@ def _results(games: list[G]) -> dict:
     }
 
 
-def _sessions(games: list[G]) -> dict:
-    """Behaviour across playing sessions (games < 30 min apart), incl. results after a loss."""
+def _sessions(games: list[G], timeline: list[tuple]) -> dict:
+    """Behaviour across playing sessions (games < 30 min apart), incl. results after a loss.
+
+    Sessions are found on the whole account timeline; only the shown games are reported."""
+    shown = {g.id: g for g in games}
     after = {"win": [], "loss": [], "draw": []}
     position_in_session: dict[str, list[float]] = defaultdict(list)
     sessions = 0
-    prev: G | None = None
+    prev: tuple | None = None
     idx = 0
-    for g in games:
+    counted = False
+    for gid, daily, start, end, outcome in timeline:
         # A daily game lasts days: not part of a sitting, never the previous game of a live one.
-        if g.row.get("time_class") == "daily":
+        if daily:
             continue
-        start = g.row.get("start_time") or g.end_time
         # A game that started before the previous one ended does not continue it either.
-        if prev is None or not g.end_time or not 0 <= start - prev.end_time <= 1800:
-            sessions += 1
+        new = prev is None or not end or not 0 <= start - prev[3] <= 1800
+        if new:
             idx = 0
-        else:
-            after[prev.outcome].append(g.score)
+            counted = False
         idx += 1
-        position_in_session["1–3" if idx <= 3 else "4–6" if idx <= 6 else "7+"].append(g.score)
-        prev = g
+        g = shown.get(gid)
+        if g is not None:
+            if not counted:
+                sessions += 1
+                counted = True
+            if g.score is not None:
+                if not new and prev[4] in after:
+                    after[prev[4]].append(g.score)
+                position_in_session["1–3" if idx <= 3 else "4–6" if idx <= 6 else "7+"].append(g.score)
+        prev = (gid, daily, start, end, outcome)
+    games = _decided(games)
     base = sum(g.score for g in games) / len(games) if games else 0
     res = {
         k: {"games": len(v), "score": _pct(sum(v), len(v)), "confidence": confidence(len(v), 10, 30, 80)}
         for k, v in after.items()
     }
     tilt = None
-    if len(after["loss"]) >= 20:
+    # Shown from the same sample size at which the after-loss figures stop being "insufficient".
+    if res["loss"]["confidence"] != "insufficient":
         diff = (sum(after["loss"]) / len(after["loss"])) - base
         lo, hi = wilson(sum(after["loss"]), len(after["loss"]))
         tilt = {
@@ -585,6 +628,7 @@ def _sessions(games: list[G]) -> dict:
             "baseline": round(100 * base, 1),
             "difference": round(100 * diff, 1),
             "significant": hi < base,
+            "confidence": res["loss"]["confidence"],
         }
     return {
         "sessions": sessions,
@@ -612,11 +656,14 @@ def _trend(games: list[G]) -> list[dict]:
     for key in sorted(buckets):
         sub = buckets[key]
         an = [g for g in sub if g.analyzed]
+        scored = _decided(sub)
+        # Ratings of different time classes are separate pools: a mixed period has no single rating.
+        one_pool = len({g.row["time_class"] for g in sub}) == 1
         out.append(
             {
                 "period": key,
                 "games": len(sub),
-                "score": _pct(sum(g.score for g in sub), len(sub)),
+                "score": _pct(sum(g.score for g in scored), len(scored)),
                 "accuracy": _avg(g.accuracy for g in an),
                 "analyzed": len(an),
                 "blunders_per_game": round(
@@ -624,7 +671,7 @@ def _trend(games: list[G]) -> list[dict]:
                 )
                 if an
                 else None,
-                "rating": sub[-1].user_rating,
+                "rating": sub[-1].user_rating if one_pool else None,
             }
         )
     return out
@@ -654,12 +701,13 @@ def _openings(games: list[G], overall_score: float) -> dict:
             opening_moves = [m for g in an for m in g.user_moves if m.phase == "opening" and not m.is_book]
             exit_wins = [w for w in (_opening_exit_win(g) for g in an) if w is not None]
             wdl = _wdl(gs)
+            decided = wdl["games"]
             flag = None
-            if len(gs) >= 5:
+            if decided >= 5:
                 score = wdl["score"] or 0
-                if wdl["score_ci"][1] < overall_score or (score <= overall_score - 15 and len(gs) >= 8):
+                if wdl["score_ci"][1] < overall_score or (score <= overall_score - 15 and decided >= 8):
                     flag = "weakness"
-                elif wdl["score_ci"][0] > overall_score or (score >= overall_score + 15 and len(gs) >= 8):
+                elif wdl["score_ci"][0] > overall_score or (score >= overall_score + 15 and decided >= 8):
                     flag = "strength"
             fam_rows.append(
                 {
@@ -803,10 +851,13 @@ def _errors(analyzed: list[G]) -> dict:
                     hung[m.tags["hanging_piece"].get("piece", "?")] += 1
             elif m.classification in ("good", "excellent", "inaccuracy") and "missed_mate" in m.tags:
                 tags_u["missed_mate"].append((g, m))
+        # The same predicate for both sides, so the opponents' figure is comparable.
         for m in g.opp_moves:
             if m.classification in ERRORS:
                 for t in m.tags:
                     tags_o[t].append((g, m))
+            elif m.classification in ("good", "excellent", "inaccuracy") and "missed_mate" in m.tags:
+                tags_o["missed_mate"].append((g, m))
     rows = []
     for t, label in TAG_LABELS.items():
         u = tags_u.get(t, [])
@@ -936,7 +987,7 @@ def _time(analyzed: list[G], games: list[G]) -> dict:
     end_clock = {"win": [], "loss": [], "draw": []}
     for g, tc in timed:
         cl = [m.clock for m in g.user_moves if m.clock is not None]
-        if cl:
+        if cl and g.outcome in end_clock:
             end_clock[g.outcome].append(100 * cl[-1] / tc.base)
     out["clock_left_at_end"] = {k: _avg(v) for k, v in end_clock.items()}
     return out
@@ -947,7 +998,8 @@ def _advantage(analyzed: list[G]) -> dict:
     had_lost, saved = [], []
     decisive = Counter()
     decisive_examples: dict[str, list] = defaultdict(list)
-    for g in analyzed:
+    # Without a result a game was neither converted, saved nor lost.
+    for g in _decided(analyzed):
         moves = sorted(g.user_moves + g.opp_moves, key=lambda m: m.ply)
         series = [(m, _user_pov_win(g, m)) for m in moves if m.ply >= 10]
         if not series:
@@ -1175,7 +1227,7 @@ def _priorities(analyzed: list[G], openings: dict, time_info: dict, sessions: di
                 "key": "tilt",
                 "title": "Playing on after losses (tilt)",
                 "rank": len(ranked) + 1,
-                "confidence": "moderate",
+                "confidence": tilt["confidence"],
                 "score": 0,
                 "summary": f"You score {tilt['score_after_loss']}% in games started right after a loss, versus "
                 f"{tilt['baseline']}% overall. Taking a short break after a loss may help.",
@@ -1220,7 +1272,7 @@ def compute_insights(db: Database, account_id: int, filters: Filters | dict | No
     overview = _overview(games, analyzed)
     overall_score = overview["score"] or 0
     openings = _openings(games, overall_score)
-    sessions = _sessions(games)
+    sessions = _sessions(games, _timeline(db, account_id))
     time_info = _time(analyzed, games)
     unanalyzed = [g.id for g in games if not g.analyzed and g.row["rules"] in ("chess", "chess960")]
     notes = []
@@ -1233,6 +1285,9 @@ def compute_insights(db: Database, account_id: int, filters: Filters | dict | No
             f"{len(games) - len(analyzed)} game(s) in this selection are not analysed yet; "
             "result statistics include them, engine statistics do not."
         )
+    unknown = len(games) - len(_decided(games))
+    if unknown:
+        notes.append(f"{unknown} game(s) in this selection have no recorded result; scores leave them out.")
     result = {
         "filters": f.to_dict(),
         "data_quality": {
