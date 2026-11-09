@@ -177,6 +177,7 @@ impl Services {
                 for (cancel, _) in &workers {
                     cancel.store(true, Ordering::SeqCst);
                 }
+                self.cancel_running_jobs();
                 self.notify();
                 for (_, h) in workers.drain(..) {
                     let _ = h.join();
@@ -223,6 +224,7 @@ impl Services {
         for (cancel, _) in &workers {
             cancel.store(true, Ordering::SeqCst);
         }
+        self.cancel_running_jobs();
         self.notify();
         for (_, h) in workers {
             let _ = h.join();
@@ -274,6 +276,12 @@ impl Services {
                 tracing::warn!(%error,"Could not persist worker cleanup; retaining claims for retry");
             }
             self.pending_releases.lock().unwrap().extend(releases);
+        }
+    }
+    /// Stops every analysis in progress; the workers set their own flags.
+    fn cancel_running_jobs(&self) {
+        for (_, job_cancel) in self.progress.lock().unwrap().values() {
+            job_cancel.store(true, Ordering::SeqCst);
         }
     }
     fn worker_loop(&self, worker: u64, cancel: Arc<AtomicBool>, threads: usize, hash: usize) {
@@ -334,7 +342,10 @@ impl Services {
                 }
             };
             let game_id = job["game_id"].as_i64().unwrap();
-            let result = self.run_job(&job, engine.as_mut().unwrap(), worker, &cancel);
+            // Each job has its own flag, so cancelling one job (its account was deleted) does not
+            // also end this worker, which would make the supervisor restart every worker.
+            let job_cancel = Arc::new(AtomicBool::new(false));
+            let result = self.run_job(&job, engine.as_mut().unwrap(), worker, &cancel, &job_cancel);
             self.progress
                 .lock()
                 .unwrap()
@@ -342,7 +353,11 @@ impl Services {
             match result {
                 Ok(true) => {}
                 Ok(false) => self.release_job(&job, None),
-                Err(_) if cancel.load(Ordering::SeqCst) || self.stop.load(Ordering::SeqCst) => {
+                Err(_)
+                    if cancel.load(Ordering::SeqCst)
+                        || job_cancel.load(Ordering::SeqCst)
+                        || self.stop.load(Ordering::SeqCst) =>
+                {
                     self.release_job(&job, None)
                 }
                 Err(error) => {
@@ -360,6 +375,7 @@ impl Services {
         engine: &mut Engine,
         worker: u64,
         cancel: &Arc<AtomicBool>,
+        job_cancel: &Arc<AtomicBool>,
     ) -> Result<bool> {
         let id = job["id"].as_i64().unwrap();
         let game_id = job["game_id"].as_i64().unwrap();
@@ -411,7 +427,7 @@ impl Services {
             token.to_string(),
             (
                 json!({"job_id":id,"game_id":game_id,"done":0,"total":game["plies"],"worker":worker}),
-                Arc::clone(cancel),
+                Arc::clone(job_cancel),
             ),
         );
         let progress = |done: usize, total: usize| {
@@ -419,7 +435,7 @@ impl Services {
                 token.to_string(),
                 (
                     json!({"job_id":id,"game_id":game_id,"done":done,"total":total,"worker":worker}),
-                    Arc::clone(cancel),
+                    Arc::clone(job_cancel),
                 ),
             );
             if done.is_multiple_of(10) || done == total {
@@ -429,14 +445,19 @@ impl Services {
                 )?));
             }
         };
+        // The job is in the progress map now, so a worker cancelled before this point is seen
+        // here and one cancelled later reaches the job through cancel_running_jobs.
+        if cancel.load(Ordering::SeqCst) {
+            job_cancel.store(true, Ordering::SeqCst);
+        }
         let mut result = analysis::analyze(
             engine,
             game["pgn"].as_str().unwrap_or(""),
             &opts,
-            cancel,
+            job_cancel,
             progress,
         )?;
-        if cancel.load(Ordering::SeqCst) {
+        if job_cancel.load(Ordering::SeqCst) {
             anyhow::bail!("Analysis cancelled");
         }
         result["duration_ms"] = json!(started.elapsed().as_millis() as u64);
@@ -450,7 +471,7 @@ impl Services {
                 token,
                 uuid: job["game_uuid"].as_str().unwrap(),
                 pgn: job["game_pgn"].as_str().unwrap(),
-                cancel,
+                cancel: job_cancel,
             },
             &result,
             depth as i64,
