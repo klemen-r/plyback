@@ -121,6 +121,11 @@ impl ChessComClient {
             serial: Mutex::new(None),
         })
     }
+    /// The configured API base without a trailing slash, so "{root}/player/..." never has "//"
+    /// (a base without a path, such as "http://host", displays as "http://host/").
+    fn root(&self) -> &str {
+        self.base.as_str().trim_end_matches('/')
+    }
     fn validate(&self, url: &Url) -> Result<()> {
         if url.scheme() != self.base.scheme()
             || url.host_str() != self.base.host_str()
@@ -145,7 +150,7 @@ impl ChessComClient {
     pub fn profile(&self, username: &str, contact: &str, stop: &AtomicBool) -> Result<Value> {
         Ok(self
             .get(
-                &format!("{}/player/{}", self.base, username.to_ascii_lowercase()),
+                &format!("{}/player/{}", self.root(), username.to_ascii_lowercase()),
                 None,
                 None,
                 contact,
@@ -263,14 +268,24 @@ impl ChessComClient {
                         continue;
                     }
                     if matches!(status, 404 | 410) {
-                        return Err(api_error(404, "Chess.com player not found"));
+                        // Only the profile and archive list mean the player is gone; a missing
+                        // monthly archive is just that archive.
+                        return Err(api_error(
+                            404,
+                            if url.path().contains("/games/") && !url.path().ends_with("/archives")
+                            {
+                                format!("Chess.com archive not found: {}", url.path())
+                            } else {
+                                "Chess.com player not found".to_string()
+                            },
+                        ));
                     }
                     if status != 200 {
                         if let Some(wait) = response
                             .headers()
                             .get("retry-after")
                             .and_then(|s| s.to_str().ok())
-                            .and_then(|s| s.parse::<u64>().ok())
+                            .and_then(retry_after_seconds)
                         {
                             delay = delay.max(wait).min(120);
                         }
@@ -339,13 +354,13 @@ impl ChessComClient {
     }
     fn archive_url(&self, username: &str, raw: &str) -> Result<(String, String)> {
         let mut url = Url::parse(raw)?;
-        if self.base.as_str() != OFFICIAL_BASE && raw.starts_with(&format!("{OFFICIAL_BASE}/")) {
-            url = Url::parse(&format!("{}{}", self.base, &raw[OFFICIAL_BASE.len()..]))?;
+        if self.root() != OFFICIAL_BASE && raw.starts_with(&format!("{OFFICIAL_BASE}/")) {
+            url = Url::parse(&format!("{}{}", self.root(), &raw[OFFICIAL_BASE.len()..]))?;
         }
         self.validate(&url)?;
         let prefix = format!(
             "{}/player/{}/games/",
-            self.base.path(),
+            self.base.path().trim_end_matches('/'),
             username.to_ascii_lowercase()
         );
         let tail = url
@@ -357,6 +372,15 @@ impl ChessComClient {
         }
         Ok((tail.to_string(), url.to_string()))
     }
+}
+/// Seconds to wait from a Retry-After header: either delay-seconds or an HTTP date.
+fn retry_after_seconds(value: &str) -> Option<u64> {
+    let value = value.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(seconds);
+    }
+    let at = chrono::DateTime::parse_from_rfc2822(value).ok()?;
+    Some((at.timestamp() - Utc::now().timestamp()).max(0) as u64)
 }
 fn wait_cancel(duration: Duration, stop: &AtomicBool) -> Result<()> {
     let until = Instant::now() + duration;
@@ -552,7 +576,7 @@ impl Services {
                     .get(
                         &format!(
                             "{}/player/{}/stats",
-                            self.client.base,
+                            self.client.root(),
                             username.to_ascii_lowercase()
                         ),
                         None,
@@ -588,7 +612,7 @@ impl Services {
             .get(
                 &format!(
                     "{}/player/{}/games/archives",
-                    self.client.base,
+                    self.client.root(),
                     username.to_ascii_lowercase()
                 ),
                 None,
@@ -712,6 +736,21 @@ impl Services {
                 self.enqueue_for_account(id, &claim.generation, &fresh, PRIORITY_NEW)?;
             }
         }
+        // Games are stored in the archive's transaction and queued afterwards, so a busy
+        // database or a shutdown in between left them unqueued, and the next sync sees them
+        // as already stored. Catch up on games imported since the previous successful sync
+        // (last_sync_at only moves once this sync finishes), played after the account was added.
+        // Older games are left alone, so clearing the queue stays cleared.
+        if account["auto_analyze"] == 1 {
+            let rows = self.sync_rows("SELECT ag.game_id FROM account_games ag JOIN accounts a ON a.id=ag.account_id JOIN games g ON g.id=ag.game_id LEFT JOIN game_analysis ga ON ga.game_id=g.id LEFT JOIN jobs j ON j.game_id=g.id WHERE ag.account_id=? AND a.sync_generation=? AND g.imported_at>=? AND g.end_time>a.added_at AND ga.game_id IS NULL AND j.id IS NULL AND g.rules IN ('chess','chess960')", &[json!(id), json!(claim.generation), json!(last_sync.unwrap_or(0))])?;
+            let missed = rows
+                .iter()
+                .filter_map(|row| row["game_id"].as_i64())
+                .collect::<Vec<_>>();
+            if !missed.is_empty() {
+                self.enqueue_for_account(id, &claim.generation, &missed, PRIORITY_NEW)?;
+            }
+        }
         if claim.transaction(self, |tx| {
             tx.execute("UPDATE accounts SET last_sync_at=?,sync_status='idle',sync_error=NULL,history_complete=CASE WHEN ? THEN history_complete ELSE 1 END,last_new_game_at=CASE WHEN ? THEN ? ELSE last_new_game_at END WHERE id=?",rusqlite::params![now(),interrupted,fresh_count>0,now(),id])?;
             if new_count > 0 { claim.event(tx, "info", &format!("Imported {new_count} game(s)"))?; }
@@ -736,6 +775,9 @@ impl Services {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// The account was added when the newest base fixture game ended; the "extra" fixture
+    /// game (1793525510) is played afterwards.
+    const ADDED_AFTER_FIXTURE_GAMES: i64 = 1_793_524_537;
     #[test]
     fn archive_urls_must_stay_within_account_and_origin() {
         let c = ChessComClient {
@@ -1073,8 +1115,8 @@ mod tests {
         let server = FixtureServer::start();
         let db = Arc::new(Database::open(":memory:").unwrap());
         db.execute(
-            "INSERT INTO accounts(username,added_at,analyze_history) VALUES('klemen_r',0,0)",
-            &[],
+            "INSERT INTO accounts(username,added_at,analyze_history) VALUES('klemen_r',?,0)",
+            &[json!(ADDED_AFTER_FIXTURE_GAMES)],
         )
         .unwrap();
         let mut service = Arc::try_unwrap(Services::new(Arc::clone(&db)).unwrap())
@@ -1132,8 +1174,8 @@ mod tests {
         let server = FixtureServer::start();
         let db = Arc::new(Database::open(":memory:").unwrap());
         db.execute(
-            "INSERT INTO accounts(username,added_at,analyze_history,auto_analyze) VALUES('klemen_r',0,0,1)",
-            &[],
+            "INSERT INTO accounts(username,added_at,analyze_history,auto_analyze) VALUES('klemen_r',?,0,1)",
+            &[json!(ADDED_AFTER_FIXTURE_GAMES)],
         )
         .unwrap();
         let mut service = Arc::try_unwrap(Services::new(Arc::clone(&db)).unwrap())
@@ -1208,6 +1250,80 @@ mod tests {
             .unwrap(),
             1
         );
+    }
+    #[test]
+    fn games_left_unqueued_by_a_failed_sync_are_queued_by_the_next_one() {
+        let server = FixtureServer::start();
+        let db = Arc::new(Database::open(":memory:").unwrap());
+        db.execute(
+            "INSERT INTO accounts(username,added_at,analyze_history,auto_analyze) VALUES('klemen_r',?,0,1)",
+            &[json!(ADDED_AFTER_FIXTURE_GAMES)],
+        )
+        .unwrap();
+        let mut service = Arc::try_unwrap(Services::new(Arc::clone(&db)).unwrap())
+            .ok()
+            .unwrap();
+        service.client = ChessComClient {
+            base: Url::parse(&server.base).unwrap(),
+            client: OnceLock::new(),
+            serial: Mutex::new(None),
+        };
+        let sync = || {
+            service
+                .sync_account(&db.one("SELECT * FROM accounts", &[]).unwrap().unwrap())
+                .unwrap()
+        };
+        sync();
+        let before = db.scalar("SELECT last_sync_at FROM accounts", &[]).unwrap();
+        server.extra.store(true, Ordering::SeqCst);
+        db.execute("UPDATE archives SET complete=0", &[]).unwrap();
+        sync();
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM jobs", &[]).unwrap(), 1);
+        // As if queueing the new game had failed (busy database, shutdown): no job, and the
+        // sync never finished, so last_sync_at did not move. The archive is unchanged (304).
+        db.execute("DELETE FROM jobs", &[]).unwrap();
+        db.execute("UPDATE accounts SET last_sync_at=?", &[before])
+            .unwrap();
+        db.execute("UPDATE archives SET complete=0", &[]).unwrap();
+        sync();
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM jobs", &[]).unwrap(), 1);
+        assert_eq!(
+            db.scalar("SELECT priority FROM jobs", &[]).unwrap(),
+            PRIORITY_NEW
+        );
+        // A queue the user cleared stays cleared: that game was imported before this sync.
+        db.execute("DELETE FROM jobs", &[]).unwrap();
+        db.execute("UPDATE archives SET complete=0", &[]).unwrap();
+        sync();
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM jobs", &[]).unwrap(), 0);
+    }
+    #[test]
+    fn retry_after_accepts_seconds_and_http_dates() {
+        assert_eq!(retry_after_seconds("30"), Some(30));
+        assert_eq!(
+            retry_after_seconds("Wed, 21 Oct 2015 07:28:00 GMT"),
+            Some(0)
+        );
+        let soon = (Utc::now() + chrono::Duration::seconds(90)).to_rfc2822();
+        assert!(retry_after_seconds(&soon).is_some_and(|s| (85..=90).contains(&s)));
+        assert_eq!(retry_after_seconds("soon"), None);
+    }
+    #[test]
+    fn an_api_base_without_a_path_builds_single_slash_urls() {
+        let client = ChessComClient {
+            base: Url::parse("http://127.0.0.1:8799").unwrap(),
+            client: OnceLock::new(),
+            serial: Mutex::new(None),
+        };
+        assert_eq!(client.root(), "http://127.0.0.1:8799");
+        for raw in [
+            "http://127.0.0.1:8799/player/fixture/games/2026/10",
+            "https://api.chess.com/pub/player/fixture/games/2026/10",
+        ] {
+            let (period, url) = client.archive_url("fixture", raw).unwrap();
+            assert_eq!(period, "2026/10");
+            assert_eq!(url, "http://127.0.0.1:8799/player/fixture/games/2026/10");
+        }
     }
     #[test]
     fn a_busy_database_skips_the_tick_instead_of_failing_the_sync() {
