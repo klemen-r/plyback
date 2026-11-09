@@ -9,6 +9,26 @@ import Openings from '../Openings'
 
 vi.mock('../../components/Board', () => ({ default: () => null }))
 
+test('"Open game" in Moves to fix opens the game at its own ply under merged move orders', () => {
+  const client = new QueryClient()
+  // 1. Nf3 d5 2. d4 reaches the d4 position at ply 3, but this game got there by 1. d4 d5 2. Nf3.
+  const problem = { path: 'd4 d5 Nf3', san: 'Nf3', ply: 3, mine: true, from: 2, to: 3,
+    games: 4, wins: 0, draws: 0, losses: 4, score: 0, orders: 2, book: 4, left_book: 0,
+    errors: 3, blunders: 2, misses: 0, recent_games: [77], recent_plies: [5] }
+  client.setQueryData(['repertoire', 1, 'white', 'all', 16, true], {
+    merged: true, root: 0, games: 4, total_games: 4, wins: 0, draws: 0, losses: 4, plies: 16,
+    nodes: [], problems: [problem], positions: [],
+  })
+  const account = { id: 1 } as Account
+  const html = renderToStaticMarkup(
+    h(QueryClientProvider, { client },
+      h(AccountCtx.Provider, { value: { account, accounts: [account], loading: false, error: null, select: () => {} } },
+        h(MemoryRouter, { initialEntries: ['/openings?merge=1'] }, h(Openings)))),
+  )
+  expect(html).toContain('href="/games/77?ply=5"')
+  client.clear()
+})
+
 test('merged position subtitle uses distinct games and scores, not overlapping incoming edges', () => {
   const client = new QueryClient()
   const edge = { path: 'Nf3', san: 'Nf3', ply: 1, mine: true, from: 0, to: 1,

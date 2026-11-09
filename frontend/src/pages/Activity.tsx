@@ -63,7 +63,9 @@ export default function ActivityPage() {
               <span className="text-fg/90">{e.message}</span>
             </div>
           ))}
-          {!ev.data?.length && <Empty title="Nothing logged yet" />}
+          {ev.error && !ev.data ? <div className="p-3"><ErrorNote error={ev.error} /></div>
+            : ev.isPending ? <Loading label="Loading the log" />
+              : !ev.data?.length && <Empty title="Nothing logged yet" />}
         </div>
       </Card>
     </div>

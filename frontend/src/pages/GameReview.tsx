@@ -17,25 +17,13 @@ import { Button, Card, ErrorNote, Loading, Badge, Progress, Tabs, Spinner } from
 import { useAccount } from '../lib/account-context'
 import { api } from '../lib/api'
 import { CLASS_META, CLASS_ORDER, classBadgeSvg, PHASE_LABEL } from '../lib/classification'
+import { gameOverText, isGameOverAnswer } from '../lib/chess'
 import { endingOf, endShapes } from '../lib/ending'
-import { fmtClock, fmtDate, fmtTimeControl, formatEval } from '../lib/format'
+import { clockBeforeFirstMove, fmtClock, fmtDate, fmtTimeControl, formatEval } from '../lib/format'
 import type { Classification, GameDetail, MoveRow } from '../lib/types'
+import { playEngineLine, type VarStep, type Variation } from '../lib/variation'
 
-interface VarStep { fen: string; san: string; from: Key; to: Key }
-interface Variation { baseFen: string; basePly: number; steps: VarStep[]; idx: number; source: 'user' | 'engine' }
 type Promotion = 'q' | 'r' | 'b' | 'n'
-
-function buildSteps(fen: string, sans: string[]): VarStep[] {
-  const chess = new Chess(fen)
-  const out: VarStep[] = []
-  for (const san of sans) {
-    try {
-      const m = chess.move(san)
-      out.push({ fen: chess.fen(), san: m.san, from: m.from as Key, to: m.to as Key })
-    } catch { break }
-  }
-  return out
-}
 
 function uciSquares(uci?: string | null): [Key, Key] | null {
   if (!uci || uci.length < 4) return null
@@ -257,10 +245,11 @@ function GameReviewContent() {
     } else applyBoardMove(orig, dest)
   }
 
-  const playLine = (baseFen: string, basePly: number, sans: string[], idx: number) => {
+  /** Inside a variation (`from`), the line continues it; otherwise it starts one from the game. */
+  const playLine = (baseFen: string, basePly: number, sans: string[], idx: number, from: Variation | null = null) => {
     if (!canExplore) return
-    const steps = buildSteps(baseFen, sans)
-    if (steps.length) setVariation({ baseFen, basePly, steps, idx: Math.min(idx, steps.length - 1), source: 'engine' })
+    const next = playEngineLine(from, baseFen, basePly, sans, idx)
+    if (next) setVariation(next)
   }
 
   if (q.isLoading) return <Loading label="Loading game…" />
@@ -269,6 +258,8 @@ function GameReviewContent() {
   const g = data.game
   const topSide = orientation === 'white' ? 'black' : 'white'
   const bottomSide = orientation
+  // Before a side's first move its clock still shows the base time.
+  const startClock = (side: 'white' | 'black') => clockBeforeFirstMove(moves, ply, side, g.time_control)
   const clockFor = (side: 'white' | 'black') => {
     const c = side === 'white' ? 'w' : 'b'
     for (let i = Math.min(ply, n) - 1; i >= 0; i--) if (moves[i].color === c) return moves[i].clock ?? null
@@ -325,7 +316,7 @@ function GameReviewContent() {
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:grid-rows-[auto_1fr] xl:grid-cols-[minmax(0,1fr)_420px] lg:[grid-template-areas:'board_panel'_'quality_panel']">
         {/* board column */}
         <div className="mx-auto w-full min-w-[280px] max-w-[720px] lg:max-w-[min(720px,calc(100vh-19rem))] lg:[grid-area:board]">
-          <PlayerBar name={g[topSide].username} rating={g[topSide].rating} accuracy={analysis?.accuracy[topSide]} clock={clockFor(topSide)}
+          <PlayerBar name={g[topSide].username} rating={g[topSide].rating} accuracy={analysis?.accuracy[topSide]} clock={clockFor(topSide) ?? startClock(topSide)}
             active={!inVar && ply < n && moves[ply]?.color === topSide[0]} isUser={g.user_color === topSide} />
           <div className="flex gap-2">
             <EvalBar cp={evalNow} orientation={orientation} />
@@ -338,7 +329,7 @@ function GameReviewContent() {
             {([{ piece: 'q', label: 'Queen' }, { piece: 'r', label: 'Rook' }, { piece: 'b', label: 'Bishop' }, { piece: 'n', label: 'Knight' }] as const).map(p => <Button key={p.piece} onClick={() => { applyBoardMove(promotion.orig, promotion.dest, p.piece); setPromotion(null) }}>{p.label}</Button>)}
             <Button variant="ghost" onClick={() => setPromotion(null)}>Cancel promotion</Button>
           </div>}
-          <PlayerBar name={g[bottomSide].username} rating={g[bottomSide].rating} accuracy={analysis?.accuracy[bottomSide]} clock={clockFor(bottomSide)}
+          <PlayerBar name={g[bottomSide].username} rating={g[bottomSide].rating} accuracy={analysis?.accuracy[bottomSide]} clock={clockFor(bottomSide) ?? startClock(bottomSide)}
             active={!inVar && ply < n && moves[ply]?.color === bottomSide[0]} isUser={g.user_color === bottomSide} />
 
           {/* On phones the controls float above the page so they stay in reach while reading. */}
@@ -420,10 +411,11 @@ function GameReviewContent() {
               </div>
               {enginePaused ? <div className="py-3 text-sm text-fg-2">Engine paused.</div> : live.isFetching && !live.data ? <div className="flex items-center gap-2 py-3 text-sm text-fg-2"><Spinner className="h-4 w-4" />Thinking…</div>
                 : live.error ? <ErrorNote error={live.error} />
+                  : live.data && isGameOverAnswer(live.data.lines) ? <div className="text-sm text-fg-2">{gameOverText(fen)}</div>
                   : live.data?.lines.length ? (
                     <div className="space-y-1.5">
                       {live.data.lines.map((l, i) => (
-                        <EngineLineRow key={i} evalText={l.eval} sans={l.san} depth={l.depth} onClick={k => playLine(fen, inVar ? variation.basePly : ply, l.san, k)} />
+                        <EngineLineRow key={i} cp={l.cp} evalText={l.eval} sans={l.san} depth={l.depth} onClick={k => playLine(fen, ply, l.san, k, variation)} />
                       ))}
                     </div>
                   ) : <div className="text-sm text-fg-2">Game over.</div>}
@@ -455,8 +447,9 @@ function GameReviewContent() {
   )
 }
 
-function EngineLineRow({ evalText, sans, depth, onClick, disabled }: { evalText: string; sans: string[]; depth?: number; onClick: (idx: number) => void; disabled?: boolean }) {
-  const positive = !evalText.startsWith('-')
+function EngineLineRow({ cp, evalText, sans, depth, onClick, disabled }: { cp: number; evalText: string; sans: string[]; depth?: number; onClick: (idx: number) => void; disabled?: boolean }) {
+  // The sign of the score, not of the text: a mate on the board reads "#" whichever side won.
+  const positive = cp >= 0
   return (
     <div className="flex items-start gap-2 rounded-lg bg-subtle px-2 py-1.5">
       <span className={clsx('w-14 shrink-0 rounded px-1 py-0.5 text-center font-mono text-xs font-semibold', positive ? 'bg-[#e9eaee] text-[#222]' : 'bg-[#3a3f47] text-white')}>{evalText}</span>
@@ -501,7 +494,7 @@ function MoveInsight({ current, onPlayLine, allowExploration }: { current: MoveR
         <div className="mt-3 space-y-1.5">
           <div className="text-[13px] font-medium text-fg-2">Engine lines before {current.san}</div>
           {current.lines.map((l, i) => (
-            <EngineLineRow key={i} disabled={!allowExploration} evalText={l.eval} sans={l.san} depth={l.depth} onClick={k => onPlayLine(l.san, k)} />
+            <EngineLineRow key={i} disabled={!allowExploration} cp={l.cp} evalText={l.eval} sans={l.san} depth={l.depth} onClick={k => onPlayLine(l.san, k)} />
           ))}
         </div>
       )}

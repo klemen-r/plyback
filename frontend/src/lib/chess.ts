@@ -24,3 +24,20 @@ export function sanToSquares(fen: string, san: string | null | undefined): [Key,
   }
 }
 
+
+/** The live engine answers a finished game with lines that have no moves and no depth. */
+export function isGameOverAnswer(lines: { san: string[]; depth: number }[]): boolean {
+  return lines.length > 0 && lines.every(l => l.san.length === 0 && !l.depth)
+}
+
+/** How a finished position ended, for the live engine panel. */
+export function gameOverText(fen: string): string {
+  try {
+    const chess = new Chess(fen)
+    if (chess.isCheckmate()) return `Checkmate. ${chess.turn() === 'w' ? 'Black' : 'White'} wins.`
+    if (chess.isStalemate()) return 'Stalemate. The game is drawn.'
+    if (chess.isInsufficientMaterial()) return 'Drawn by insufficient material.'
+    if (Number(fen.split(' ')[4]) >= 150) return 'Drawn by the 75-move rule.'
+  } catch { /* not a position chess.js can read */ }
+  return 'Game over.'
+}

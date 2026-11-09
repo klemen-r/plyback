@@ -20,10 +20,20 @@ export default function Reports() {
     refetchInterval: q => (q.state.data?.some(r => r.status === 'analyzing') ? 3000 : false),
   })
   const create = useMutation({ mutationFn: () => api.createReport(account!.id, toInsightFilters(fs), title || undefined), onSuccess: r => nav(`/reports/${r.id}`) })
-  // A report already deleted elsewhere answers 404; refreshing still drops it from the list.
-  const del = useMutation({ mutationFn: (id: number) => api.deleteReport(id), onSettled: () => qc.invalidateQueries({ queryKey: ['reports'] }) })
   // Reports are frozen snapshots that cannot be recreated, so deleting one asks first.
   const [confirming, setConfirming] = useState<number | null>(null)
+  // Each row tracks its own delete, so a slow one does not spin or close another row's confirmation.
+  const [deleting, setDeleting] = useState<ReadonlySet<number>>(new Set())
+  const del = useMutation({
+    mutationFn: (id: number) => api.deleteReport(id),
+    onMutate: id => setDeleting(s => new Set(s).add(id)),
+    onSettled: (_data, _error, id) => {
+      // A report already deleted elsewhere answers 404; refreshing still drops it from the list.
+      qc.invalidateQueries({ queryKey: ['reports'] })
+      setDeleting(s => { const next = new Set(s); next.delete(id); return next })
+      setConfirming(c => (c === id ? null : c))
+    },
+  })
   const cancelDelete = (id: number) => { setConfirming(null); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`[data-report-delete="${id}"]`)?.focus()) }
 
   if (loading) return <Loading />
@@ -54,10 +64,10 @@ export default function Reports() {
             <Badge className={r.status === 'ready' ? 'bg-accent/15 text-accent' : r.status === 'failed' ? 'bg-bad/15 text-bad' : 'bg-accent-ink/20 text-accent-ink'}>
               {r.status === 'analyzing' ? `analysing ${r.analyzed_games}/${r.total_games}` : r.status}
             </Badge>
-            {confirming === r.id
-              ? <span className="flex items-center gap-2" onKeyDown={e => { if (e.key === 'Escape') cancelDelete(r.id) }}>
-                  <Button size="sm" variant="danger" loading={del.isPending} onClick={() => del.mutate(r.id, { onSettled: () => setConfirming(null) })}>Delete</Button>
-                  <Button size="sm" variant="ghost" autoFocus onClick={() => cancelDelete(r.id)}>Cancel</Button>
+            {confirming === r.id || deleting.has(r.id)
+              ? <span className="flex items-center gap-2" onKeyDown={e => { if (e.key === 'Escape' && !deleting.has(r.id)) cancelDelete(r.id) }}>
+                  <Button size="sm" variant="danger" loading={deleting.has(r.id)} onClick={() => del.mutate(r.id)}>Delete</Button>
+                  <Button size="sm" variant="ghost" autoFocus disabled={deleting.has(r.id)} onClick={() => cancelDelete(r.id)}>Cancel</Button>
                 </span>
               : <Button size="sm" variant="ghost" data-report-delete={r.id} onClick={() => setConfirming(r.id)} aria-label="Delete report"><Trash2 className="h-4 w-4" /></Button>}
           </div>

@@ -111,3 +111,21 @@ export function moveLabel(ply: number, san: string, fen?: string | null) {
   return `${Math.ceil(ply / 2)}${ply % 2 ? '.' : '…'} ${san}`
 }
 
+
+/** The clock each side starts with, in seconds ("180+2" → 180). Daily, untimed and other forms have none. */
+export function startingClock(tc: string | null | undefined): number | null {
+  const live = /^(\d+)(?:\+\d+(?:\.\d+)?)?$/.exec(tc ?? '')
+  const base = live ? Number(live[1]) : 0
+  return base > 0 ? base : null
+}
+
+/**
+ * A side's clock before it has moved: the base time, if the game records clocks at all.
+ * Once the side has moved its own recorded clock applies, so this is null.
+ */
+export function clockBeforeFirstMove(moves: { color: 'w' | 'b'; clock?: number | null }[], ply: number, side: 'white' | 'black', tc: string | null | undefined): number | null {
+  const c = side === 'white' ? 'w' : 'b'
+  if (moves.slice(0, ply).some(m => m.color === c)) return null
+  if (!moves.some(m => m.clock !== null && m.clock !== undefined)) return null
+  return startingClock(tc)
+}

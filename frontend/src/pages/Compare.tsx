@@ -11,6 +11,7 @@ import { Card, Empty, ErrorNote, Loading, Select } from '../components/ui'
 import { useAccount } from '../lib/account-context'
 import { api } from '../lib/api'
 import { PHASE_LABEL } from '../lib/classification'
+import { difference, knownAccount } from '../lib/compare'
 import type { Insights } from '../lib/types'
 import { insightPollInterval } from '../lib/insight-query'
 
@@ -89,8 +90,8 @@ export default function Compare() {
     setSp(next, { replace: true })
   }
   const setA = save('a'), setB = save('b')
-  const segA = { ...a, accountId: a.accountId ?? account?.id ?? null }
-  const segB = { ...b, accountId: b.accountId ?? account?.id ?? null }
+  const segA = { ...a, accountId: knownAccount(a.accountId, accounts) ?? account?.id ?? null }
+  const segB = { ...b, accountId: knownAccount(b.accountId, accounts) ?? account?.id ?? null }
   const qa = useSegment(segA)
   const qb = useSegment(segB)
   if (loading) return <Loading />
@@ -111,16 +112,13 @@ export default function Compare() {
               <thead><tr className="border-b border-line text-left text-[12.5px] text-fg-3"><th className="px-5 py-2 font-medium">Metric</th><th className="px-3 py-2 text-right font-medium">A</th><th className="px-3 py-2 text-right font-medium">B</th><th className="px-5 py-2 text-right font-medium">A − B</th></tr></thead>
               <tbody>
                 {rows.map(r => {
-                  const d = r.a !== null && r.a !== undefined && r.b !== null && r.b !== undefined ? r.a - r.b : null
-                  const good = d !== null && d !== 0 && ((r.better === 'higher') === d > 0)
+                  const d = difference(r.a, r.b, r.digits ?? 1, r.better, r.unit)
                   return (
                     <tr key={r.label} className="border-b border-line/50 last:border-0">
                       <td className="px-5 py-2">{r.label}</td>
                       <td className="px-3 py-2 text-right tnum">{r.a !== null && r.a !== undefined ? `${r.a.toFixed(r.digits ?? 1)}${r.unit ?? ''}` : '—'}</td>
                       <td className="px-3 py-2 text-right tnum">{r.b !== null && r.b !== undefined ? `${r.b.toFixed(r.digits ?? 1)}${r.unit ?? ''}` : '—'}</td>
-                      <td className={clsx('px-5 py-2 text-right font-semibold tnum', d === null || Math.abs(d) < 1e-9 ? 'text-fg-3' : good ? 'text-good' : 'text-bad')}>
-                        {d === null ? '—' : `${d > 0 ? '+' : ''}${d.toFixed(r.digits ?? 1)}${r.unit ?? ''}`}
-                      </td>
+                      <td className={clsx('px-5 py-2 text-right font-semibold tnum', d.tone === 'good' ? 'text-good' : d.tone === 'bad' ? 'text-bad' : 'text-fg-3')}>{d.text}</td>
                     </tr>
                   )
                 })}

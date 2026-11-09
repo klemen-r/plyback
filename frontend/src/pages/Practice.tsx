@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import Board from '../components/Board'
 import ClassIcon from '../components/ClassIcon'
+import PromotionPicker, { type Promotion } from '../components/PromotionPicker'
 import { Button, Card, Empty, ErrorNote, Input, Loading, PageHeader, Select, Tabs } from '../components/ui'
 import { useAccount } from '../lib/account-context'
 import { api } from '../lib/api'
@@ -19,7 +20,6 @@ type Kind = 'all' | PracticeKind
 type Phase = 'all' | PracticePhase
 type Theme = 'all' | PracticeTheme
 type Range = 'all' | 'today' | '7' | '30'
-type Promotion = 'q' | 'r' | 'b' | 'n'
 type Status = 'solving' | 'checking' | 'solved' | 'revealed'
 
 const KINDS: { value: Kind; label: string }[] = [
@@ -504,18 +504,8 @@ function PracticeSession() {
             <div className="relative mx-auto w-full min-w-[280px] max-w-[620px] lg:max-w-[min(640px,calc(100vh-18.5rem))]">
               <Board fen={fen!} orientation={item.color} lastMove={lastMove} shapes={shapes} nonce={nonce}
                 interactive={canMove} onMove={onBoardMove} />
-              {promotion && (
-                // Over the board, so the picker is in view on a phone too.
-                <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/25 p-4 backdrop-blur-[2px]" onClick={cancelPromotion}>
-                  <div className="flex flex-wrap items-center justify-center gap-2 rounded-lg border border-line bg-surface/90 p-3 shadow-lg backdrop-blur-xl backdrop-saturate-150"
-                    role="group" aria-label="Promote pawn" onClick={e => e.stopPropagation()}>
-                    <span className="w-full text-center text-[13px] text-fg-2">Promote to</span>
-                    {([['q', 'Queen'], ['r', 'Rook'], ['b', 'Bishop'], ['n', 'Knight']] as const).map(([p, label]) =>
-                      <Button key={p} onClick={() => { const { orig, dest } = promotion; setPromotion(null); void onMove(orig, dest, p) }}>{label}</Button>)}
-                    <Button variant="ghost" onClick={cancelPromotion}>Cancel</Button>
-                  </div>
-                </div>
-              )}
+              {promotion && <PromotionPicker onCancel={cancelPromotion}
+                onPick={p => { const { orig, dest } = promotion; setPromotion(null); void onMove(orig, dest, p) }} />}
             </div>
 
             <div className="flex min-w-0 flex-col gap-4">
