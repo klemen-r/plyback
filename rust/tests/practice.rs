@@ -260,6 +260,16 @@ fn answers_are_checked_and_scheduled() {
             [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?))
         .unwrap();
     assert_eq!((attempts, correct, lapses), (2, 1, 0));
+    // Answering it correctly again before it is due, after the 10-minute guard (the Today range
+    // lists positions whether due or not), is practice: it stays in its box.
+    db.execute(
+        "UPDATE practice_items SET last_seen_at=last_seen_at-700",
+        &[],
+    )
+    .unwrap();
+    let (_, early) = post(&db, path, json!({"uci": "h5f7"})).unwrap();
+    assert_eq!(early["correct"], true);
+    assert_eq!(early["box"], 1);
     // A due position comes before new ones.
     db.execute("UPDATE practice_items SET due_at=0", &[])
         .unwrap();

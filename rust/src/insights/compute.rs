@@ -480,6 +480,9 @@ fn load(db: &Database, account: i64, filters: &Value, report_id: Option<i64>) ->
     } else {
         where_clause(account, filters)
     };
+    // Variants (crazyhouse, 3-check, ...) are not reviewed and have their own rating pools, so
+    // they stay out of every statistic, as they already do in scope_game_ids and report counts.
+    clauses.push("g.rules IN ('chess','chess960')".into());
     // A frozen report includes only the original rows, even after account imports or ID reuse.
     if let Some(rid) = report_id {
         clauses.push("EXISTS (SELECT 1 FROM report_games rg WHERE rg.report_id=? AND rg.game_id=g.id AND rg.game_uuid=g.uuid)".into());

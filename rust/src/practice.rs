@@ -370,7 +370,13 @@ fn answer(db: &Database, account: i64, game: i64, ply: i64, body: &Value) -> Api
     let correct = played.as_deref() == Some(candidate.best_uci.as_str());
     let at = now();
     let before = candidate.state;
-    let (box_, due_at) = schedule(before.map_or(0, |s| s.box_), correct, at);
+    let (box_, due_at) = match before {
+        // A correct answer before the position is due (the Today / recent ranges list positions
+        // whether due or not) is extra practice: it keeps the schedule instead of moving the
+        // position up a box, so repeating a day's games cannot mark it mastered within an hour.
+        Some(s) if correct && s.due_at > at => (s.box_, s.due_at),
+        _ => schedule(before.map_or(0, |s| s.box_), correct, at),
+    };
     db.transaction(|tx| {
         tx.execute(
             "INSERT INTO practice_items
