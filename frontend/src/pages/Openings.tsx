@@ -151,8 +151,9 @@ export default function Openings() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.metaKey || e.ctrlKey) return
-      if ((e.key === 'ArrowLeft' || e.key === 'Backspace') && line.length) { e.preventDefault(); go(line.slice(0, -1)) }
+      // Alt+← is the browser's Back; Home at the start position scrolls the page as usual.
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented || !line.length) return
+      if (e.key === 'ArrowLeft' || e.key === 'Backspace') { e.preventDefault(); go(line.slice(0, -1)) }
       else if (e.key === 'Home') { e.preventDefault(); go([]) }
     }
     window.addEventListener('keydown', onKey)

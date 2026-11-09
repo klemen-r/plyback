@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { BarChart3, FileText, Sparkles } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import FilterBar from '../components/FilterBar'
 import { DEFAULT_FILTERS, restoreFilters, toInsightFilters, type FilterState } from '../lib/filters'
@@ -36,6 +36,10 @@ export default function InsightsPage() {
     mutationFn: () => api.analyzeScope(account!.id, filters),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['status'] }); qc.invalidateQueries({ queryKey: ['accounts'] }); qc.invalidateQueries({ queryKey: ['insights'] }) },
   })
+  // "Queued N" and errors belong to the account and filters they were made for.
+  const scopeKey = JSON.stringify([account?.id, filters])
+  const resetAnalyze = analyze.reset
+  useEffect(() => { resetAnalyze() }, [scopeKey, resetAnalyze])
   const report = useMutation({
     mutationFn: () => api.createReport(account!.id, filters),
     onSuccess: r => nav(`/reports/${r.id}`),

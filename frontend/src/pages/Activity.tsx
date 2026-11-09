@@ -43,7 +43,7 @@ export default function ActivityPage() {
               : <span className="text-xs text-fg-3">{PRIORITY[j.priority] ?? `p${j.priority}`} · d{j.depth}</span>}
           </Link>
         )) : <Empty title="Queue is empty">Nothing is waiting to be reviewed.</Empty>}
-        {d.queued > d.jobs.length && <p className="px-3 py-2 text-xs text-fg-3">…and {d.queued - d.jobs.filter(j => j.status === 'queued').length} more</p>}
+        {d.queued > d.jobs.filter(j => j.status === 'queued').length && <p className="px-3 py-2 text-xs text-fg-3">…and {d.queued - d.jobs.filter(j => j.status === 'queued').length} more</p>}
       </Card>
       {d.failed_jobs.length > 0 && (
         <Card title="Failed" bodyClass="p-2">

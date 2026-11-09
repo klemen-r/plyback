@@ -7,7 +7,7 @@ import { LineChart } from '../components/charts'
 import GameTable from '../components/GameTable'
 import LatestGame from '../components/LatestGame'
 import { Mark } from '../components/Logo'
-import { Banner, Button, Card, Confidence, Empty, Figure, Figures, Loading, Meter, PageHeader, Progress, Section, Tabs } from '../components/ui'
+import { Banner, Button, ErrorNote, Card, Confidence, Empty, Figure, Figures, Loading, Meter, PageHeader, Progress, Section, Tabs } from '../components/ui'
 import { useAccount } from '../lib/account-context'
 import { api } from '../lib/api'
 import { DAY, fmtDate, fmtDuration, nowTs, num, pct, timeAgo } from '../lib/format'
@@ -67,6 +67,7 @@ export default function Overview() {
         description={<>{ratingLine || 'No ratings yet'} <span className="text-fg-3">· synced {timeAgo(account.last_sync_at)}</span></>}
         actions={<Button onClick={() => sync.mutate()} loading={sync.isPending || account.sync_status === 'syncing'}><RefreshCw className="h-3.5 w-3.5" />Sync now</Button>} />
 
+      {sync.error && <ErrorNote error={sync.error} />}
       {account.sync_status === 'error' && <Banner tone="warn">Last sync failed: {account.sync_error} It will retry automatically.</Banner>}
       {(account.queued > 0 || (q && q.running > 0)) && (
         <Banner actions={<Link to="/activity" className="text-[13px] text-fg-2 hover:text-fg">Details</Link>}>

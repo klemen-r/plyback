@@ -149,8 +149,12 @@ function FragmentRows({ f, open, toggle, color }: { f: OpeningFamily; open: bool
       <tr className="cursor-pointer border-b border-line/60 hover:bg-subtle/60" onClick={toggle}>
         <td className="py-2.5 pr-2">
           <div className="flex items-center gap-2">
-            {open ? <ChevronDown className="h-4 w-4 text-fg-3" /> : <ChevronRight className="h-4 w-4 text-fg-3" />}
-            <span className="font-medium">{f.family}</span>
+            {/* The row is clickable for the mouse; the button makes it reachable from the keyboard. */}
+            <button type="button" aria-expanded={open} onClick={e => { e.stopPropagation(); toggle() }}
+              className="flex items-center gap-2 rounded-sm text-left focus-visible:outline-2 focus-visible:outline-accent-ink">
+              {open ? <ChevronDown className="h-4 w-4 text-fg-3" /> : <ChevronRight className="h-4 w-4 text-fg-3" />}
+              <span className="font-medium">{f.family}</span>
+            </button>
             {f.flag === 'weakness' && <Badge className="bg-bad/15 text-bad">weak spot</Badge>}
             {f.flag === 'strength' && <Badge className="bg-accent/15 text-accent">strength</Badge>}
             {f.confidence === 'insufficient' && <span className="text-[11px] text-fg-3">few games</span>}

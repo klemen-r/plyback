@@ -274,7 +274,8 @@ function GameReviewContent() {
     for (let i = Math.min(ply, n) - 1; i >= 0; i--) if (moves[i].color === c) return moves[i].clock ?? null
     return null
   }
-  const evalNow = inVar || !analysis ? live.data?.lines?.[0]?.cp ?? (analysis ? analysis.evals[ply] : null) : analysis.evals[ply]
+  // In a variation the main line's eval belongs to another position: show nothing until the engine answers.
+  const evalNow = inVar ? live.data?.lines?.[0]?.cp ?? null : analysis ? analysis.evals[ply] : live.data?.lines?.[0]?.cp ?? null
   const job = g.job
   const ending = endingOf(g)
 
@@ -314,6 +315,7 @@ function GameReviewContent() {
           {(!job || job.status === 'failed') && !g.pgn_error && (g.rules === 'chess' || g.rules === 'chess960') && (
             <Button variant="primary" size="sm" loading={analyze.isPending} onClick={() => analyze.mutate({})}><Sparkles className="h-4 w-4" />Analyse now</Button>
           )}
+          {analyze.error && <ErrorNote error={analyze.error} />}
         </div>
       )}
       {!canExplore && <p className="mb-4 rounded-lg border border-line bg-surface p-3 text-sm text-fg-2">{g.rules === 'chess960'
@@ -438,6 +440,7 @@ function GameReviewContent() {
                   <RefreshCw className="h-3.5 w-3.5" />Deeper (d{Math.min(30, analysis.depth + 4)})
                 </Button>
               </span>
+              {analyze.error && <div className="w-full"><ErrorNote error={analyze.error} /></div>}
             </div>
           )}
         </div>

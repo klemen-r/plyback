@@ -41,10 +41,10 @@ export default function ImportPgn() {
       <PageHeader title="Import PGN" subtitle="Review games from anywhere: paste PGN text or upload a .pgn file (multiple games supported). Games whose players match a connected account count toward its insights." />
       <Card>
         <div className="space-y-4">
-          <label className="flex cursor-pointer items-center justify-center gap-3 rounded-lg border border-dashed border-line-strong bg-subtle px-4 py-6 text-sm text-fg-2 transition-colors hover:border-fg-3 hover:text-fg"
+          <label className="flex cursor-pointer items-center justify-center gap-3 rounded-lg border border-dashed border-line-strong bg-subtle px-4 py-6 text-sm text-fg-2 transition-colors hover:border-fg-3 hover:text-fg focus-within:border-accent-ink focus-within:text-fg"
             onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); onFile(e.dataTransfer.files[0]) }}>
             <FileUp className="h-5 w-5" /> Drop a .pgn file here or click to choose
-            <input type="file" accept=".pgn,.txt,application/x-chess-pgn" className="hidden" onChange={e => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ''; void onFile(f) }} />
+            <input type="file" accept=".pgn,.txt,application/x-chess-pgn" className="sr-only" onChange={e => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ''; void onFile(f) }} />
           </label>
           {fileError && <ErrorNote error={fileError} />}
           {file ? (

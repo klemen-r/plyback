@@ -66,8 +66,13 @@ export default function Games() {
     if (k !== 'page') next.delete('page')
     setSp(next, { replace: true })
   }
+  // The box follows the URL when it changes from outside, e.g. the Games tab clears ?q=.
+  const urlQ = sp.get('q') ?? ''
+  const [shownQ, setShownQ] = useState(urlQ)
+  const [pushed, setPushed] = useState(urlQ)
+  if (urlQ !== shownQ) { setShownQ(urlQ); if (urlQ !== pushed) setSearch(urlQ) }
   useEffect(() => {
-    const t = setTimeout(() => { if (search !== get('q')) set('q', search) }, 300)
+    const t = setTimeout(() => { if (search !== get('q')) { setPushed(search); set('q', search) } }, 300)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search])
@@ -91,6 +96,7 @@ export default function Games() {
     if (shownAccount.current === account?.id) return
     const switched = shownAccount.current !== undefined
     shownAccount.current = account?.id
+    setSelected(null)
     // Not on the first load, so a link to a later page still works.
     if (switched && sp.has('page')) set('page', '')
     // eslint-disable-next-line react-hooks/exhaustive-deps

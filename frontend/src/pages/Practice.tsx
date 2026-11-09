@@ -196,6 +196,9 @@ function PracticeSession() {
     refetchOnWindowFocus: false,
     refetchOnMount: false,
     refetchOnReconnect: false,
+    // Leaving the page or switching a filter away drops the batch, so coming back fetches the
+    // positions still due instead of showing ones answered a minute ago as new.
+    gcTime: 0,
   })
   const items = queue.data?.items ?? []
   const item: PracticeItem | undefined = items[index]
@@ -386,7 +389,9 @@ function PracticeSession() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.metaKey || e.ctrlKey) return
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return
+      // Enter on a focused link or button activates it; it is not "next puzzle".
+      if (e.key === 'Enter' && e.target instanceof Element && e.target.closest('a,button,textarea,[role="dialog"]')) return
       if (promotion) { if (e.key === 'Escape') { e.preventDefault(); cancelPromotion() } return }
       if (!done) return
       if (e.key === 'Enter' || e.key === 'n') { e.preventDefault(); next() }
