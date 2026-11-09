@@ -189,7 +189,9 @@ pub fn game_row_from_pgn(text: &str) -> Result<Value> {
         "url":safe_url(get("Link")),"source":"pgn","pgn":format!("{}\n",text.trim()),"rules":game.rules,
         "time_control":tc,"time_class":tc_class,"rated":null,
         "start_time":timestamp(get("UTCDate"),get("UTCTime")),
-        "end_time":timestamp(get("EndDate").or(get("UTCDate")).or(get("Date")),Some(get("EndTime").unwrap_or("00:00:00").split(' ').next().unwrap_or("00:00:00"))),
+        // Without EndTime (Lichess and most other sites), the start time is a far better end time
+        // than midnight, which put every such game in the 00:00 slot and broke session detection.
+        "end_time":timestamp(get("EndDate").or(get("UTCDate")).or(get("Date")),Some(get("EndTime").or(get("UTCTime")).unwrap_or("00:00:00").split(' ').next().unwrap_or("00:00:00"))),
         "white_username":get("White"),"white_rating":get("WhiteElo").and_then(|s|s.parse::<i64>().ok()),"white_result":wr,
         "black_username":get("Black"),"black_rating":get("BlackElo").and_then(|s|s.parse::<i64>().ok()),"black_result":br,
         "result":result,"termination":get("Termination"),"eco":get("ECO"),"eco_url":get("ECOUrl"),
@@ -499,6 +501,27 @@ mod tests {
             0
         );
         assert_eq!(db.scalar("SELECT COUNT(*) FROM moves", &[]).unwrap(), 0);
+    }
+    #[test]
+    fn imported_games_without_end_time_end_at_their_start_time() {
+        let row = game_row_from_pgn(
+            "[UTCDate \"2026.11.01\"]
+[UTCTime \"18:30:05\"]
+
+1. e4 e5 1-0",
+        )
+        .unwrap();
+        assert_eq!(row["start_time"], 1_793_557_805);
+        assert_eq!(row["end_time"], row["start_time"]);
+        let row = game_row_from_pgn(
+            "[UTCDate \"2026.11.01\"]
+[UTCTime \"18:30:05\"]
+[EndTime \"18:40:00 GMT+0000\"]
+
+1. e4 e5 1-0",
+        )
+        .unwrap();
+        assert_eq!(row["end_time"], 1_793_558_400);
     }
     #[test]
     fn imported_links_cannot_use_executable_schemes() {
