@@ -737,7 +737,7 @@ fn overview(games: &[&Game], analyzed: &[&Game]) -> Value {
     });
     extend(
         wdl(games),
-        json!({"white":wdl(&games.iter().copied().filter(|g|g.color=="white").collect::<Vec<_>>()),"black":wdl(&games.iter().copied().filter(|g|g.color=="black").collect::<Vec<_>>()),"by_time_class":by_tc,"analyzed":analyzed.len(),"accuracy":avg(analyzed.iter().map(|g|g.accuracy)),"opp_accuracy":avg(analyzed.iter().map(|g|g.opp_accuracy)),"acpl":avg(analyzed.iter().map(|g|g.acpl)),"chesscom_accuracy":avg(games.iter().map(|g|g.chesscom_accuracy)),"chesscom_accuracy_games":games.iter().filter(|g|g.chesscom_accuracy.is_some()).count(),"performance_rating":perf,"avg_opponent_rating":avg_opp.map(|a|round(a,0)),"per_game":count(false),"opp_per_game":count(true),"first_game":games.first().map(|g|g.end),"last_game":games.last().map(|g|g.end)}),
+        json!({"white":wdl(&games.iter().copied().filter(|g|g.color=="white").collect::<Vec<_>>()),"black":wdl(&games.iter().copied().filter(|g|g.color=="black").collect::<Vec<_>>()),"by_time_class":by_tc,"analyzed":analyzed.len(),"accuracy":avg(analyzed.iter().map(|g|g.accuracy)),"opp_accuracy":avg(analyzed.iter().map(|g|g.opp_accuracy)),"acpl":avg(analyzed.iter().map(|g|g.acpl)),"chesscom_accuracy":avg(games.iter().map(|g|g.chesscom_accuracy)),"chesscom_accuracy_games":games.iter().filter(|g|g.chesscom_accuracy.is_some()).count(),"performance_rating":perf,"avg_opponent_rating":avg_opp.map(|a|round(a,0)),"per_game":count(false),"opp_per_game":count(true),"first_game":games.iter().find(|g|g.end>0).map(|g|g.end),"last_game":games.last().map(|g|g.end)}),
     )
 }
 
@@ -912,6 +912,14 @@ fn sessions(games: &[&Game]) -> Value {
 }
 
 fn trend(games: &[&Game]) -> Value {
+    // Games without an end time (a PGN with Date "????.??.??") sort first as 0: they belong to no
+    // period and must not stretch the span to 1970 or add a "1970-01" row.
+    let dated = games
+        .iter()
+        .copied()
+        .filter(|g| g.end > 0)
+        .collect::<Vec<_>>();
+    let games = dated.as_slice();
     if games.is_empty() {
         return json!([]);
     }
