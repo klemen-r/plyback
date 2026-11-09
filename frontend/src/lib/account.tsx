@@ -52,7 +52,10 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     try { localStorage.setItem(KEY, String(id)) } catch { /* storage unavailable */ }
   }
   return (
-    <AccountCtx.Provider value={{ accounts, account, loading: q.isLoading, error: q.error, select }}>
+    // Until the first successful answer the accounts are unknown, not absent: a failed first
+    // request must not show the first-run welcome or "Connect account". The shell shows the
+    // error and the 15 s poll recovers.
+    <AccountCtx.Provider value={{ accounts, account, loading: q.data === undefined, error: q.error, select }}>
       {children}
     </AccountCtx.Provider>
   )

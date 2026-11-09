@@ -1,26 +1,27 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
 import { Button, Empty, ErrorNote, Loading } from './components/ui'
 import { api, authEvents } from './lib/api'
 import { AccountProvider } from './lib/account'
+import { lazyPage } from './lib/lazy-page'
 import Login from './pages/Login'
 
-const Overview = lazy(() => import('./pages/Overview'))
-const Accounts = lazy(() => import('./pages/Accounts'))
-const Games = lazy(() => import('./pages/Games'))
-const GameReview = lazy(() => import('./pages/GameReview'))
-const InsightsPage = lazy(() => import('./pages/Insights'))
-const Practice = lazy(() => import('./pages/Practice'))
-const Openings = lazy(() => import('./pages/Openings'))
-const Compare = lazy(() => import('./pages/Compare'))
-const Reports = lazy(() => import('./pages/Reports'))
-const ReportView = lazy(() => import('./pages/ReportView'))
-const ImportPgn = lazy(() => import('./pages/ImportPgn'))
-const ActivityPage = lazy(() => import('./pages/Activity'))
-const SettingsPage = lazy(() => import('./pages/Settings'))
-const Methodology = lazy(() => import('./pages/Methodology'))
+const Overview = lazyPage(() => import('./pages/Overview'))
+const Accounts = lazyPage(() => import('./pages/Accounts'))
+const Games = lazyPage(() => import('./pages/Games'))
+const GameReview = lazyPage(() => import('./pages/GameReview'))
+const InsightsPage = lazyPage(() => import('./pages/Insights'))
+const Practice = lazyPage(() => import('./pages/Practice'))
+const Openings = lazyPage(() => import('./pages/Openings'))
+const Compare = lazyPage(() => import('./pages/Compare'))
+const Reports = lazyPage(() => import('./pages/Reports'))
+const ReportView = lazyPage(() => import('./pages/ReportView'))
+const ImportPgn = lazyPage(() => import('./pages/ImportPgn'))
+const ActivityPage = lazyPage(() => import('./pages/Activity'))
+const SettingsPage = lazyPage(() => import('./pages/Settings'))
+const Methodology = lazyPage(() => import('./pages/Methodology'))
 
 export default function App() {
   const qc = useQueryClient()

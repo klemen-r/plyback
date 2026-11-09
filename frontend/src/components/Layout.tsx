@@ -88,20 +88,22 @@ function AccountMenu() {
 }
 
 function EngineStatus() {
-  const { data } = useQuery({ queryKey: ['status'], queryFn: api.status })
-  if (!data) return null
-  const q = data.queue
-  const busy = q.running > 0 || q.queued > 0
-  const state = data.engine.error ? 'error' : q.paused ? 'paused' : busy ? 'busy' : 'idle'
+  const { data, isError, error } = useQuery({ queryKey: ['status'], queryFn: api.status })
+  // A failed poll keeps the last data; the header must not keep saying "Up to date" over it.
+  if (!data && !isError) return null
+  const q = data?.queue
+  const busy = !!q && (q.running > 0 || q.queued > 0)
+  const state = isError ? 'offline' : data?.engine.error ? 'error' : q?.paused ? 'paused' : busy ? 'busy' : 'idle'
   const text = {
+    offline: (error as { status?: number } | null)?.status === 0 ? 'Server not reachable' : 'Status unavailable',
     error: 'Engine unavailable',
     paused: 'Analysis paused',
-    busy: `Analysing · ${q.queued + q.running} left${q.eta_seconds ? ` · ~${fmtDuration(q.eta_seconds)}` : ''}`,
+    busy: q ? `Analysing · ${q.queued + q.running} left${q.eta_seconds ? ` · ~${fmtDuration(q.eta_seconds)}` : ''}` : '',
     idle: 'Up to date',
   }[state]
   return (
-    <Link to="/activity" aria-label={text} className="flex h-10 min-w-10 items-center justify-center gap-2 rounded-md px-2 text-[13px] text-fg-2 transition-colors hover:bg-hover hover:text-fg md:h-auto md:min-w-0 md:py-1" title={data.engine.name ?? 'Stockfish'}>
-      <span className={clsx('h-2 w-2 rounded-full', state === 'error' && 'bg-bad', state === 'paused' && 'bg-warn',
+    <Link to="/activity" aria-label={text} className="flex h-10 min-w-10 items-center justify-center gap-2 rounded-md px-2 text-[13px] text-fg-2 transition-colors hover:bg-hover hover:text-fg md:h-auto md:min-w-0 md:py-1" title={data?.engine.name ?? 'Stockfish'}>
+      <span className={clsx('h-2 w-2 rounded-full', (state === 'error' || state === 'offline') && 'bg-bad', state === 'paused' && 'bg-warn',
         state === 'busy' && 'animate-pulse bg-accent-ink', state === 'idle' && 'bg-good')} />
       <span className="tnum max-md:hidden">{text}</span>
     </Link>

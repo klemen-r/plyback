@@ -79,7 +79,7 @@ function SegmentPicker({ label, seg, onChange, color }: { label: string; seg: Se
 }
 
 export default function Compare() {
-  const { account, accounts } = useAccount()
+  const { account, accounts, loading } = useAccount()
   const [sp, setSp] = useSearchParams()
   const a = readSegment(sp.get('a'), { accountId: null, filters: { ...DEFAULT_FILTERS, period: '30' } })
   const b = readSegment(sp.get('b'), { accountId: null, filters: { ...DEFAULT_FILTERS, period: 'all' } })
@@ -93,6 +93,7 @@ export default function Compare() {
   const segB = { ...b, accountId: b.accountId ?? account?.id ?? null }
   const qa = useSegment(segA)
   const qb = useSegment(segB)
+  if (loading) return <Loading />
   if (!accounts.length) return <Empty icon={<GitCompare className="h-10 w-10" />} title="Connect an account to compare segments" />
 
   const rows = qa.data && qb.data ? metrics(qa.data, qb.data) : []

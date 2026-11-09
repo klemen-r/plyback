@@ -10,7 +10,7 @@ import { api } from '../lib/api'
 import { fmtDate } from '../lib/format'
 
 export default function Reports() {
-  const { account } = useAccount()
+  const { account, loading } = useAccount()
   const qc = useQueryClient()
   const nav = useNavigate()
   const [fs, setFs] = useState<FilterState>(DEFAULT_FILTERS)
@@ -25,6 +25,7 @@ export default function Reports() {
   const [confirming, setConfirming] = useState<number | null>(null)
   const cancelDelete = (id: number) => { setConfirming(null); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`[data-report-delete="${id}"]`)?.focus()) }
 
+  if (loading) return <Loading />
   if (!account) return <Empty icon={<FileText className="h-10 w-10" />} title="Connect a Chess.com account first" action={<Link to="/accounts"><Button variant="primary">Connect account</Button></Link>} />
   return (
     <div className="appear space-y-6">
