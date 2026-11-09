@@ -324,7 +324,10 @@ pub fn link_games(
     username: &str,
     rows: &[Value],
     ids: &[(i64, bool)],
-) -> Result<()> {
+) -> Result<Vec<bool>> {
+    // For each row, whether it was newly linked to this account. A game another tracked account
+    // already imported is not new to the database, but it is new to this account.
+    let mut linked = Vec::with_capacity(rows.len());
     for (row, (id, _)) in rows.iter().zip(ids) {
         let color = if row["white_username"]
             .as_str()
@@ -339,14 +342,17 @@ pub fn link_games(
         {
             "black"
         } else {
+            linked.push(false);
             continue;
         };
-        tx.execute(
-            "INSERT OR IGNORE INTO account_games(account_id,game_id,color) VALUES(?,?,?)",
-            rusqlite::params![account_id, id, color],
-        )?;
+        linked.push(
+            tx.execute(
+                "INSERT OR IGNORE INTO account_games(account_id,game_id,color) VALUES(?,?,?)",
+                rusqlite::params![account_id, id, color],
+            )? > 0,
+        );
     }
-    Ok(())
+    Ok(linked)
 }
 
 pub struct AnalysisClaim<'a> {

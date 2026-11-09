@@ -618,6 +618,8 @@ impl Services {
         periods.sort_by(|a, b| b.0.cmp(&a.0));
         periods.dedup_by(|a, b| a.0 == b.0);
         let mut new_count = 0;
+        let mut fresh_count = 0;
+        let last_sync = account["last_sync_at"].as_i64();
         let mut interrupted = false;
         for (period, url) in periods {
             if self.stop.load(Ordering::SeqCst) {
@@ -682,41 +684,36 @@ impl Services {
                 for batch in rows.chunks(128) {
                     if self.stop.load(Ordering::SeqCst) { return Err(api_error(503,"Sync cancelled")); }
                     let inserted=store::upsert_games(tx,batch)?;
-                    store::link_games(tx,id,username,batch,&inserted)?;
-                    results.extend(inserted);
+                    results.extend(inserted.iter().zip(store::link_games(tx,id,username,batch,&inserted)?).map(|((game_id,_),linked)|(*game_id,linked)));
                 }
                 tx.execute("INSERT INTO archives(account_id,period,url,etag,last_modified,fetched_at,game_count,complete) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(account_id,period) DO UPDATE SET etag=excluded.etag,last_modified=excluded.last_modified,fetched_at=excluded.fetched_at,game_count=excluded.game_count,complete=excluded.complete",rusqlite::params![id,period,url,response.etag,response.last_modified,now(),rows.len()as i64,complete])?;Ok(results)
             })? else { return Ok(()); };
-            let linked = rows
-                .iter()
-                .zip(results)
-                .filter_map(|(row, (game_id, new))| {
-                    let belongs = ["white_username", "black_username"].iter().any(|key| {
-                        row[*key]
-                            .as_str()
-                            .is_some_and(|name| name.eq_ignore_ascii_case(username))
-                    });
-                    (new && belongs).then_some(game_id)
-                })
-                .collect::<Vec<_>>();
-            new_count += linked.len();
-            if (initial && account["analyze_history"] == 1)
-                || (!initial && account["auto_analyze"] == 1)
-            {
-                self.enqueue_for_account(
-                    id,
-                    &claim.generation,
-                    &linked,
-                    if initial {
-                        PRIORITY_HISTORY
-                    } else {
-                        PRIORITY_NEW
-                    },
-                )?;
+            // Games newly linked to this account. During the first import, or when a changed
+            // "import since" date backfills older archives, a game is history unless it ended
+            // after the previous sync: that one was played since and is new.
+            let (mut history, mut fresh) = (Vec::new(), Vec::new());
+            for (row, (game_id, linked)) in rows.iter().zip(results) {
+                if !linked {
+                    continue;
+                }
+                let ended = row["end_time"].as_i64().unwrap_or(0);
+                if initial && last_sync.is_none_or(|t| ended <= t) {
+                    history.push(game_id);
+                } else {
+                    fresh.push(game_id);
+                }
+            }
+            new_count += history.len() + fresh.len();
+            fresh_count += fresh.len();
+            if account["analyze_history"] == 1 && !history.is_empty() {
+                self.enqueue_for_account(id, &claim.generation, &history, PRIORITY_HISTORY)?;
+            }
+            if account["auto_analyze"] == 1 && !fresh.is_empty() {
+                self.enqueue_for_account(id, &claim.generation, &fresh, PRIORITY_NEW)?;
             }
         }
         if claim.transaction(self, |tx| {
-            tx.execute("UPDATE accounts SET last_sync_at=?,sync_status='idle',sync_error=NULL,history_complete=CASE WHEN ? THEN history_complete ELSE 1 END,last_new_game_at=CASE WHEN ? THEN ? ELSE last_new_game_at END WHERE id=?",rusqlite::params![now(),interrupted,new_count>0&&!initial,now(),id])?;
+            tx.execute("UPDATE accounts SET last_sync_at=?,sync_status='idle',sync_error=NULL,history_complete=CASE WHEN ? THEN history_complete ELSE 1 END,last_new_game_at=CASE WHEN ? THEN ? ELSE last_new_game_at END WHERE id=?",rusqlite::params![now(),interrupted,fresh_count>0,now(),id])?;
             if new_count > 0 { claim.event(tx, "info", &format!("Imported {new_count} game(s)"))?; }
             Ok(())
         })?.is_none() { return Ok(()); }
@@ -1128,6 +1125,88 @@ mod tests {
         assert_eq!(
             db.scalar("SELECT priority FROM jobs", &[]).unwrap(),
             PRIORITY_NEW
+        );
+    }
+    #[test]
+    fn games_new_to_the_account_are_new_after_a_changed_import_date_or_another_import() {
+        let server = FixtureServer::start();
+        let db = Arc::new(Database::open(":memory:").unwrap());
+        db.execute(
+            "INSERT INTO accounts(username,added_at,analyze_history,auto_analyze) VALUES('klemen_r',0,0,1)",
+            &[],
+        )
+        .unwrap();
+        let mut service = Arc::try_unwrap(Services::new(Arc::clone(&db)).unwrap())
+            .ok()
+            .unwrap();
+        service.client = ChessComClient {
+            base: Url::parse(&server.base).unwrap(),
+            client: OnceLock::new(),
+            serial: Mutex::new(None),
+        };
+        let sync = || {
+            service
+                .sync_account(&db.one("SELECT * FROM accounts", &[]).unwrap().unwrap())
+                .unwrap()
+        };
+        sync();
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM jobs", &[]).unwrap(), 0);
+        // A changed "import since" date re-imports history (what PATCH /accounts does). One old
+        // game is fetched again and stays history; the game played since the last sync is new.
+        let last = db.scalar("SELECT MAX(end_time) FROM games", &[]).unwrap();
+        db.execute(
+            "DELETE FROM account_games WHERE game_id=(SELECT MIN(id) FROM games)",
+            &[],
+        )
+        .unwrap();
+        db.execute(
+            "DELETE FROM games WHERE id=(SELECT MIN(id) FROM games)",
+            &[],
+        )
+        .unwrap();
+        db.execute(
+            "UPDATE accounts SET history_complete=0,last_sync_at=?",
+            &[last],
+        )
+        .unwrap();
+        db.execute("UPDATE archives SET complete=0", &[]).unwrap();
+        server.extra.store(true, Ordering::SeqCst);
+        sync();
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM games", &[]).unwrap(), 12);
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM jobs", &[]).unwrap(), 1);
+        assert_eq!(
+            db.scalar("SELECT priority FROM jobs", &[]).unwrap(),
+            PRIORITY_NEW
+        );
+        assert!(
+            !db.scalar("SELECT last_new_game_at FROM accounts", &[])
+                .unwrap()
+                .is_null()
+        );
+        // A game already in the database (imported for another account or from a PGN file) but
+        // not yet linked to this account is new to this account.
+        let shared = db
+            .scalar("SELECT MAX(game_id) FROM account_games WHERE game_id NOT IN (SELECT game_id FROM jobs)", &[])
+            .unwrap();
+        db.execute(
+            "DELETE FROM account_games WHERE game_id=?",
+            std::slice::from_ref(&shared),
+        )
+        .unwrap();
+        // Another account fetches its own archive, so no conditional request applies.
+        db.execute(
+            "UPDATE archives SET complete=0,etag=NULL,last_modified=NULL",
+            &[],
+        )
+        .unwrap();
+        sync();
+        assert_eq!(
+            db.scalar(
+                "SELECT COUNT(*) FROM jobs WHERE game_id=? AND priority=?",
+                &[shared, json!(PRIORITY_NEW)]
+            )
+            .unwrap(),
+            1
         );
     }
     #[test]
