@@ -456,7 +456,7 @@ function Results({ data }: { data: Insights }) {
             </tbody>
           </table>
         </Card>
-        <Card title="Sessions & tilt" subtitle={`${s.sessions} sessions (games < 30 min apart).`}>
+        <Card title="Sessions & tilt" subtitle={`${s.sessions} sessions: live games under 30 min apart (daily games left out).`}>
           <div className="space-y-2 text-sm">
             {(['win', 'loss', 'draw'] as const).map(k => (
               <div key={k} className="flex justify-between"><span className="text-fg-2">After a {k}</span><span className="tnum">{pct(s.after[k].score)} <span className="text-xs text-fg-3">({s.after[k].games})</span></span></div>

@@ -850,11 +850,18 @@ fn sessions(games: &[&Game]) -> Value {
     let mut idx = 0;
     let mut prev: Option<&Game> = None;
     for &g in games {
+        // A daily game lasts days, so it is not part of a sitting and must not become the
+        // "previous game" of the live game played next.
+        if g.row["time_class"] == "daily" {
+            continue;
+        }
         let start = g.row["start_time"]
             .as_i64()
             .filter(|t| *t != 0)
             .unwrap_or(g.end);
-        if prev.is_none_or(|p| g.end == 0 || start - p.end > 1800) {
+        // A game that started before the previous one ended (overlapping games) is not its
+        // continuation either.
+        if prev.is_none_or(|p| g.end == 0 || !(0..=1800).contains(&(start - p.end))) {
             n += 1;
             idx = 0;
         } else if let Some(p) = prev {

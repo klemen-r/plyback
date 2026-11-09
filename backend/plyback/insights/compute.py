@@ -558,8 +558,12 @@ def _sessions(games: list[G]) -> dict:
     prev: G | None = None
     idx = 0
     for g in games:
+        # A daily game lasts days: not part of a sitting, never the previous game of a live one.
+        if g.row.get("time_class") == "daily":
+            continue
         start = g.row.get("start_time") or g.end_time
-        if prev is None or not g.end_time or start - prev.end_time > 1800:
+        # A game that started before the previous one ended does not continue it either.
+        if prev is None or not g.end_time or not 0 <= start - prev.end_time <= 1800:
             sessions += 1
             idx = 0
         else:
