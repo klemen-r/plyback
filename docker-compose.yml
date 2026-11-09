@@ -4,8 +4,10 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # Required when the server is reachable from other machines. Change it.
-      PLYBACK_PASSWORD: ${PLYBACK_PASSWORD:?Set PLYBACK_PASSWORD}
+      # Initial password, needed on the first start: the server refuses network access
+      # until a password is saved. Later starts use the saved one, so other compose
+      # commands do not need it. Change it.
+      PLYBACK_PASSWORD: ${PLYBACK_PASSWORD:-}
       # Behind an HTTPS reverse proxy, also set:
       # PLYBACK_SECURE_COOKIES: "1"
     volumes:

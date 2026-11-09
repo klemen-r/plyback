@@ -425,6 +425,9 @@ fn disconnected_http_request_stops_the_native_engine() {
         }
     }
     let (dir, path) = fixture("stubborn");
+    let frontend = dir.path().join("frontend");
+    std::fs::create_dir_all(&frontend).unwrap();
+    std::fs::write(frontend.join("index.html"), "<!doctype html>").unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     drop(listener);
@@ -439,6 +442,8 @@ fn disconnected_http_request_stops_the_native_engine() {
         ])
         .arg("--data")
         .arg(dir.path().join("data"))
+        .arg("--frontend")
+        .arg(&frontend)
         .env("PLYBACK_STOCKFISH", &path)
         .env_remove("PLYBACK_PASSWORD")
         .stdout(Stdio::null())

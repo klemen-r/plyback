@@ -214,6 +214,7 @@ fn main() -> anyhow::Result<()> {
     // Reserve the address before opening or migrating data. A second launch on
     // an occupied port must not reset the active instance's running job claims.
     let listener = if matches!(cli.command, None | Some(Command::Serve)) {
+        config::check_frontend(&config.frontend)?;
         let listener = std::net::TcpListener::bind((config.host.as_str(), config.port))?;
         listener.set_nonblocking(true)?;
         Some(listener)
@@ -225,6 +226,8 @@ fn main() -> anyhow::Result<()> {
     let db = Database::open(config.db_path())?;
     match cli.command {
         Some(Command::SetPassword) => {
+            // Name the database, so a wrong data directory is noticed at once.
+            println!("Database: {}", config.db_path().display());
             let first = rpassword::prompt_password("New password: ")?;
             if first != rpassword::prompt_password("Repeat password: ")? {
                 bail!("Passwords do not match.");

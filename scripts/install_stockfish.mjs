@@ -11,11 +11,27 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const metadataURL = 'https://api.github.com/repos/official-stockfish/Stockfish/releases/latest'
+// The engine is pinned so every installation analyses with the same Stockfish and an
+// archive is accepted only with the SHA-256 recorded here. To move to a new release:
+//   gh api repos/official-stockfish/Stockfish/releases/tags/<tag> --jq '.assets[] | "\(.name) \(.digest)"'
+// copy the desktop assets below, and bump the analysis version if results change.
+export const PINNED = {
+  tag: 'sf_19',
+  sha256: {
+    'stockfish-linux-arm64-universal.tar.gz': 'fe26cfd1d9db4c8af3d21e24d9ff34cacb31c1f940085a7583da11796f2bac01',
+    'stockfish-linux-x86-64-universal.tar.gz': '9defc0d4e55d49c65a6d042f3e571a39fcea499ade6dbe741b53b8c65e03611f',
+    'stockfish-macos-universal.tar.gz': 'a1f0e3bcc5a6927a11fe6fc8e54a779754645f3c2bae2cf13420fd1957adaa77',
+    'stockfish-windows-arm64-universal.zip': '8372ad3f0d7276deb2c70f801f541ec7db463219fc6d9c7592864e542aa4f401',
+    'stockfish-windows-x86-64-universal.zip': '3c8bf1f9ea66a09350a40df4f632288285ac206d99f33ab5842c408fc30b48a7',
+  },
+}
+export const metadataURL = `https://api.github.com/repos/official-stockfish/Stockfish/releases/tags/${PINNED.tag}`
 const MAX_ARCHIVE = 512 * 1024 * 1024
 const MAX_BINARY = 256 * 1024 * 1024
 const MAX_NOTICE = 2 * 1024 * 1024
 const executable = process.platform === 'win32' ? 'stockfish.exe' : 'stockfish'
+// Windows' own bsdtar reads .zip archives; Git for Windows puts GNU tar, which cannot, earlier on PATH.
+export const tar = process.platform === 'win32' ? path.join(process.env.SystemRoot ?? 'C:\\Windows','System32', 'tar.exe') : 'tar'
 
 function candidates() {
   const arm = process.arch === 'arm64'
@@ -122,23 +138,23 @@ export async function extract(archive, output, { runCommand = command, binaryLim
   await mkdir(output)
   // tar -O emits file contents on stdout; it cannot write a traversal path,
   // replace a file, follow a destination symlink, or create a device node.
-  const entries = (await runCommand('tar', ['-tf', archive], { limit: 4 * noticeLimit })).toString().split(/\r?\n/).filter(Boolean)
+  const entries = (await runCommand(tar, ['-tf', archive], { limit: 4 * noticeLimit })).toString().split(/\r?\n/).filter(Boolean)
   const binaries = entries.filter(name => {
     const base = path.posix.basename(name).toLowerCase()
     return base.startsWith('stockfish') && !name.endsWith('/') && (process.platform === 'win32' ? base.endsWith('.exe') : !base.includes('.'))
   })
   if (binaries.length !== 1) throw new Error('Expected one Stockfish binary in the official archive')
   const binary = path.join(output, executable)
-  await writeFile(binary, await runCommand('tar', ['-xOf', archive, '--', binaries[0]], { limit: binaryLimit, timeout: 120_000 }), { flag: 'wx' })
+  await writeFile(binary, await runCommand(tar, ['-xOf', archive, '--', binaries[0]], { limit: binaryLimit, timeout: 120_000 }), { flag: 'wx' })
   await chmod(binary, 0o755)
   for (const [name, target] of [['copying.txt', 'Copying.txt'], ['authors', 'AUTHORS'], ['readme.md', 'README.md']]) {
     const member = entries.find(entry => path.posix.basename(entry).toLowerCase() === name)
-    if (member) await writeFile(path.join(output, target), await runCommand('tar', ['-xOf', archive, '--', member], { limit: noticeLimit }), { flag: 'wx' })
+    if (member) await writeFile(path.join(output, target), await runCommand(tar, ['-xOf', archive, '--', member], { limit: noticeLimit }), { flag: 'wx' })
   }
   return binary
 }
 
-export async function install(destination, force = false, { fetchImpl, runCommand = command, limits = {} } = {}) {
+export async function install(destination, force = false, { fetchImpl, runCommand = command, limits = {}, pin = PINNED } = {}) {
   const { archive: archiveLimit = MAX_ARCHIVE, binary: binaryLimit = MAX_BINARY, notice: noticeLimit = MAX_NOTICE } = limits
   destination = path.resolve(destination)
   if (!force) {
@@ -149,7 +165,7 @@ export async function install(destination, force = false, { fetchImpl, runComman
     } catch { /* Validate a staged replacement before publishing it. */ }
   }
   const release = JSON.parse((await boundedBytes(await response(metadataURL, false, { fetchImpl }), noticeLimit)).toString())
-  if (typeof release.tag_name !== 'string' || !release.tag_name) throw new Error('Official release has no source tag')
+  if (release.tag_name !== pin.tag) throw new Error(`Expected Stockfish release ${pin.tag}, got ${String(release.tag_name)}`)
   const assets = []; const seen = new Set()
   for (const candidate of candidates()) for (const asset of release.assets ?? []) {
     if (typeof asset.name === 'string' && asset.name.includes(candidate) && /\.(zip|tar|tar\.gz|tgz)$/.test(asset.name) && !seen.has(asset.name)) { assets.push(asset); seen.add(asset.name) }
@@ -161,7 +177,10 @@ export async function install(destination, force = false, { fetchImpl, runComman
     try {
       console.log(`Installing official ${release.tag_name}: ${asset.name}`)
       const archive = path.join(stage, 'download')
-      const digest = await download(asset.browser_download_url, archive, asset.digest, { fetchImpl, limit: archiveLimit })
+      const pinned = Object.hasOwn(pin.sha256, asset.name) ? `sha256:${pin.sha256[asset.name]}` : null
+      if (!pinned) throw new Error('Asset has no pinned SHA-256')
+      if (asset.digest && asset.digest.toLowerCase() !== pinned) throw new Error('Release digest differs from the pinned SHA-256')
+      const digest = await download(asset.browser_download_url, archive, pinned, { fetchImpl, limit: archiveLimit })
       const output = path.join(stage, 'engine')
       const binary = await extract(archive, output, { runCommand, binaryLimit, noticeLimit })
       const name = await verify(binary, runCommand)
@@ -169,7 +188,7 @@ export async function install(destination, force = false, { fetchImpl, runComman
         const license = await boundedBytes(await response(`https://raw.githubusercontent.com/official-stockfish/Stockfish/${encodeURIComponent(release.tag_name)}/Copying.txt`, false, { fetchImpl }), noticeLimit)
         await writeFile(path.join(output, 'Copying.txt'), license)
       }
-      const manifest = { engine: name, release: release.tag_name, asset: asset.name, asset_url: asset.browser_download_url, archive_sha256: digest, release_digest_verified: Boolean(asset.digest), source_url: `https://github.com/official-stockfish/Stockfish/archive/refs/tags/${encodeURIComponent(release.tag_name)}.tar.gz`, license: 'GPL-3.0' }
+      const manifest = { engine: name, release: release.tag_name, asset: asset.name, asset_url: asset.browser_download_url, archive_sha256: digest, pinned_sha256_verified: true, release_digest_verified: Boolean(asset.digest), source_url: `https://github.com/official-stockfish/Stockfish/archive/refs/tags/${encodeURIComponent(release.tag_name)}.tar.gz`, license: 'GPL-3.0' }
       await writeFile(path.join(output, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n')
       await mkdir(path.join(destination, 'versions'), { recursive: true })
       const installed = path.join(destination, 'versions', randomUUID())

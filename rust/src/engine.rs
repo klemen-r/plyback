@@ -230,12 +230,10 @@ pub fn set_data_dir(data: PathBuf) {
 }
 
 pub fn locate_stockfish() -> Result<PathBuf> {
-    let data = DATA_DIR.get().cloned().unwrap_or_else(|| {
-        std::env::var_os("PLYBACK_DATA")
-            .or_else(|| std::env::var_os("CHESS_INSIGHT_DATA"))
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../data"))
-    });
+    let data = DATA_DIR
+        .get()
+        .cloned()
+        .unwrap_or_else(crate::config::default_data_dir);
     let mut candidates = Vec::new();
     if let Some(path) =
         std::env::var_os("PLYBACK_STOCKFISH").or_else(|| std::env::var_os("STOCKFISH_PATH"))

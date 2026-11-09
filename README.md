@@ -28,7 +28,8 @@ bash start.sh
 ```
 
 Open [localhost:8000](http://localhost:8000). The setup installs locked dependencies, builds the
-interface and downloads Stockfish from its official release. To use an installed engine instead,
+interface and downloads Stockfish from its official release (pinned in `scripts/install_stockfish.mjs`,
+checked against a recorded SHA-256). To use an installed engine instead,
 set `PLYBACK_STOCKFISH` to its executable path. Settings control depth, workers, threads, hash and sync.
 Use `start.ps1 -Port 8080` or `bash start.sh --port 8080` to choose another port.
 
@@ -78,15 +79,22 @@ On macOS/Linux use `rust/target/release/plyback set-password` from the repositor
 `bash start.sh --lan` from the root. Use an HTTPS reverse proxy on untrusted networks and set
 `PLYBACK_SECURE_COOKIES=1`. See [SECURITY.md](SECURITY.md).
 
-For Docker, export a strong `PLYBACK_PASSWORD` and run:
+For Docker, export a strong `PLYBACK_PASSWORD` for the first start and run:
 
 ```sh
 docker compose up -d --build
 ```
 
-The non-root container stores data in `plyback-data`, has a read-only root filesystem, and publishes
-port 8000. Changing the environment password after initial setup does not replace a saved password;
-use Settings or the password command. The image is built for the host architecture.
+The container listens on all interfaces, so it refuses to start until a password is saved. The first
+start saves `PLYBACK_PASSWORD`; later starts and other `docker compose` commands do not need it.
+Changing the environment password after initial setup does not replace a saved password; use Settings
+or `docker compose exec plyback plyback set-password`. The non-root container has a read-only root
+filesystem, publishes port 8000 and is built for the host architecture.
+
+Data lives in the named volume `plyback-data`, which survives `docker compose down` and rebuilds.
+Without Compose, give `docker run` a named volume too (`-v plyback-data:/data`): the image only
+declares `VOLUME /data`, so a plain `docker run` stores everything in an anonymous volume that is
+easy to lose when the container is removed.
 
 ### On your phone
 

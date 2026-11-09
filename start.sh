@@ -2,9 +2,10 @@
 # Plyback - start the server.   ./start.sh [--lan] [--port 8000]
 set -euo pipefail
 cd "$(dirname "$0")"
-[ -x rust/target/release/plyback ] || { echo "Run ./setup.sh first."; exit 1; }
+[ -x rust/target/release/plyback ] || { echo "The server is not built. Run ./setup.sh first."; exit 1; }
 export PLYBACK_HOST="${PLYBACK_HOST:-127.0.0.1}" PLYBACK_PORT="${PLYBACK_PORT:-8000}"
 export PLYBACK_DATA="${PLYBACK_DATA:-$PWD/data}" PLYBACK_FRONTEND="${PLYBACK_FRONTEND:-$PWD/frontend/dist}"
+[ -f "$PLYBACK_FRONTEND/index.html" ] || { echo "The web interface is not built in $PLYBACK_FRONTEND. Run ./setup.sh first."; exit 1; }
 NO_BROWSER=0
 while [ $# -gt 0 ]; do
   case "$1" in

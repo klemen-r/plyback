@@ -6,9 +6,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import test from 'node:test'
-import { boundedBytes, command, download, extract, install, response } from './install_stockfish.mjs'
+import { boundedBytes, command, download, extract, install, metadataURL, PINNED, response, tar } from './install_stockfish.mjs'
 
-const metadataURL = 'https://api.github.com/repos/official-stockfish/Stockfish/releases/latest'
 const assetURL = 'https://github.com/official-stockfish/Stockfish/releases/download/sf_test/stockfish.tar'
 const licenseURL = 'https://raw.githubusercontent.com/official-stockfish/Stockfish/sf_test/Copying.txt'
 const executable = process.platform === 'win32' ? 'stockfish.exe' : 'stockfish'
@@ -275,7 +274,7 @@ test('an ambiguous or missing binary is rejected before any member extraction', 
   }
 })
 
-function installationFixture({ digest, handshake = true, includeLicense = true, archiveLimit } = {}) {
+function installationFixture({ digest, handshake = true, includeLicense = true, archiveLimit, pinned } = {}) {
   const archive = Buffer.from('mock archive bytes')
   // One portable fixture name matches every supported host; its bytes are never
   // executed or passed to a real tar process.
@@ -286,6 +285,7 @@ function installationFixture({ digest, handshake = true, includeLicense = true, 
     archive, assetName, requests, commands,
     options: {
       limits: { archive: archiveLimit ?? 128, binary: 128, notice: 1024 },
+      pin: { tag: 'sf_test', sha256: pinned ?? { [assetName]: hash(archive) } },
       fetchImpl: async url => {
         requests.push(url)
         if (url === metadataURL) return new Response(JSON.stringify(release))
@@ -295,7 +295,7 @@ function installationFixture({ digest, handshake = true, includeLicense = true, 
       },
       runCommand: async (program, args, options) => {
         commands.push({ program, args, options })
-        if (program === 'tar') {
+        if (program === tar) {
           if (args[0] === '-tf') return Buffer.from(`release/${executable}\n${includeLicense ? 'release/Copying.txt\n' : ''}`)
           assert.deepEqual(args.slice(0, 1), ['-xOf'])
           assert.equal(args[2], '--')
@@ -344,7 +344,7 @@ test('publication retains the old version and selects a complete verified versio
 
 test('digest, download-budget and UCI failures preserve the selected engine and clean staging', async t => {
   const directory = await temporary(t)
-  for (const [index, settings] of [{ digest: `sha256:${'0'.repeat(64)}` }, { archiveLimit: 4 }, { handshake: false }].entries()) {
+  for (const [index, settings] of [{ digest: `sha256:${'0'.repeat(64)}` }, { pinned: {} }, { archiveLimit: 4 }, { handshake: false }].entries()) {
     const destination = path.join(directory, String(index))
     const previous = await previousInstallation(destination)
     const fixture = installationFixture(settings)
@@ -366,4 +366,12 @@ test('a valid existing selection avoids metadata requests and archive work', asy
   assert.deepEqual(fixture.requests, [])
   assert.equal(fixture.commands.length, 1)
   assert.equal(fixture.commands[0].program, previous)
+})
+
+test('the pinned release covers each desktop platform with a SHA-256', () => {
+  assert.ok(metadataURL.endsWith(`/releases/tags/${PINNED.tag}`))
+  for (const platform of ['linux-x86-64', 'linux-arm64', 'macos', 'windows-x86-64', 'windows-arm64']) {
+    assert.ok(Object.keys(PINNED.sha256).some(name => name.includes(platform)), platform)
+  }
+  for (const digest of Object.values(PINNED.sha256)) assert.match(digest, /^[a-f0-9]{64}$/)
 })
