@@ -73,7 +73,8 @@ export default function Openings() {
   const { account, loading } = useAccount()
   const [params, setParams] = useSearchParams()
   const color: Side = params.get('color') === 'black' ? 'black' : 'white'
-  const timeClass = params.get('tc') ?? 'all'
+  // An unknown time control in the URL means all of them, as the select shows.
+  const timeClass = TIME_CLASSES.find(([v]) => v === params.get('tc'))?.[0] ?? 'all'
   const plies = params.get('plies') === '30' ? 30 : 16
   const merge = params.get('merge') === '1'
   const requested = useMemo(() => (params.get('line') ?? '').split(' ').filter(Boolean), [params])

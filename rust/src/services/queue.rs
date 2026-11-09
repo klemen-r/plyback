@@ -423,10 +423,12 @@ impl Services {
             ..Default::default()
         };
         let started = Instant::now();
+        // Same total as the analysis reports: every position (plies + 1), then every move.
+        let total = game["plies"].as_u64().map(|plies| 2 * plies + 1);
         self.progress.lock().unwrap().insert(
             token.to_string(),
             (
-                json!({"job_id":id,"game_id":game_id,"done":0,"total":game["plies"],"worker":worker}),
+                json!({"job_id":id,"game_id":game_id,"done":0,"total":total,"worker":worker}),
                 Arc::clone(job_cancel),
             ),
         );

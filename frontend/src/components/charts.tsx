@@ -162,6 +162,9 @@ export function LineChart({ data, x, series, height = 220, yDomain, yUnit = '', 
   }
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const r = e.currentTarget.getBoundingClientRect()
+    // A mouse released outside the chart (no capture while unzoomed) never sends pointerup here;
+    // without this the stale press would block the tooltip until the next click.
+    if (e.pointerType === 'mouse' && e.buttons === 0 && pointers.current.delete(e.pointerId)) begin()
     if (n && e.pointerType === 'mouse' && !gesture.current) setHover(Math.max(0, Math.min(n - 1, Math.round(indexAt(e.clientX - r.left)))))
     const g = gesture.current
     if (!zoomable || !g || !pointers.current.has(e.pointerId)) return

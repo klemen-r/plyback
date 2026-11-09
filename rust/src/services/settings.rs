@@ -12,6 +12,22 @@ pub fn default_settings() -> Value {
         "sync_interval_seconds":180,"active_sync_interval_seconds":60,"auto_analyze_new":true,
         "analyze_history":true,"contact":""})
 }
+/// The name a setting has in the Settings page, for error messages.
+fn setting_label(key: &str) -> &str {
+    match key {
+        "analysis_depth" => "Custom depth",
+        "analysis_multipv" => "Engine lines (MultiPV)",
+        "max_seconds_per_position" => "Time cap per position",
+        "workers" => "Parallel workers",
+        "threads_per_worker" => "Threads per worker",
+        "hash_mb" => "Hash per worker",
+        "interactive_depth" => "Interactive depth",
+        "sync_interval_seconds" => "Check for new games every",
+        "active_sync_interval_seconds" => "Sync interval while actively playing",
+        "contact" => "Contact",
+        _ => key,
+    }
+}
 pub fn get_settings(db: &Database) -> Result<Value> {
     Ok(merge_stored(
         db.query("SELECT key,value FROM settings", &[])?,
@@ -87,9 +103,9 @@ pub fn save_settings(db: &Database, patch: &Value) -> Result<Value> {
             }
             value.clone()
         } else if default.is_number() {
-            let n = value
-                .as_f64()
-                .ok_or_else(|| api_error(400, format!("{key} must be a number")))?;
+            let n = value.as_f64().ok_or_else(|| {
+                api_error(400, format!("{} must be a number", setting_label(key)))
+            })?;
             let (low, high) = match key.as_str() {
                 "analysis_depth" => (6., 30.),
                 "analysis_multipv" => (1., 5.),
@@ -114,11 +130,17 @@ pub fn save_settings(db: &Database, patch: &Value) -> Result<Value> {
                 json!(n)
             }
         } else {
-            let s = value
-                .as_str()
-                .ok_or_else(|| api_error(400, format!("{key} must be a short string")))?;
+            let s = value.as_str().ok_or_else(|| {
+                api_error(
+                    400,
+                    format!("{} must be a short string", setting_label(key)),
+                )
+            })?;
             if s.chars().count() > 200 {
-                return Err(api_error(400, format!("{key} must be a short string")));
+                return Err(api_error(
+                    400,
+                    format!("{} must be a short string", setting_label(key)),
+                ));
             }
             json!(s)
         };

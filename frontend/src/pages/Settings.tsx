@@ -66,7 +66,12 @@ function NumberField({ label, description, value, onChange, min, max, step = 1, 
       <span className="min-w-0"><span className="block text-sm font-medium">{label}</span>{description && <span className="block text-xs text-fg-2">{description}</span>}</span>
       <span className="flex shrink-0 items-center gap-2">
         <Input type="number" value={text ?? String(value)} min={min} max={max} step={step} aria-label={label}
-          onChange={e => { setText(e.target.value); if (e.target.value.trim() !== '' && Number.isFinite(Number(e.target.value))) onChange(Number(e.target.value)) }}
+          onChange={e => {
+            setText(e.target.value)
+            const v = Number(e.target.value)
+            // Whole-number settings take only whole numbers; the server would otherwise truncate 16.7 to 16.
+            if (e.target.value.trim() !== '' && Number.isFinite(v) && (Number.isInteger(v) || !Number.isInteger(step))) onChange(v)
+          }}
           onBlur={() => setText(null)}
           className="w-24 text-right tnum" />
         <span className="w-6 text-xs text-fg-3">{suffix}</span>
@@ -113,7 +118,11 @@ export default function SettingsPage() {
     mutationFn: (patch: Partial<Settings>) => api.saveSettings(patch),
     onSuccess: d => { qc.setQueryData(['settings'], d); setForm(d); qc.invalidateQueries({ queryKey: ['status'] }) },
   })
-  if (s.error || status.error) return <ErrorNote error={s.error ?? status.error} />
+  if (s.error) return <ErrorNote error={s.error} />
+  // Appearance and the access password do not need the server status, so they stay usable.
+  if (status.error && !status.data) {
+    return <div className="appear max-w-3xl space-y-6"><PageHeader title="Settings" /><ErrorNote error={status.error} /><Appearance /><AccessPassword /></div>
+  }
   if (!form || !status.data) return <Loading />
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => setForm({ ...form, [k]: v })
   const dirty = JSON.stringify(form) !== JSON.stringify(s.data)
@@ -133,7 +142,7 @@ export default function SettingsPage() {
         </Row>
         <NumberField label="Custom depth" value={form.analysis_depth} onChange={v => set('analysis_depth', v)} min={6} max={30} />
         <NumberField label="Engine lines (MultiPV)" description="2+ is needed to detect “only moves” (Great)" value={form.analysis_multipv} onChange={v => set('analysis_multipv', v)} min={1} max={5} />
-        <NumberField label="Time cap per position" value={form.max_seconds_per_position} onChange={v => set('max_seconds_per_position', v)} min={0.2} max={60} step={0.5} suffix="s" />
+        <NumberField label="Time cap per position" value={form.max_seconds_per_position} onChange={v => set('max_seconds_per_position', v)} min={0.2} max={60} step={0.1} suffix="s" />
         <NumberField label="Parallel workers" description={`Stockfish processes analysing games at once (this machine has ${cpus} logical CPUs)`} value={form.workers} onChange={v => set('workers', v)} min={1} max={cpus} />
         <NumberField label="Threads per worker" value={form.threads_per_worker} onChange={v => set('threads_per_worker', v)} min={1} max={cpus} />
         <NumberField label="Hash per worker" value={form.hash_mb} onChange={v => set('hash_mb', v)} min={16} max={4096} suffix="MB" />

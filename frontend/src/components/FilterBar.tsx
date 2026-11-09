@@ -30,9 +30,11 @@ export default function FilterBar({ value, onChange, openings }:
       <Select label="Rated" value={value.rated} onChange={v => set({ rated: v as FilterState['rated'] })}>
         <option value="">Rated and casual</option><option value="true">Rated</option><option value="false">Casual</option>
       </Select>
-      {openings && openings.length > 0 && (
+      {openings && (openings.length > 0 || !!value.opening) && (
         <Select label="Opening" value={value.opening} onChange={v => set({ opening: v })} className="max-w-[220px]">
           <option value="">All openings</option>
+          {/* A stored opening this account has no games in still filters: show it, so "All openings" can clear it. */}
+          {value.opening && !openings.some(o => o.family === value.opening) && <option value={value.opening}>{value.opening} (0)</option>}
           {openings.map(o => <option key={o.family} value={o.family}>{o.family} ({o.n})</option>)}
         </Select>
       )}
