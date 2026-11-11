@@ -106,3 +106,37 @@ test('Import keeps a large file out of the text box and warns about too many gam
   await expect(page.getByRole('button', { name: 'Import' })).toBeDisabled()
   expect(errors).toEqual([])
 })
+
+test('Import waits for the newest file and ignores an older read', async ({ page }) => {
+  const posted: string[] = []
+  await fixture(page, async (route, url) => {
+    if (url.pathname === '/api/games/import') {
+      posted.push(route.request().postDataJSON().pgn)
+      return route.fulfill({ json: { imported: 1, existing: 0, game_ids: [1], errors: [] } })
+    }
+    await route.fulfill({ json: {} })
+  })
+  await page.addInitScript(() => {
+    File.prototype.text = function () {
+      return new Promise<string>(resolve => {
+        window.addEventListener(`read-${this.name}`, () => resolve(`[Event "${this.name}"]\n1. e4 *`), { once: true })
+      })
+    }
+  })
+  await page.goto('/import')
+  const input = page.locator('input[type=file]')
+  const text = page.getByRole('textbox', { name: 'PGN text' })
+  const submit = page.getByRole('button', { name: 'Import', exact: true })
+  await text.fill('[Event "Previous paste"]\n1. d4 *')
+  for (const name of ['older.pgn', 'latest.pgn']) {
+    await input.setInputFiles({ name, mimeType: 'application/x-chess-pgn', buffer: Buffer.from('1. e4 *') })
+    await expect(submit).toBeDisabled({ timeout: 1500 })
+  }
+  const newest = '[Event "latest.pgn"]\n1. e4 *'
+  await page.evaluate(() => { window.dispatchEvent(new Event('read-latest.pgn')) })
+  await expect(text).toHaveValue(newest)
+  await page.evaluate(() => { window.dispatchEvent(new Event('read-older.pgn')) })
+  await submit.click()
+  await expect(page.getByText(/1.*new game\(s\) imported/)).toBeVisible()
+  expect(posted).toEqual([newest])
+})
