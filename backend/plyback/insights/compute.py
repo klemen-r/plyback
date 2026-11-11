@@ -515,11 +515,17 @@ def _overview(games: list[G], analyzed: list[G]) -> dict:
     }
 
 
+def _pool(g: G) -> str:
+    """The rating pool a game counts for: its time class, and separately for Chess960."""
+    time_class = g.row["time_class"] or ""
+    return f"{time_class} 960" if g.row["rules"] == "chess960" else time_class
+
+
 def _ratings(games: list[G]) -> dict:
     series: dict[str, list] = defaultdict(list)
     for g in games:
         if g.user_rating and g.row["time_class"] and g.row["rated"]:
-            series[g.row["time_class"]].append({"t": g.end_time, "rating": g.user_rating, "game_id": g.id})
+            series[_pool(g)].append({"t": g.end_time, "rating": g.user_rating, "game_id": g.id})
     out = {}
     for tc, pts in series.items():
         step = max(1, len(pts) // 400)
@@ -657,8 +663,9 @@ def _trend(games: list[G]) -> list[dict]:
         sub = buckets[key]
         an = [g for g in sub if g.analyzed]
         scored = _decided(sub)
-        # Ratings of different time classes are separate pools: a mixed period has no single rating.
-        one_pool = len({g.row["time_class"] for g in sub}) == 1
+        # Ratings of different time classes, and of Chess960, are separate pools: a mixed period has
+        # no single rating.
+        one_pool = len({_pool(g) for g in sub}) == 1
         out.append(
             {
                 "period": key,

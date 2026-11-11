@@ -7,13 +7,16 @@
 //! checked against the stored review without any new engine work.
 //!
 //! Scheduling is a small Leitner system: a correct answer moves the position up
-//! one box and schedules it after that box's interval in days (less
-//! `DAY_SLACK_SECONDS`, so it is due that day rather than at that second); a wrong answer sends it
-//! back to the first box and brings it back after `RETRY_SECONDS`.
+//! one box and schedules it for the start of the day that box's interval of days later, in the
+//! answering client's time zone (so it is due at any time that day, and never again on the day
+//! it was answered); a wrong answer sends it back to the first box and brings it back after
+//! `RETRY_SECONDS`.
 use crate::{
     ApiResult, Query, analysis::expected_points, api_error, db::Database, now, pgn, tactics,
 };
 use anyhow::Result;
+use chrono::{DateTime, Days, NaiveTime, TimeZone};
+use chrono_tz::{GapInfo, Tz, UTC};
 use rand::seq::SliceRandom;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
@@ -26,10 +29,6 @@ pub const MIN_GAP: f64 = 0.05;
 pub const INTERVAL_DAYS: [i64; 6] = [1, 3, 7, 16, 35, 80];
 /// A missed position comes back within the same sitting.
 pub const RETRY_SECONDS: i64 = 600;
-/// A position scheduled `n` days out is due this much earlier, so it is waiting at
-/// any time of day `n` days later rather than at the exact second it was answered
-/// (answered Monday 21:00, it is due again from Tuesday 09:00).
-pub const DAY_SLACK_SECONDS: i64 = 12 * 3600;
 /// Positions at or above this box count as mastered.
 pub const MASTERED_BOX: i64 = 4;
 const KINDS: [&str; 3] = ["blunder", "mistake", "miss"];
@@ -337,17 +336,29 @@ fn normalize(fen: &str, raw: &str) -> Result<String> {
     Ok(pgn::uci(legal, false))
 }
 
-/// Next box and due time after an answer.
-pub fn schedule(box_: i64, correct: bool, at: i64) -> (i64, i64) {
-    if correct {
-        let index = box_.clamp(0, INTERVAL_DAYS.len() as i64 - 1) as usize;
-        (
-            box_ + 1,
-            at + INTERVAL_DAYS[index] * 86_400 - DAY_SLACK_SECONDS,
-        )
-    } else {
-        (0, at + RETRY_SECONDS)
+/// A correct answer is due from the start of the target calendar day in the client's zone.
+pub fn schedule(box_: i64, correct: bool, at: i64, time_zone: Tz) -> (i64, i64) {
+    if !correct {
+        return (0, at + RETRY_SECONDS);
     }
+    let index = box_.clamp(0, INTERVAL_DAYS.len() as i64 - 1) as usize;
+    let days = INTERVAL_DAYS[index];
+    let due = DateTime::from_timestamp(at, 0)
+        .and_then(|time| {
+            time.with_timezone(&time_zone)
+                .date_naive()
+                .checked_add_days(Days::new(days as u64))
+        })
+        .and_then(|date| {
+            let midnight = date.and_time(NaiveTime::MIN);
+            // Some zones move their clocks at midnight. Use the first valid instant.
+            time_zone
+                .from_local_datetime(&midnight)
+                .earliest()
+                .or_else(|| GapInfo::new(&midnight, &time_zone)?.end)
+        })
+        .map_or(at + days * 86_400, |time| time.timestamp());
+    (box_ + 1, due)
 }
 
 fn answer(db: &Database, account: i64, game: i64, ply: i64, body: &Value) -> ApiResult {
@@ -356,6 +367,14 @@ fn answer(db: &Database, account: i64, game: i64, ply: i64, body: &Value) -> Api
         None | Some(Value::Bool(false)) => false,
         Some(Value::Bool(true)) => true,
         Some(_) => return Err(api_error(422, "reveal must be true or false")),
+    };
+    let time_zone = match body.get("time_zone") {
+        None | Some(Value::Null) => UTC,
+        Some(value) => value
+            .as_str()
+            .filter(|name| name.len() <= 64)
+            .and_then(|name| name.parse::<Tz>().ok())
+            .ok_or_else(|| api_error(422, "time_zone must be an IANA time zone"))?,
     };
     let raw = if reveal {
         None
@@ -383,7 +402,7 @@ fn answer(db: &Database, account: i64, game: i64, ply: i64, body: &Value) -> Api
         // whether due or not) is extra practice: it keeps the schedule instead of moving the
         // position up a box, so repeating a day's games cannot mark it mastered within an hour.
         Some(s) if correct && s.due_at > at => (s.box_, s.due_at),
-        _ => schedule(before.map_or(0, |s| s.box_), correct, at),
+        _ => schedule(before.map_or(0, |s| s.box_), correct, at, time_zone),
     };
     db.transaction(|tx| {
         tx.execute(
@@ -502,21 +521,49 @@ mod tests {
 
     #[test]
     fn schedule_climbs_boxes_and_resets_on_a_miss() {
-        assert_eq!(schedule(0, true, 0), (1, 86_400 - DAY_SLACK_SECONDS));
-        assert_eq!(schedule(1, true, 0), (2, 3 * 86_400 - DAY_SLACK_SECONDS));
-        assert_eq!(schedule(9, true, 0), (10, 80 * 86_400 - DAY_SLACK_SECONDS));
-        assert_eq!(schedule(5, false, 100), (0, 100 + RETRY_SECONDS));
+        assert_eq!(schedule(0, true, 0, UTC), (1, 86_400));
+        assert_eq!(schedule(1, true, 100, UTC), (2, 3 * 86_400));
+        assert_eq!(schedule(9, true, 86_399, UTC), (10, 80 * 86_400));
+        assert_eq!(schedule(5, false, 100, UTC), (0, 100 + RETRY_SECONDS));
     }
 
     #[test]
-    fn a_position_due_tomorrow_is_due_at_any_time_tomorrow() {
-        // Answered Monday 2026-11-09 21:00 UTC; Tuesday's 09:00 sitting should include it.
-        let monday_evening = 1_794_258_000;
-        let tuesday_morning = monday_evening + 12 * 3600;
-        let (_, due) = schedule(0, true, monday_evening);
-        assert!(due <= tuesday_morning, "due {due} after Tuesday 09:00");
-        // ... but not still on Monday evening.
-        assert!(due > monday_evening + 6 * 3600);
+    fn a_position_due_tomorrow_is_due_all_of_tomorrow_and_not_today() {
+        // Monday 2026-11-09 in UTC+1 runs from Sunday 23:00 UTC.
+        let zone = chrono_tz::Europe::Ljubljana;
+        let monday = 1_794_178_800;
+        let tuesday = monday + 86_400;
+        // Answered at 00:00, 09:00 or 23:59 on Monday: due from Tuesday 00:00 local time, so
+        // neither an evening sitting on Monday nor one 12 hours later can promote it again,
+        // and any sitting on Tuesday includes it.
+        for at in [monday, monday + 9 * 3600, tuesday - 1] {
+            assert_eq!(schedule(0, true, at, zone), (1, tuesday), "at {at}");
+            assert_eq!(schedule(1, true, at, zone).1, monday + 3 * 86_400);
+        }
+        // Monday at midnight in Ljubljana is still Sunday in New York.
+        let new_york = chrono_tz::America::New_York;
+        let monday_in_new_york = new_york.with_ymd_and_hms(2026, 11, 9, 0, 0, 0).unwrap();
+        assert_eq!(
+            schedule(0, true, monday, new_york).1,
+            monday_in_new_york.timestamp()
+        );
+    }
+
+    #[test]
+    fn the_due_day_uses_the_offset_in_effect_on_that_day() {
+        let zone = chrono_tz::Europe::Ljubljana;
+        let spring = UTC.with_ymd_and_hms(2026, 3, 28, 12, 0, 0).unwrap();
+        let spring_due = UTC.with_ymd_and_hms(2026, 3, 30, 22, 0, 0).unwrap();
+        assert_eq!(
+            schedule(1, true, spring.timestamp(), zone).1,
+            spring_due.timestamp()
+        );
+        let autumn = UTC.with_ymd_and_hms(2026, 10, 25, 0, 0, 0).unwrap();
+        let autumn_due = UTC.with_ymd_and_hms(2026, 10, 25, 23, 0, 0).unwrap();
+        assert_eq!(
+            schedule(0, true, autumn.timestamp(), zone).1,
+            autumn_due.timestamp()
+        );
     }
 
     #[test]

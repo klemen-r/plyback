@@ -54,6 +54,16 @@ export function fmtDuration(sec: number | null | undefined): string {
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
 }
 
+/** When a practice position due at `due` comes back, as seen at `now` (both Unix seconds). */
+export function dueIn(due: number, now: number): string {
+  const s = Math.max(0, due - now)
+  // Calendar days: a position is due from the start of its day, so the day decides the wording.
+  const day = (t: number) => { const d = new Date(t * 1000); return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000 }
+  const days = day(due) - day(now)
+  if (days <= 0) return s < 3600 ? 'later in this session' : `in ${fmtDuration(s)}`
+  return days === 1 ? 'tomorrow' : `in ${days} days`
+}
+
 export function fmtClock(sec: number | null | undefined): string {
   if (sec === null || sec === undefined) return ''
   if (sec >= 3600) {

@@ -49,3 +49,26 @@ test('merged position subtitle uses distinct games and scores, not overlapping i
   expect(html).toContain('you scored 50%')
   client.clear()
 })
+
+test('the subtitle leaves out the score when no reviewed game has a result', () => {
+  const page = (root: { games: number; wins: number; draws: number; losses: number }) => {
+    const client = new QueryClient()
+    client.setQueryData(['repertoire', 1, 'black', 'all', 16, true], {
+      merged: true, root: 0, total_games: root.games, plies: 16, nodes: [], problems: [], positions: [], ...root,
+    })
+    const account = { id: 1 } as Account
+    const html = renderToStaticMarkup(
+      h(QueryClientProvider, { client },
+        h(AccountCtx.Provider, { value: { account, accounts: [account], loading: false, error: null, select: () => {} } },
+          h(MemoryRouter, { initialEntries: ['/openings?color=black&merge=1'] }, h(Openings)))),
+    )
+    client.clear()
+    return html
+  }
+  // Three unfinished PGN imports: games, but no wins, draws or losses.
+  const unfinished = page({ games: 3, wins: 0, draws: 0, losses: 0 })
+  expect(unfinished).toContain('3 reviewed games as Black')
+  expect(unfinished).not.toContain('NaN')
+  expect(unfinished).not.toContain('you scored')
+  expect(page({ games: 4, wins: 1, draws: 2, losses: 0 })).toContain('you scored 67%')
+})

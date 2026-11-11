@@ -456,6 +456,11 @@ pub fn save_analysis(
         tx.execute("INSERT INTO game_analysis(game_id,depth,multipv,engine,version,analyzed_at,duration_ms,accuracy_white,accuracy_black,acpl_white,acpl_black,opening_eco,opening_name,opening_family,opening_variation,book_plies,counts_json,key_moments_json,evals_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(game_id) DO UPDATE SET depth=excluded.depth,multipv=excluded.multipv,engine=excluded.engine,version=excluded.version,analyzed_at=excluded.analyzed_at,duration_ms=excluded.duration_ms,accuracy_white=excluded.accuracy_white,accuracy_black=excluded.accuracy_black,acpl_white=excluded.acpl_white,acpl_black=excluded.acpl_black,opening_eco=excluded.opening_eco,opening_name=excluded.opening_name,opening_family=excluded.opening_family,opening_variation=excluded.opening_variation,book_plies=excluded.book_plies,counts_json=excluded.counts_json,key_moments_json=excluded.key_moments_json,evals_json=excluded.evals_json,revision=game_analysis.revision+1",params_from_iter(sql_values(&vals)?))?;
         if !result["opening"].is_null(){tx.execute("UPDATE games SET opening_eco=?,opening_name=?,opening_family=?,opening_variation=? WHERE id=?",params_from_iter(sql_values(&[result["opening"]["eco"].clone(),result["opening"]["name"].clone(),result["opening"]["family"].clone(),result["opening"]["variation"].clone(),json!(id)])?))?;}
         tx.execute("UPDATE jobs SET status='done',finished_at=?,partial_json=NULL,error=NULL,progress=total WHERE id=? AND claim_token=?",rusqlite::params![now(),claim.job_id,claim.token])?;
+        tx.execute(
+            "INSERT INTO jobs(game_id,status,priority,depth,created_at,sort_key) SELECT j.game_id,'queued',j.followup_priority,j.followup_depth,?,COALESCE(g.end_time,0) FROM jobs j JOIN games g ON g.id=j.game_id WHERE j.id=? AND j.followup_depth>?",
+            rusqlite::params![now(),claim.job_id,depth],
+        )?;
+        tx.execute("UPDATE jobs SET followup_priority=NULL,followup_depth=NULL WHERE id=? AND followup_depth IS NOT NULL",[claim.job_id])?;
         Ok(true)
     })?.unwrap_or(false))
 }

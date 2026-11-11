@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fmtClock, fmtDuration, fmtTimeControl, formatEval, mateIn, moveLabel, moveNumber, winWhite } from '../format'
+import { dueIn, fmtClock, fmtDuration, fmtTimeControl, formatEval, mateIn, moveLabel, moveNumber, winWhite } from '../format'
 import { restoreFilters, toInsightFilters, type FilterState } from '../filters'
 
 describe('format helpers', () => {
@@ -87,5 +87,20 @@ describe('moveNumber', () => {
     expect(moveNumber('7k/8/8/8/8/8/8/7K b - - 0 42', 1)).toBe(42)
     expect(moveNumber(null, 7)).toBe(7)
     expect(moveNumber('bad', 3)).toBe(3)
+  })
+})
+
+describe('practice due wording', () => {
+  // Local times, so the test holds in any time zone.
+  const at = (day: number, hour: number, minute = 0) => Math.floor(new Date(2026, 10, day, hour, minute).getTime() / 1000)
+  it('names the day a position is due, and never calls a same-day time tomorrow', () => {
+    expect(dueIn(at(10, 0), at(9, 9))).toBe('tomorrow')
+    expect(dueIn(at(10, 0), at(9, 21))).toBe('tomorrow')
+    expect(dueIn(at(10, 0), at(9, 23, 50))).toBe('tomorrow')
+    expect(dueIn(at(12, 0), at(9, 9))).toBe('in 3 days')
+    // Due tonight (an older schedule, or another time zone's day): say when, not "tomorrow".
+    expect(dueIn(at(9, 21), at(9, 9))).toBe('in 12h 0m')
+    expect(dueIn(at(9, 9, 10), at(9, 9))).toBe('later in this session')
+    expect(dueIn(at(9, 8), at(9, 9))).toBe('later in this session')
   })
 })

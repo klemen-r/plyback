@@ -145,8 +145,8 @@ Practice turns your own reviewed mistakes into positions to solve.
 - **Filters:** choose a mistake type and opening, middlegame or endgame positions. These filters apply together
   with the game range, and the progress counts remain scoped to that selection after an answer.
 - **Schedule:** a small Leitner system. A correct first try moves the position up one box and brings it back after
-  1, 3, 7, 16, 35, then 80 days. A wrong first try, or *Show answer*, sends it back to the first box and brings it
-  back after 10 minutes. A position counts as mastered after four correct answers in a row.
+  1, 3, 7, 16, 35, then 80 calendar days in your time zone. It becomes due at the start of the scheduled day.
+  A wrong first try or *Show answer* sends it back to the first box and brings it back after 10 minutes. A position counts as mastered after four correct answers in a row.
 - Re-analysing a game updates its positions: the answer always comes from the current review, and positions that no
   longer qualify drop out. Deleting a game or account deletes its schedule.
 

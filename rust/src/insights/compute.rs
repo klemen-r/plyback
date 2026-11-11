@@ -761,6 +761,17 @@ fn overview(games: &[&Game], analyzed: &[&Game]) -> Value {
     )
 }
 
+/// The rating pool a game counts for: its time class, and separately for Chess960, whose
+/// ratings are not the standard ones of the same time class.
+fn pool(game: &Game) -> String {
+    let time_class = text(&game.row["time_class"]);
+    if game.row["rules"] == "chess960" {
+        format!("{time_class} 960")
+    } else {
+        time_class.into()
+    }
+}
+
 fn ratings(games: &[&Game]) -> Value {
     let rated = games
         .iter()
@@ -772,7 +783,7 @@ fn ratings(games: &[&Game]) -> Value {
         })
         .collect::<Vec<_>>();
     let mut out = json!({});
-    for (tc, gs) in groups(&rated, |g| text(&g.row["time_class"]).into()) {
+    for (tc, gs) in groups(&rated, pool) {
         let points = gs
             .iter()
             .map(|g| json!({"t":g.end,"rating":g.user_rating,"game_id":g.id}))
@@ -1013,9 +1024,10 @@ fn trend(games: &[&Game]) -> Value {
     });
     buckets.sort_by(|a, b| a.0.cmp(&b.0));
     json!(buckets.into_iter().map(|(period,sub)|{let an=sub.iter().copied().filter(|g|g.analyzed).collect::<Vec<_>>();let scored=decided(&sub);
-        // Ratings of different time classes are separate pools: a period that mixes them has no
-        // single rating, and its last game's rating would jump between pools.
-        let one_pool=sub.iter().all(|g|g.row["time_class"]==sub[0].row["time_class"]);
+        // Ratings of different time classes, and of Chess960, are separate pools: a period that
+        // mixes them has no single rating, and its last game's rating would jump between pools.
+        let first=&sub[0].row;
+        let one_pool=sub.iter().all(|g|g.row["time_class"]==first["time_class"] && g.row["rules"]==first["rules"]);
         json!({"period":period,"games":sub.len(),"score":pct(scored.iter().filter_map(|g|g.score).sum(),scored.len()),"accuracy":avg(an.iter().map(|g|g.accuracy)),"analyzed":an.len(),"blunders_per_game":if an.is_empty(){Value::Null}else{json!(round(an.iter().flat_map(|g|&g.user).filter(|m|m.class=="blunder").count() as f64/an.len() as f64,2))},"rating":if one_pool{sub.last().unwrap().user_rating}else{None}})}).collect::<Vec<_>>())
 }
 
@@ -1811,24 +1823,9 @@ fn compute_once(
         .collect::<Vec<_>>();
     let overview = overview(&games, &analyzed);
     let openings = openings(&games, number(&overview["score"]));
-    // Unfiltered, the loaded games are the whole timeline; otherwise read the hidden ones too.
-    let timeline = if report_id.is_none() && f.as_object().is_some_and(|o| o.is_empty()) {
-        games
-            .iter()
-            .map(|g| {
-                Sitting::of(
-                    g.id,
-                    text(&g.row["time_class"]),
-                    g.row["start_time"].as_i64(),
-                    g.end,
-                    g.outcome,
-                )
-            })
-            .collect()
-    } else {
-        timeline(db, account_id)?
-    };
-    let sessions = sessions(&games, &timeline);
+    // Always the account's whole timeline, also unfiltered: the loaded games leave out variants,
+    // which are sittings too, and every view of the same games must find the same sessions.
+    let sessions = sessions(&games, &timeline(db, account_id)?);
     let time = time_info(&analyzed, &games);
     let mut notes = Vec::new();
     if analyzed.len() < 10 {

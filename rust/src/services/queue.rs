@@ -69,14 +69,17 @@ impl Services {
             ));
         }
         let enqueue = |tx: &rusqlite::Transaction<'_>| {
-            if let Some((account, generation)) = account
-                && !tx.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM accounts WHERE id=? AND sync_generation=?)",
-                    rusqlite::params![account, generation],
+            let mut review_allowed = true;
+            if let Some((account, generation)) = account {
+                let preference = tx.query_row(
+                    "SELECT CASE WHEN ?=? THEN analyze_history ELSE auto_analyze END FROM accounts WHERE id=? AND sync_generation=?",
+                    rusqlite::params![priority, PRIORITY_HISTORY, account, generation],
                     |r| r.get::<_, bool>(0),
-                )?
-            {
-                return Ok(0);
+                ).optional()?;
+                let Some(enabled) = preference else {
+                    return Ok(0);
+                };
+                review_allowed = enabled;
             }
             let mut seen = HashSet::new();
             let mut added = 0;
@@ -86,6 +89,17 @@ impl Services {
                 }
                 if !seen.insert(id) {
                     continue;
+                }
+                if let Some((account, _)) = account {
+                    // Claim the marker in the same transaction as the queue write. Clear
+                    // queue may already have removed it since the sync read the pending IDs.
+                    let pending = tx.execute(
+                        "DELETE FROM sync_pending WHERE account_id=? AND game_id=? AND priority=?",
+                        rusqlite::params![account, id, priority],
+                    )?;
+                    if pending == 0 || !review_allowed {
+                        continue;
+                    }
                 }
                 if let Some((account, _)) = account
                     && !tx.query_row("SELECT EXISTS(SELECT 1 FROM account_games WHERE account_id=? AND game_id=?)",rusqlite::params![account,id],|r|r.get::<_,bool>(0))? {
@@ -113,14 +127,13 @@ impl Services {
                     if status == "queued" {
                         tx.execute("UPDATE jobs SET priority=MAX(priority,?),depth=MAX(COALESCE(depth,0),?) WHERE id=?",rusqlite::params![priority,depth,job])?;
                     } else if account.is_none() {
-                        // A game has one active job, so a deeper request made while it runs is
-                        // remembered and queued when that job finishes (`queue_followup`).
-                        // Recorded inside this write transaction: the worker marks the job done
-                        // in its own write transaction before it looks for a follow-up.
+                        // Store the request with the running job. Saving that job's analysis
+                        // queues its follow-up in the same transaction.
                         if running_depth < depth {
-                            let mut followups = self.followups.lock().unwrap();
-                            let entry = followups.entry(id).or_insert((priority, depth));
-                            *entry = (entry.0.max(priority), entry.1.max(depth));
+                            tx.execute(
+                                "UPDATE jobs SET followup_priority=MAX(COALESCE(followup_priority,?1),?1),followup_depth=MAX(COALESCE(followup_depth,?2),?2) WHERE id=?3",
+                                rusqlite::params![priority, depth, job],
+                            )?;
                             added += 1;
                         } else if force {
                             // The running job is already a fresh analysis at this depth or deeper.
@@ -276,7 +289,7 @@ impl Services {
         let result=self.db.transaction_until(Instant::now()+budget,||false,|tx|{
             for release in &releases {
                 if let Some(message)=&release.error {
-                    let changed=tx.execute("UPDATE jobs SET status=CASE WHEN attempts>=3 THEN 'failed' ELSE 'queued' END,priority=priority-1,error=?,finished_at=CASE WHEN attempts>=3 THEN ? ELSE NULL END WHERE id=? AND claim_token=? AND status='running'",rusqlite::params![message,now(),release.id,release.token])?;
+                    let changed=tx.execute("UPDATE jobs SET status=CASE WHEN attempts>=3 THEN 'failed' ELSE 'queued' END,priority=priority-1,error=?,finished_at=CASE WHEN attempts>=3 THEN ? ELSE NULL END,followup_priority=CASE WHEN attempts<3 THEN followup_priority END,followup_depth=CASE WHEN attempts<3 THEN followup_depth END WHERE id=? AND claim_token=? AND status='running'",rusqlite::params![message,now(),release.id,release.token])?;
                     if changed>0 {tx.execute("INSERT INTO events(ts,level,source,message) VALUES(?,'error','analysis',?)",rusqlite::params![now(),message])?;}
                 }else{
                     tx.execute("UPDATE jobs SET status='queued',attempts=MAX(0,attempts-1),error=NULL WHERE id=? AND claim_token=? AND status='running'",rusqlite::params![release.id,release.token])?;
@@ -365,7 +378,7 @@ impl Services {
                 .unwrap()
                 .remove(job["claim_token"].as_str().unwrap());
             match result {
-                Ok(true) => self.queue_followup(game_id),
+                Ok(true) => {}
                 Ok(false) => self.release_job(&job, None),
                 Err(_)
                     if cancel.load(Ordering::SeqCst)
@@ -506,15 +519,6 @@ impl Services {
         });
         Ok(true)
     }
-    /// Queues the deeper analysis requested while this game's job was running.
-    fn queue_followup(&self, game_id: i64) {
-        let Some((priority, depth)) = self.followups.lock().unwrap().remove(&game_id) else {
-            return;
-        };
-        if let Err(error) = self.enqueue(&[game_id], priority, Some(depth), false) {
-            tracing::warn!(%error, game_id, "Could not queue the requested deeper analysis");
-        }
-    }
     pub(super) fn backfill(&self, account: i64) -> Result<usize> {
         let rows=self.db.query("SELECT ag.game_id FROM account_games ag JOIN games g ON g.id=ag.game_id LEFT JOIN game_analysis ga ON ga.game_id=g.id LEFT JOIN jobs j ON j.game_id=g.id WHERE ag.account_id=? AND ga.game_id IS NULL AND j.id IS NULL AND g.rules IN ('chess','chess960')",&[json!(account)])?;
         self.enqueue(
@@ -624,19 +628,34 @@ mod tests {
         db.execute("INSERT INTO games(id,uuid,pgn,imported_at) VALUES(1,'one','1. e4 e5 *',0),(2,'two','1. d4 d5 *',0)",&[]).unwrap();
         db.execute("INSERT INTO account_games VALUES(1,2,'white')", &[])
             .unwrap();
+        db.execute(
+            "INSERT INTO sync_pending VALUES (1,1,?),(1,2,?)",
+            &[json!(PRIORITY_NEW), json!(PRIORITY_NEW)],
+        )
+        .unwrap();
         assert_eq!(
             service
-                .enqueue_for_account(1, old.as_str().unwrap(), &[1, 2], 50)
+                .enqueue_for_account(1, old.as_str().unwrap(), &[1, 2], PRIORITY_NEW)
                 .unwrap(),
             0
         );
         assert_eq!(
             service
-                .enqueue_for_account(1, new.as_str().unwrap(), &[1, 2], 50)
+                .enqueue_for_account(1, new.as_str().unwrap(), &[1, 2], PRIORITY_NEW)
                 .unwrap(),
             1
         );
         assert_eq!(db.scalar("SELECT game_id FROM jobs", &[]).unwrap(), 2);
+        service
+            .handle("POST", "/api/queue/clear", &Query::new(), &Value::Null)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            service
+                .enqueue_for_account(1, new.as_str().unwrap(), &[2], PRIORITY_NEW)
+                .unwrap(),
+            0
+        );
     }
     #[test]
     fn deeper_request_for_a_running_game_is_queued_when_the_job_finishes() {
@@ -657,18 +676,17 @@ mod tests {
             db.scalar("SELECT COUNT(*) FROM jobs", &[]).unwrap(),
             json!(1)
         );
-        // The worker stores the result (marking the job done), then queues the follow-up.
-        db.execute(
-            "UPDATE jobs SET status='done',finished_at=? WHERE id=?",
-            &[json!(now()), job["id"].clone()],
-        )
-        .unwrap();
-        db.execute(
-            "INSERT INTO game_analysis(game_id,depth,multipv,engine,version,analyzed_at) VALUES(1,16,2,'test',?,0)",
-            &[json!(ANALYSIS_VERSION)],
-        )
-        .unwrap();
-        service.queue_followup(1);
+        let cancel = AtomicBool::new(false);
+        let claim = store::AnalysisClaim {
+            game_id: 1,
+            job_id: job["id"].as_i64().unwrap(),
+            token: job["claim_token"].as_str().unwrap(),
+            uuid: job["game_uuid"].as_str().unwrap(),
+            pgn: job["game_pgn"].as_str().unwrap(),
+            cancel: &cancel,
+        };
+        let result = json!({"moves":[]});
+        assert!(store::save_analysis(&db, &claim, &result, 16, 2, "test").unwrap());
         let queued = db
             .one("SELECT priority,depth FROM jobs WHERE status='queued'", &[])
             .unwrap()
@@ -677,13 +695,51 @@ mod tests {
             (queued["priority"].clone(), queued["depth"].clone()),
             (json!(100), json!(24))
         );
-        // Only once.
-        service.queue_followup(1);
+        // Replaying the finished claim cannot insert another job.
+        assert!(!store::save_analysis(&db, &claim, &result, 16, 2, "test").unwrap());
         assert_eq!(
             db.scalar("SELECT COUNT(*) FROM jobs WHERE status='queued'", &[])
                 .unwrap(),
             json!(1)
         );
+    }
+    #[test]
+    fn a_remembered_deeper_request_ends_with_a_cleared_queue_or_a_failed_job() {
+        let db = Arc::new(Database::open(":memory:").unwrap());
+        db.execute(
+            "INSERT INTO games(id,uuid,pgn,imported_at) VALUES(1,'one','1. e4 e5 *',0),(2,'two','1. d4 d5 *',0)",
+            &[],
+        )
+        .unwrap();
+        let service = Services::new(db.clone()).unwrap();
+        service.enqueue(&[1], 10, Some(16), false).unwrap();
+        let job = service.claim(&AtomicBool::new(false)).unwrap().unwrap();
+        service.enqueue(&[1], 100, Some(24), false).unwrap();
+        service.enqueue(&[2], 10, Some(16), false).unwrap();
+        let followup_depth = || {
+            db.scalar("SELECT followup_depth FROM jobs WHERE game_id=1", &[])
+                .unwrap()
+        };
+        assert_eq!(followup_depth(), 24);
+        let (_, cleared) = service
+            .handle("POST", "/api/queue/clear", &Query::new(), &Value::Null)
+            .unwrap()
+            .unwrap();
+        assert_eq!(cleared["cleared"], 1);
+        assert!(followup_depth().is_null());
+        // Remembered again. A failure with attempts left keeps it: the job is retried.
+        service.enqueue(&[1], 100, Some(24), false).unwrap();
+        service.release_job(&job, Some("engine crashed".into()));
+        service.flush_releases(Duration::from_secs(1));
+        assert_eq!(db.scalar("SELECT status FROM jobs", &[]).unwrap(), "queued");
+        assert_eq!(followup_depth(), 24);
+        // The job gives up after its third attempt, and the request goes with it.
+        db.execute("UPDATE jobs SET attempts=2", &[]).unwrap();
+        let job = service.claim(&AtomicBool::new(false)).unwrap().unwrap();
+        service.release_job(&job, Some("engine crashed".into()));
+        service.flush_releases(Duration::from_secs(1));
+        assert_eq!(db.scalar("SELECT status FROM jobs", &[]).unwrap(), "failed");
+        assert!(followup_depth().is_null());
     }
     fn wait_until(mut check: impl FnMut() -> bool, seconds: u64) -> bool {
         let until = Instant::now() + Duration::from_secs(seconds);

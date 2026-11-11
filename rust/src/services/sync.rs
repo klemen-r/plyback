@@ -703,52 +703,84 @@ impl Services {
                     }
                 }
             }
-            let Some(results)=claim.transaction(self, |tx|{
-                let mut results=Vec::with_capacity(rows.len());
+            let Some((history, fresh, analyze_history, auto_analyze)) = claim.transaction(self, |tx| {
+                let mut results = Vec::with_capacity(rows.len());
                 for batch in rows.chunks(128) {
-                    if self.stop.load(Ordering::SeqCst) { return Err(api_error(503,"Sync cancelled")); }
-                    let inserted=store::upsert_games(tx,batch)?;
-                    results.extend(inserted.iter().zip(store::link_games(tx,id,username,batch,&inserted)?).map(|((game_id,_),linked)|(*game_id,linked)));
+                    if self.stop.load(Ordering::SeqCst) {
+                        return Err(api_error(503, "Sync cancelled"));
+                    }
+                    let inserted = store::upsert_games(tx, batch)?;
+                    results.extend(
+                        inserted
+                            .iter()
+                            .zip(store::link_games(tx, id, username, batch, &inserted)?)
+                            .map(|((game_id, _), linked)| (*game_id, linked)),
+                    );
                 }
-                tx.execute("INSERT INTO archives(account_id,period,url,etag,last_modified,fetched_at,game_count,complete) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(account_id,period) DO UPDATE SET etag=excluded.etag,last_modified=excluded.last_modified,fetched_at=excluded.fetched_at,game_count=excluded.game_count,complete=excluded.complete",rusqlite::params![id,period,url,response.etag,response.last_modified,now(),rows.len()as i64,complete])?;Ok(results)
-            })? else { return Ok(()); };
-            // Games newly linked to this account. During the first import, or when a changed
-            // "import since" date backfills older archives, a game is history unless it ended
-            // after the previous sync: that one was played since and is new.
-            let (mut history, mut fresh) = (Vec::new(), Vec::new());
-            for (row, (game_id, linked)) in rows.iter().zip(results) {
-                if !linked {
-                    continue;
+                // Games newly linked to this account. During the first import, or when a changed
+                // "import since" date backfills older archives, a game is history unless it ended
+                // after the previous sync: that one was played since and is new.
+                let (mut history, mut fresh) = (Vec::new(), Vec::new());
+                for (row, (game_id, linked)) in rows.iter().zip(results) {
+                    if !linked {
+                        continue;
+                    }
+                    let ended = row["end_time"].as_i64().unwrap_or(0);
+                    if initial && last_sync.is_none_or(|t| ended <= t) {
+                        history.push(game_id);
+                    } else {
+                        fresh.push(game_id);
+                    }
                 }
-                let ended = row["end_time"].as_i64().unwrap_or(0);
-                if initial && last_sync.is_none_or(|t| ended <= t) {
-                    history.push(game_id);
-                } else {
-                    fresh.push(game_id);
+                let (analyze_history, auto_analyze) = tx.query_row(
+                    "SELECT analyze_history,auto_analyze FROM accounts WHERE id=?",
+                    [id],
+                    |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?)),
+                )?;
+                // Save the pending jobs with the archive so they can survive a failed handoff.
+                for (ids, priority, wanted) in [
+                    (&history, PRIORITY_HISTORY, analyze_history),
+                    (&fresh, PRIORITY_NEW, auto_analyze),
+                ] {
+                    for game_id in ids.iter().filter(|_| wanted) {
+                        tx.execute(
+                            "INSERT OR REPLACE INTO sync_pending(account_id,game_id,priority) VALUES(?,?,?)",
+                            rusqlite::params![id, game_id, priority],
+                        )?;
+                    }
                 }
-            }
+                tx.execute("INSERT INTO archives(account_id,period,url,etag,last_modified,fetched_at,game_count,complete) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(account_id,period) DO UPDATE SET etag=excluded.etag,last_modified=excluded.last_modified,fetched_at=excluded.fetched_at,game_count=excluded.game_count,complete=excluded.complete",rusqlite::params![id,period,url,response.etag,response.last_modified,now(),rows.len()as i64,complete])?;
+                Ok((history, fresh, analyze_history, auto_analyze))
+            })?
+            else {
+                return Ok(());
+            };
             new_count += history.len() + fresh.len();
             fresh_count += fresh.len();
-            if account["analyze_history"] == 1 && !history.is_empty() {
+            if analyze_history && !history.is_empty() {
                 self.enqueue_for_account(id, &claim.generation, &history, PRIORITY_HISTORY)?;
             }
-            if account["auto_analyze"] == 1 && !fresh.is_empty() {
+            if auto_analyze && !fresh.is_empty() {
                 self.enqueue_for_account(id, &claim.generation, &fresh, PRIORITY_NEW)?;
             }
         }
         // Games are stored in the archive's transaction and queued afterwards, so a busy
         // database or a shutdown in between left them unqueued, and the next sync sees them
-        // as already stored. Catch up on games imported since the previous successful sync
-        // (last_sync_at only moves once this sync finishes), played after the account was added.
-        // Older games are left alone, so clearing the queue stays cleared.
-        if account["auto_analyze"] == 1 {
-            let rows = self.sync_rows("SELECT ag.game_id FROM account_games ag JOIN accounts a ON a.id=ag.account_id JOIN games g ON g.id=ag.game_id LEFT JOIN game_analysis ga ON ga.game_id=g.id LEFT JOIN jobs j ON j.game_id=g.id WHERE ag.account_id=? AND a.sync_generation=? AND g.imported_at>=? AND g.end_time>a.added_at AND ga.game_id IS NULL AND j.id IS NULL AND g.rules IN ('chess','chess960')", &[json!(id), json!(claim.generation), json!(last_sync.unwrap_or(0))])?;
-            let missed = rows
+        // as already stored. `sync_pending` lists exactly those games; queueing removes the
+        // row. Nothing else is caught up, so a cleared queue stays cleared and games imported
+        // from a PGN without analysis stay unqueued.
+        let pending = self.sync_rows(
+            "SELECT p.game_id,p.priority FROM sync_pending p JOIN accounts a ON a.id=p.account_id WHERE p.account_id=? AND a.sync_generation=?",
+            &[json!(id), json!(claim.generation)],
+        )?;
+        for priority in [PRIORITY_NEW, PRIORITY_HISTORY] {
+            let missed = pending
                 .iter()
+                .filter(|row| row["priority"] == priority)
                 .filter_map(|row| row["game_id"].as_i64())
                 .collect::<Vec<_>>();
             if !missed.is_empty() {
-                self.enqueue_for_account(id, &claim.generation, &missed, PRIORITY_NEW)?;
+                self.enqueue_for_account(id, &claim.generation, &missed, priority)?;
             }
         }
         if claim.transaction(self, |tx| {
@@ -756,18 +788,6 @@ impl Services {
             if new_count > 0 { claim.event(tx, "info", &format!("Imported {new_count} game(s)"))?; }
             Ok(())
         })?.is_none() { return Ok(()); }
-        if account["analyze_history"] == 1 {
-            let rows = self.sync_rows("SELECT ag.game_id FROM account_games ag JOIN accounts a ON a.id=ag.account_id JOIN games g ON g.id=ag.game_id LEFT JOIN game_analysis ga ON ga.game_id=g.id LEFT JOIN jobs j ON j.game_id=g.id WHERE ag.account_id=? AND a.sync_generation=? AND ga.game_id IS NULL AND j.id IS NULL AND g.rules IN ('chess','chess960')", &[json!(id), json!(claim.generation)])?;
-            self.enqueue_for_account(
-                id,
-                &claim.generation,
-                &rows
-                    .iter()
-                    .filter_map(|row| row["game_id"].as_i64())
-                    .collect::<Vec<_>>(),
-                PRIORITY_HISTORY,
-            )?;
-        }
         Ok(())
     }
 }
@@ -1279,9 +1299,25 @@ mod tests {
         db.execute("UPDATE archives SET complete=0", &[]).unwrap();
         sync();
         assert_eq!(db.scalar("SELECT COUNT(*) FROM jobs", &[]).unwrap(), 1);
-        // As if queueing the new game had failed (busy database, shutdown): no job, and the
-        // sync never finished, so last_sync_at did not move. The archive is unchanged (304).
-        db.execute("DELETE FROM jobs", &[]).unwrap();
+        let pending = || {
+            db.scalar("SELECT COUNT(*) FROM sync_pending", &[])
+                .unwrap()
+                .as_i64()
+                .unwrap()
+        };
+        let owe = |game: &Value| {
+            db.execute("DELETE FROM jobs", &[]).unwrap();
+            db.execute(
+                "INSERT INTO sync_pending(account_id,game_id,priority) VALUES(1,?,?)",
+                &[game.clone(), json!(PRIORITY_NEW)],
+            )
+            .unwrap();
+        };
+        assert_eq!(pending(), 0);
+        // As if queueing the new game had failed (busy database, shutdown): no job, the game is
+        // still owed one, and the sync never finished. The archive is unchanged (304).
+        let game = db.scalar("SELECT game_id FROM jobs", &[]).unwrap();
+        owe(&game);
         db.execute("UPDATE accounts SET last_sync_at=?", &[before])
             .unwrap();
         db.execute("UPDATE archives SET complete=0", &[]).unwrap();
@@ -1291,9 +1327,96 @@ mod tests {
             db.scalar("SELECT priority FROM jobs", &[]).unwrap(),
             PRIORITY_NEW
         );
-        // A queue the user cleared stays cleared: that game was imported before this sync.
+        assert_eq!(pending(), 0);
+        // A queue the user cleared stays cleared, also when the game was imported in the very
+        // second the previous sync finished (imported_at == last_sync_at) or later.
         db.execute("DELETE FROM jobs", &[]).unwrap();
         db.execute("UPDATE archives SET complete=0", &[]).unwrap();
+        db.execute(
+            "UPDATE accounts SET last_sync_at=(SELECT MIN(imported_at) FROM games)",
+            &[],
+        )
+        .unwrap();
+        sync();
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM jobs", &[]).unwrap(), 0);
+        // A recorded failure moves last_sync_at; the game still owed a job is queued anyway.
+        owe(&game);
+        service
+            .sync_error(
+                &db.one("SELECT * FROM accounts", &[]).unwrap().unwrap(),
+                "archive list 502",
+            )
+            .unwrap();
+        db.execute("UPDATE accounts SET last_sync_at=last_sync_at+3600", &[])
+            .unwrap();
+        sync();
+        assert_eq!(db.scalar("SELECT game_id FROM jobs", &[]).unwrap(), game);
+        assert_eq!(pending(), 0);
+        // Clearing the queue also drops what a sync still meant to queue.
+        owe(&game);
+        service
+            .handle("POST", "/api/queue/clear", &Query::new(), &Value::Null)
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending(), 0);
+        // Auto-review switched off before the retry: the owed job is dropped, not queued.
+        owe(&game);
+        db.execute("UPDATE accounts SET auto_analyze=0", &[])
+            .unwrap();
+        sync();
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM jobs", &[]).unwrap(), 0);
+        assert_eq!(pending(), 0);
+    }
+    #[test]
+    fn pgn_imports_without_analysis_are_not_queued_by_the_next_sync() {
+        let server = FixtureServer::start();
+        let db = Arc::new(Database::open(":memory:").unwrap());
+        db.execute(
+            "INSERT INTO accounts(username,added_at,analyze_history,auto_analyze) VALUES('klemen_r',?,1,1)",
+            &[json!(ADDED_AFTER_FIXTURE_GAMES)],
+        )
+        .unwrap();
+        let mut service = Arc::try_unwrap(Services::new(Arc::clone(&db)).unwrap())
+            .ok()
+            .unwrap();
+        service.client = ChessComClient {
+            base: Url::parse(&server.base).unwrap(),
+            client: OnceLock::new(),
+            serial: Mutex::new(None),
+        };
+        let sync = || {
+            service
+                .sync_account(&db.one("SELECT * FROM accounts", &[]).unwrap().unwrap())
+                .unwrap()
+        };
+        sync();
+        service
+            .handle("POST", "/api/queue/clear", &Query::new(), &Value::Null)
+            .unwrap()
+            .unwrap();
+        // The user's own game, played after the account was added, imported with analysis off.
+        let pgn = "[White \"klemen_r\"]\n[Black \"someone\"]\n[UTCDate \"2027.01.02\"]\n[UTCTime \"10:00:00\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Nf3 1-0";
+        let (_, imported) = service
+            .handle(
+                "POST",
+                "/api/games/import",
+                &Query::new(),
+                &json!({"pgn":pgn,"analyze":false}),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            db.scalar(
+                "SELECT COUNT(*) FROM account_games ag JOIN games g ON g.id=ag.game_id JOIN accounts a ON a.id=ag.account_id WHERE ag.game_id=? AND g.end_time>a.added_at",
+                &[imported["game_ids"][0].clone()],
+            )
+            .unwrap(),
+            1,
+            "{imported}"
+        );
+        db.execute("UPDATE archives SET complete=0", &[]).unwrap();
+        db.execute("UPDATE accounts SET last_sync_at=0", &[])
+            .unwrap();
         sync();
         assert_eq!(db.scalar("SELECT COUNT(*) FROM jobs", &[]).unwrap(), 0);
     }

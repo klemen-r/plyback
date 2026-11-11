@@ -103,7 +103,9 @@ export const api = {
   repertoire: (account_id: number, q: { color: 'white' | 'black'; time_class?: string; plies?: number; merge?: boolean }) =>
     request<Repertoire>('GET', `/accounts/${account_id}/repertoire${qs(q)}`),
   answerPractice: (account_id: number, game_id: number, ply: number, answer: { uci: string } | { reveal: true }) =>
-    request<PracticeResult>('POST', `/accounts/${account_id}/practice/${game_id}/${ply}`, answer),
+    request<PracticeResult>('POST', `/accounts/${account_id}/practice/${game_id}/${ply}`, {
+      ...answer, time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    }),
   finalizeReport: (id: number) => request<Report>('POST', `/reports/${id}/finalize`),
   deleteReport: (id: number) => request<{ deleted: boolean }>('DELETE', `/reports/${id}`),
 }

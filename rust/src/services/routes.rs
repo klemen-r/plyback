@@ -678,10 +678,15 @@ impl Services {
             "resume" => self.set_paused(false)?,
             "retry-failed" => return Ok((200, json!({"retried":self.retry_failed()?}))),
             "clear" => {
-                return Ok((
-                    200,
-                    json!({"cleared":self.db.execute("DELETE FROM jobs WHERE status='queued'",&[])?}),
-                ));
+                let cleared = self.db.transaction(|tx| {
+                    tx.execute("DELETE FROM sync_pending", [])?;
+                    tx.execute(
+                        "UPDATE jobs SET followup_priority=NULL,followup_depth=NULL WHERE status='running' AND followup_depth IS NOT NULL",
+                        [],
+                    )?;
+                    Ok(tx.execute("DELETE FROM jobs WHERE status='queued'", [])?)
+                })?;
+                return Ok((200, json!({"cleared":cleared})));
             }
             _ => return Err(api_error(404, "Unknown action")),
         }

@@ -263,6 +263,11 @@
                   },
                   "reveal": {
                     "type": "boolean"
+                  },
+                  "time_zone": {
+                    "type": "string",
+                    "maxLength": 64,
+                    "description": "IANA time zone used to schedule the due date in calendar days. Defaults to UTC."
                   }
                 }
               }

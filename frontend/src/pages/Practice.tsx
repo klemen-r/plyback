@@ -13,7 +13,7 @@ import { Button, Card, Empty, ErrorNote, Input, Loading, PageHeader, Select, Tab
 import { useAccount } from '../lib/account-context'
 import { api } from '../lib/api'
 import { CLASS_META, PHASE_LABEL } from '../lib/classification'
-import { cap, DAY, fmtDate, fmtDuration, nowTs } from '../lib/format'
+import { cap, DAY, dueIn, fmtDate, nowTs } from '../lib/format'
 import type { InteractiveResult, PracticeItem, PracticeKind, PracticePhase, PracticeResult, PracticeStats, PracticeTheme } from '../lib/types'
 
 type Kind = 'all' | PracticeKind
@@ -96,15 +96,7 @@ function walk(fen: string, sans: string[]) {
   return out
 }
 
-function returnsIn(due: number) {
-  const s = Math.max(0, due - nowTs())
-  if (s < 3600) return 'later in this session'
-  if (s < 43200) return `in ${fmtDuration(s)}`
-  // Calendar days: positions are due from the start of their day, not the second answered.
-  const day = (t: number) => { const d = new Date(t * 1000); return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000 }
-  const days = Math.max(1, day(due) - day(nowTs()))
-  return days === 1 ? 'tomorrow' : `in ${days} days`
-}
+function returnsIn(due: number) { return dueIn(due, nowTs()) }
 
 /** The puzzle as PGN: its position, the engine line and what was played in the game. */
 function puzzlePgn(item: PracticeItem, solution: PracticeResult, line: string[], username: string) {

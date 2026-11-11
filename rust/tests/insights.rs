@@ -528,6 +528,46 @@ fn trend_rating_is_null_when_a_period_mixes_time_classes() {
     assert_eq!(blitz["trend"][0]["rating"].as_f64(), Some(597.0));
 }
 #[test]
+fn chess960_is_its_own_rating_pool() {
+    let db = fixture();
+    // The last rated blitz game of the week becomes a live 960 game with a 960 rating.
+    let last = db
+        .scalar(
+            "SELECT id FROM games WHERE time_class='blitz' AND rated=1 ORDER BY end_time DESC,id DESC LIMIT 1",
+            &[],
+        )
+        .unwrap();
+    let before = compute(&db, 1, &json!({"time_classes":"blitz"})).unwrap();
+    let games = before["ratings"]["blitz"]["games"].as_i64().unwrap();
+    db.execute(
+        "UPDATE games SET rules='chess960',white_rating=1500,black_rating=1500 WHERE id=?",
+        std::slice::from_ref(&last),
+    )
+    .unwrap();
+    let blitz = compute(&db, 1, &json!({"time_classes":"blitz"})).unwrap();
+    assert!(blitz["trend"][0]["rating"].is_null(), "{}", blitz["trend"]);
+    assert_eq!(blitz["ratings"]["blitz"]["games"], games - 1);
+    assert_ne!(blitz["ratings"]["blitz"]["end"].as_f64(), Some(1500.0));
+    assert_eq!(blitz["ratings"]["blitz 960"]["games"], 1);
+    assert_eq!(blitz["ratings"]["blitz 960"]["end"].as_f64(), Some(1500.0));
+    assert_eq!(blitz["ratings"]["blitz 960"]["points"][0]["game_id"], last);
+}
+#[test]
+fn sessions_are_the_same_with_and_without_filters_when_the_account_has_variant_games() {
+    let db = fixture();
+    // Game 1, the loss game 2 follows 467 s later, was a variant game: not in any statistic,
+    // but still a sitting at the board.
+    db.execute("UPDATE games SET rules='crazyhouse' WHERE id=1", &[])
+        .unwrap();
+    let all = compute(&db, 1, &json!({})).unwrap();
+    let dated = compute(&db, 1, &json!({"since":0,"until":253402300799_i64})).unwrap();
+    assert_eq!(all["overview"]["games"], dated["overview"]["games"]);
+    assert_eq!(all["sessions"], dated["sessions"]);
+    assert_eq!(all["sessions"]["sessions"], 5);
+    let black = compute(&db, 1, &json!({"color":"black"})).unwrap();
+    assert_eq!(black["sessions"]["after"]["loss"]["games"], 3);
+}
+#[test]
 fn missed_mates_count_alike_for_both_sides() {
     let db = fixture();
     // Game 1: the account is white, so ply 8 is the opponent's. An inaccuracy that misses a

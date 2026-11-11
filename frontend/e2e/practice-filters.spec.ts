@@ -363,7 +363,7 @@ test('The promotion picker sits over the board and can be cancelled (#29)', asyn
   await playOnBoard(page, 'b7', 'b8')
   await picker.getByRole('button', { name: 'Queen' }).click()
   await expect(page.getByText('Solved on the first try')).toBeVisible()
-  expect(posted).toEqual([{ uci: 'b7b8q' }])
+  expect(posted).toEqual([{ uci: 'b7b8q', time_zone: expect.any(String) }])
   expect(errors).toEqual([])
 })
 
@@ -452,7 +452,7 @@ test('Practice can be played from the keyboard by typing moves', async ({ page }
   expect(posted).toEqual([])
   await field.fill('e2e4')
   await field.press('Enter')
-  await expect.poll(() => posted).toEqual([{ uci: 'e2e4' }])
+  await expect.poll(() => posted).toEqual([{ uci: 'e2e4', time_zone: expect.any(String) }])
   await page.clock.runFor(500)
   await expect(page.getByText('Good. Find the next move (2 of 2).')).toBeVisible()
   await field.fill('Nf3')
