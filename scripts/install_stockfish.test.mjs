@@ -6,12 +6,18 @@ import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import test from 'node:test'
-import { boundedBytes, command, download, extract, install, metadataURL, PINNED, response, tar } from './install_stockfish.mjs'
+import { boundedBytes, command, download, engineDestination, extract, install, metadataURL, PINNED, response, tar } from './install_stockfish.mjs'
 
 const assetURL = 'https://github.com/official-stockfish/Stockfish/releases/download/sf_test/stockfish.tar'
 const licenseURL = 'https://raw.githubusercontent.com/official-stockfish/Stockfish/sf_test/Copying.txt'
 const executable = process.platform === 'win32' ? 'stockfish.exe' : 'stockfish'
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
+
+test('the installer follows PLYBACK_DATA unless a destination is explicit', () => {
+  assert.equal(engineDestination([], 'custom directory'), path.join('custom directory', 'engine'))
+  assert.equal(engineDestination(['--dest', 'explicit directory'], 'custom directory'), 'explicit directory')
+  assert.throws(() => engineDestination(['--dest'], 'custom directory'), /--dest needs a directory/)
+})
 
 async function temporary(t) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'plyback-installer-test-'))

@@ -210,9 +210,13 @@ export async function install(destination, force = false, { fetchImpl, runComman
   throw new Error(`Could not install Stockfish automatically.\n${failures.join('\n')}\nInstall from https://stockfishchess.org/download/ and set PLYBACK_STOCKFISH. A tar utility is required for automatic installation.`)
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const index = process.argv.indexOf('--dest')
-  const destination = index < 0 ? path.join(root, 'data/engine') : process.argv[index + 1]
+export function engineDestination(args, dataDirectory) {
+  const index = args.indexOf('--dest')
+  const destination = index < 0 ? path.join(dataDirectory || path.join(root, 'data'), 'engine') : args[index + 1]
   if (!destination) throw new Error('--dest needs a directory')
-  await install(destination, process.argv.includes('--force'))
+  return destination
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await install(engineDestination(process.argv.slice(2), process.env.PLYBACK_DATA), process.argv.includes('--force'))
 }
