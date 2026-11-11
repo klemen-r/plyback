@@ -134,8 +134,13 @@ jobs:
       - run: npm audit
 
   e2e:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    name: Setup, start and browser workflows (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -149,24 +154,38 @@ jobs:
         with:
           workspaces: rust -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Set up isolated servers and browser
-        run: |
-          cargo build --release --locked --manifest-path rust/Cargo.toml
-          cd frontend
-          npm ci
-          npm run build
-          npx playwright install --with-deps chromium
-      - name: Install verified Stockfish
-        run: node scripts/install_stockfish.mjs
+      # Run the supported source setup on a clean checkout. Its builds are also
+      # the prebuilt inputs for Playwright; do not build/install a second time.
+      - name: Set up source distribution (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash setup.sh
         env:
           GITHUB_TOKEN: ${{ github.token }}
+      - name: Set up source distribution (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: .\setup.ps1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Smoke-test source launcher (Linux)
+        if: runner.os == 'Linux'
+        run: node scripts/smoke_start.mjs
+      - name: Smoke-test source launcher (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: node scripts/smoke_start.mjs
+      - name: Install browser
+        working-directory: frontend
+        run: |
+          npx playwright install --with-deps chromium
       - name: Browser workflows
         working-directory: frontend
         run: npm run e2e
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
-          name: browser-failures
+          name: browser-failures-${{ matrix.os }}
           path: frontend/test-results/
 
   container:
@@ -187,6 +206,7 @@ jobs:
             if curl --fail --silent http://127.0.0.1:8000/api/health; then break; fi
             sleep 1
           done
+          curl --fail --silent --show-error http://127.0.0.1:8000/api/health
           curl --fail --silent http://127.0.0.1:8000/ | grep -q Plyback
           test "$(curl --silent -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/accounts)" = 401
           curl --fail --silent -c /tmp/plyback-cookies -H 'Content-Type: application/json' -H 'X-Requested-With: plyback' -d '{"password":"ci-access-password"}' http://127.0.0.1:8000/api/auth/login

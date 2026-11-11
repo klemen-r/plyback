@@ -3,8 +3,15 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 function Invoke-Checked {
     param([string]$Executable, [string[]]$Arguments)
-    & $Executable @Arguments
-    if ($LASTEXITCODE -ne 0) { throw "$Executable failed with exit code $LASTEXITCODE." }
+    # Windows PowerShell 5.1 can wrap native stderr (including Cargo progress)
+    # as error records when output is captured. Only the exit code signals failure.
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & $Executable @Arguments
+        $exitCode = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previousPreference }
+    if ($exitCode -ne 0) { throw "$Executable failed with exit code $exitCode." }
 }
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { throw "Install Rust from https://rustup.rs first (including the Windows build tools)." }
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw "Node.js 22.12+ is required to build the interface." }

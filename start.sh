@@ -2,7 +2,8 @@
 # Plyback - start the server.   ./start.sh [--lan] [--port 8000]
 set -euo pipefail
 cd "$(dirname "$0")"
-[ -x rust/target/release/plyback ] || { echo "The server is not built. Run ./setup.sh first."; exit 1; }
+binary="${CARGO_TARGET_DIR:-rust/target}/release/plyback"
+[ -x "$binary" ] || { echo "The server is not built. Run ./setup.sh first."; exit 1; }
 export PLYBACK_HOST="${PLYBACK_HOST:-127.0.0.1}" PLYBACK_PORT="${PLYBACK_PORT:-8000}"
 export PLYBACK_DATA="${PLYBACK_DATA:-$PWD/data}" PLYBACK_FRONTEND="${PLYBACK_FRONTEND:-$PWD/frontend/dist}"
 [ -f "$PLYBACK_FRONTEND/index.html" ] || { echo "The web interface is not built in $PLYBACK_FRONTEND. Run ./setup.sh first."; exit 1; }
@@ -18,4 +19,4 @@ while [ $# -gt 0 ]; do
 done
 echo "Plyback is starting at http://localhost:$PLYBACK_PORT  (Ctrl+C to stop)"
 [ "$NO_BROWSER" = 1 ] || ( sleep 3; (command -v xdg-open >/dev/null && xdg-open "http://localhost:$PLYBACK_PORT") || (command -v open >/dev/null && open "http://localhost:$PLYBACK_PORT") ) >/dev/null 2>&1 &
-exec rust/target/release/plyback
+exec "$binary"
