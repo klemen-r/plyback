@@ -29,20 +29,22 @@ fn setting_label(key: &str) -> &str {
     }
 }
 pub fn get_settings(db: &Database) -> Result<Value> {
-    Ok(merge_stored(
-        db.query("SELECT key,value FROM settings", &[])?,
-    ))
+    db.read(get_settings_from_connection)
+}
+
+pub(super) fn get_settings_from_connection(connection: &rusqlite::Connection) -> Result<Value> {
+    Ok(merge_stored(query_connection(
+        connection,
+        "SELECT key,value FROM settings",
+        &[],
+    )?))
 }
 pub(super) fn get_settings_until(
     db: &Database,
     deadline: std::time::Instant,
     cancelled: impl Fn() -> bool,
 ) -> Result<Option<Value>> {
-    Ok(db
-        .read_until(deadline, cancelled, |connection| {
-            query_connection(connection, "SELECT key,value FROM settings", &[])
-        })?
-        .map(merge_stored))
+    db.read_until(deadline, cancelled, get_settings_from_connection)
 }
 fn merge_stored(rows: Vec<Value>) -> Value {
     let mut settings = default_settings();

@@ -69,84 +69,7 @@ impl Services {
             ));
         }
         let enqueue = |tx: &rusqlite::Transaction<'_>| {
-            let mut review_allowed = true;
-            if let Some((account, generation)) = account {
-                let preference = tx.query_row(
-                    "SELECT CASE WHEN ?=? THEN analyze_history ELSE auto_analyze END FROM accounts WHERE id=? AND sync_generation=?",
-                    rusqlite::params![priority, PRIORITY_HISTORY, account, generation],
-                    |r| r.get::<_, bool>(0),
-                ).optional()?;
-                let Some(enabled) = preference else {
-                    return Ok(0);
-                };
-                review_allowed = enabled;
-            }
-            let mut seen = HashSet::new();
-            let mut added = 0;
-            for &id in ids {
-                if account.is_some() && self.stop.load(Ordering::SeqCst) {
-                    anyhow::bail!("Sync cancelled");
-                }
-                if !seen.insert(id) {
-                    continue;
-                }
-                if let Some((account, _)) = account {
-                    // Claim the marker in the same transaction as the queue write. Clear
-                    // queue may already have removed it since the sync read the pending IDs.
-                    let pending = tx.execute(
-                        "DELETE FROM sync_pending WHERE account_id=? AND game_id=? AND priority=?",
-                        rusqlite::params![account, id, priority],
-                    )?;
-                    if pending == 0 || !review_allowed {
-                        continue;
-                    }
-                }
-                if let Some((account, _)) = account
-                    && !tx.query_row("SELECT EXISTS(SELECT 1 FROM account_games WHERE account_id=? AND game_id=?)",rusqlite::params![account,id],|r|r.get::<_,bool>(0))? {
-                    continue;
-                }
-                let game = tx
-                    .query_row("SELECT end_time,rules FROM games WHERE id=?", [id], |r| {
-                        Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, String>(1)?))
-                    })
-                    .optional()?;
-                let Some((end_time, rules)) = game else {
-                    continue;
-                };
-                if !matches!(rules.as_str(), "chess" | "chess960") {
-                    continue;
-                }
-                if !force {
-                    let done:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM game_analysis WHERE game_id=? AND depth>=? AND version>=?)",rusqlite::params![id,depth,ANALYSIS_VERSION],|r|r.get(0))?;
-                    if done {
-                        continue;
-                    }
-                }
-                let active=tx.query_row("SELECT id,status,COALESCE(depth,0) FROM jobs WHERE game_id=? AND status IN ('queued','running')",[id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?))).optional()?;
-                if let Some((job, status, running_depth)) = active {
-                    if status == "queued" {
-                        tx.execute("UPDATE jobs SET priority=MAX(priority,?),depth=MAX(COALESCE(depth,0),?) WHERE id=?",rusqlite::params![priority,depth,job])?;
-                    } else if account.is_none() {
-                        // Store the request with the running job. Saving that job's analysis
-                        // queues its follow-up in the same transaction.
-                        if running_depth < depth {
-                            tx.execute(
-                                "UPDATE jobs SET followup_priority=MAX(COALESCE(followup_priority,?1),?1),followup_depth=MAX(COALESCE(followup_depth,?2),?2) WHERE id=?3",
-                                rusqlite::params![priority, depth, job],
-                            )?;
-                            added += 1;
-                        } else if force {
-                            // The running job is already a fresh analysis at this depth or deeper.
-                            added += 1;
-                        }
-                    }
-                    continue;
-                }
-                tx.execute("DELETE FROM jobs WHERE game_id=? AND status='failed'", [id])?;
-                tx.execute("INSERT INTO jobs(game_id,status,priority,depth,created_at,sort_key) VALUES(?,'queued',?,?,?,?)",rusqlite::params![id,priority,depth,now(),end_time.unwrap_or(0)])?;
-                added += 1;
-            }
-            Ok(added)
+            self.enqueue_in(tx, ids, priority, depth, force, account)
         };
         let added = if account.is_some() {
             self.db
@@ -161,6 +84,111 @@ impl Services {
         };
         if added > 0 {
             self.notify();
+        }
+        Ok(added)
+    }
+    /// Queues a PGN import's games in the transaction that stores them, so the games and
+    /// their jobs are saved together. The caller wakes the workers after the commit.
+    pub(super) fn enqueue_import(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        ids: &[i64],
+    ) -> Result<usize> {
+        let settings = settings::get_settings_from_connection(tx)?;
+        let depth = settings["analysis_depth"].as_i64().unwrap_or(16);
+        self.enqueue_in(tx, ids, PRIORITY_MANUAL, depth, false, None)
+    }
+    /// Adds or raises the jobs for `ids` inside `tx`, and returns how many were added.
+    fn enqueue_in(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        ids: &[i64],
+        priority: i64,
+        depth: i64,
+        force: bool,
+        account: Option<(i64, &str)>,
+    ) -> Result<usize> {
+        let mut review_allowed = true;
+        if let Some((account, generation)) = account {
+            let preference = tx.query_row(
+                "SELECT CASE WHEN ?=? THEN analyze_history ELSE auto_analyze END FROM accounts WHERE id=? AND sync_generation=?",
+                rusqlite::params![priority, PRIORITY_HISTORY, account, generation],
+                |r| r.get::<_, bool>(0),
+            ).optional()?;
+            let Some(enabled) = preference else {
+                return Ok(0);
+            };
+            review_allowed = enabled;
+        }
+        let mut seen = HashSet::new();
+        let mut added = 0;
+        for &id in ids {
+            if account.is_some() && self.stop.load(Ordering::SeqCst) {
+                anyhow::bail!("Sync cancelled");
+            }
+            if !seen.insert(id) {
+                continue;
+            }
+            if let Some((account, _)) = account {
+                // Claim the marker in the same transaction as the queue write. Clear
+                // queue may already have removed it since the sync read the pending IDs.
+                let pending = tx.execute(
+                    "DELETE FROM sync_pending WHERE account_id=? AND game_id=? AND priority=?",
+                    rusqlite::params![account, id, priority],
+                )?;
+                if pending == 0 || !review_allowed {
+                    continue;
+                }
+            }
+            if let Some((account, _)) = account
+                && !tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM account_games WHERE account_id=? AND game_id=?)",
+                    rusqlite::params![account, id],
+                    |r| r.get::<_, bool>(0),
+                )?
+            {
+                continue;
+            }
+            let game = tx
+                .query_row("SELECT end_time,rules FROM games WHERE id=?", [id], |r| {
+                    Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, String>(1)?))
+                })
+                .optional()?;
+            let Some((end_time, rules)) = game else {
+                continue;
+            };
+            if !matches!(rules.as_str(), "chess" | "chess960") {
+                continue;
+            }
+            if !force {
+                let done:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM game_analysis WHERE game_id=? AND depth>=? AND version>=?)",rusqlite::params![id,depth,ANALYSIS_VERSION],|r|r.get(0))?;
+                if done {
+                    continue;
+                }
+            }
+            let active=tx.query_row("SELECT id,status,COALESCE(depth,0) FROM jobs WHERE game_id=? AND status IN ('queued','running')",[id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?))).optional()?;
+            if let Some((job, status, running_depth)) = active {
+                if status == "queued" {
+                    tx.execute("UPDATE jobs SET priority=MAX(priority,?),depth=MAX(COALESCE(depth,0),?) WHERE id=?",rusqlite::params![priority,depth,job])?;
+                } else if account.is_none() {
+                    // Store the request with the running job. Saving that job's analysis
+                    // queues its follow-up in the same transaction.
+                    if running_depth < depth {
+                        tx.execute(
+                            "UPDATE jobs SET followup_priority=MAX(COALESCE(followup_priority,?1),?1),followup_depth=MAX(COALESCE(followup_depth,?2),?2) WHERE id=?3",
+                            rusqlite::params![priority, depth, job],
+                        )?;
+                        added += 1;
+                    } else if force {
+                        // The running job is already a fresh analysis at this depth or deeper.
+                        added += 1;
+                    }
+                }
+                continue;
+            }
+            tx.execute("DELETE FROM jobs WHERE game_id=? AND status='failed'", [id])?;
+            tx.execute("INSERT INTO jobs(game_id,status,priority,depth,created_at,sort_key) VALUES(?,'queued',?,?,?,?)",rusqlite::params![id,priority,depth,now(),end_time.unwrap_or(0)])?;
+            added += 1;
         }
         Ok(added)
     }

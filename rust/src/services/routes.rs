@@ -373,11 +373,15 @@ impl Services {
                 "DELETE FROM events WHERE id < (SELECT MAX(id)-5000 FROM events)",
                 [],
             )?;
-            Ok(result)
+            // Queued in the same transaction: a failed queue write also undoes the import, so
+            // an "Analyse immediately" import never leaves games stored without their jobs.
+            let ids = result.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+            let queued = if analyze { self.enqueue_import(tx, &ids)? } else { 0 };
+            Ok((result, ids, queued))
         })?;
-        let ids = results.iter().map(|(id, _)| *id).collect::<Vec<_>>();
-        if analyze {
-            self.enqueue(&ids, PRIORITY_MANUAL, None, false)?;
+        let (results, ids, queued) = results;
+        if queued > 0 {
+            self.notify();
         }
         Ok((
             200,
@@ -759,6 +763,52 @@ mod tests {
             events[1]["message"],
             "PGN import: 1 game(s) already in Plyback"
         );
+    }
+    #[test]
+    fn pgn_import_and_its_jobs_are_saved_together() {
+        let db = Arc::new(Database::open(":memory:").unwrap());
+        let s = Services::new(Arc::clone(&db)).unwrap();
+        let reject_jobs = "CREATE TRIGGER reject_job BEFORE INSERT ON jobs BEGIN SELECT RAISE(ABORT, 'test job write failure'); END";
+        db.execute(
+            "INSERT INTO accounts(username,added_at) VALUES('me',0)",
+            &[],
+        )
+        .unwrap();
+        db.execute(reject_jobs, &[]).unwrap();
+        let body =
+            json!({"pgn": "[White \"Me\"]\n[Black \"Friend\"]\n\n1. e4 e5 *", "analyze": true});
+        assert!(s.import_pgn(&body).is_err());
+        for table in ["games", "account_games", "events", "jobs"] {
+            assert_eq!(
+                db.scalar(&format!("SELECT COUNT(*) FROM {table}"), &[])
+                    .unwrap(),
+                0,
+                "{table}"
+            );
+        }
+        db.execute("DROP TRIGGER reject_job", &[]).unwrap();
+        let (status, imported) = s.import_pgn(&body).unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(
+            db.scalar("SELECT game_id FROM jobs WHERE status='queued'", &[])
+                .unwrap(),
+            imported["game_ids"][0]
+        );
+        // A failed import leaves no deeper-analysis request on a game that is being reviewed.
+        db.execute(
+            "UPDATE jobs SET status='running',depth=6 WHERE game_id=?",
+            &[imported["game_ids"][0].clone()],
+        )
+        .unwrap();
+        db.execute(reject_jobs, &[]).unwrap();
+        let more = json!({"pgn": "[White \"Me\"]\n[Black \"Friend\"]\n\n1. e4 e5 *\n\n1. d4 d5 *", "analyze": true});
+        assert!(s.import_pgn(&more).is_err());
+        assert!(
+            db.scalar("SELECT followup_depth FROM jobs", &[])
+                .unwrap()
+                .is_null()
+        );
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM games", &[]).unwrap(), 1);
     }
     #[test]
     fn games_filter_by_how_they_ended() {
