@@ -1680,7 +1680,7 @@
           "auto_analyze": {
             "type": "boolean",
             "title": "Auto Analyze",
-            "default": true
+            "description": "Omit to use the saved auto_analyze_new setting."
           }
         },
         "type": "object",

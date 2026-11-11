@@ -163,7 +163,12 @@ impl Services {
             return Err(api_error(400, "import_since must look like YYYY/MM"));
         }
         let history = bool_value(body, "analyze_history", true)?;
-        let auto = bool_value(body, "auto_analyze", true)?;
+        let settings = get_settings(&self.db)?;
+        let auto = bool_value(
+            body,
+            "auto_analyze",
+            settings["auto_analyze_new"].as_bool().unwrap_or(true),
+        )?;
         if self
             .db
             .one(
@@ -174,7 +179,6 @@ impl Services {
         {
             return Err(api_error(409, format!("{username} is already connected")));
         }
-        let settings = get_settings(&self.db)?;
         let profile = self
             .client
             .profile(

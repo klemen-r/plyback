@@ -22,7 +22,7 @@ export function AddAccountForm({ onAdded }: { onAdded?: (a: Account) => void }) 
   const [history, setHistory] = useState(true)
   const qc = useQueryClient()
   const add = useMutation({
-    mutationFn: () => api.addAccount({ username: username.trim(), import_since: range === 'all' ? null : monthsAgo(Number(range)), analyze_history: history, auto_analyze: true }),
+    mutationFn: () => api.addAccount({ username: username.trim(), import_since: range === 'all' ? null : monthsAgo(Number(range)), analyze_history: history }),
     onSuccess: a => { qc.invalidateQueries({ queryKey: ['accounts'] }); setUsername(''); onAdded?.(a) },
   })
   return (
@@ -42,7 +42,7 @@ export function AddAccountForm({ onAdded }: { onAdded?: (a: Account) => void }) 
       </div>
       <div className="mt-2 border-t border-line">
         <Switch checked={history} onChange={setHistory} label="Review imported history in the background"
-          description="New games are always reviewed. Turn this off to review older games only when you ask for them." />
+          description="Turn this off to review older games only when you ask." />
       </div>
       {add.isPending && <p className="mt-2 text-[13px] text-fg-2" role="status">Contacting Chess.com… If it is slow or unreachable, this can take up to a minute.</p>}
       {add.error && <div className="mt-1"><ErrorNote error={add.error} /></div>}

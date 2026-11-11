@@ -1131,6 +1131,31 @@ mod tests {
     }
 
     #[test]
+    fn new_accounts_inherit_the_saved_auto_review_default_unless_overridden() {
+        let server = FixtureServer::start();
+        for (override_value, expected) in [(None, false), (Some(true), true)] {
+            let db = Arc::new(Database::open(":memory:").unwrap());
+            super::super::save_settings(&db, &json!({"auto_analyze_new": false})).unwrap();
+            let mut service = Arc::try_unwrap(Services::new(db).unwrap()).ok().unwrap();
+            service.client = ChessComClient {
+                base: Url::parse(&server.base).unwrap(),
+                client: OnceLock::new(),
+                serial: Mutex::new(None),
+            };
+            let mut body = json!({"username": "klemen_r"});
+            if let Some(value) = override_value {
+                body["auto_analyze"] = json!(value);
+            }
+            let (status, account) = service
+                .handle("POST", "/api/accounts", &crate::Query::new(), &body)
+                .unwrap()
+                .unwrap();
+            assert_eq!(status, 201);
+            assert_eq!(account["auto_analyze"], expected);
+        }
+    }
+
+    #[test]
     fn fixture_sync_is_incremental_conditional_and_preserves_history_priority() {
         let server = FixtureServer::start();
         let db = Arc::new(Database::open(":memory:").unwrap());
