@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, ChevronLeft, ChevronRight, Search, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import ClassIcon from '../components/ClassIcon'
 import { MiniBoard } from '../components/Evidence'
@@ -71,10 +71,13 @@ export default function Games() {
   const [shownQ, setShownQ] = useState(urlQ)
   const [pushed, setPushed] = useState(urlQ)
   if (urlQ !== shownQ) { setShownQ(urlQ); if (urlQ !== pushed) setSearch(urlQ) }
+  // Merge the search with the current URL, since other filters can change during the delay.
+  const pushSearch = useEffectEvent((value: string) => {
+    if (value !== get('q')) { setPushed(value); set('q', value) }
+  })
   useEffect(() => {
-    const t = setTimeout(() => { if (search !== get('q')) { setPushed(search); set('q', search) } }, 300)
+    const t = setTimeout(() => pushSearch(search), 300)
     return () => clearTimeout(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search])
 
   // A hand-edited or stale ?page= (0, -2, 2.5, abc) falls back to the first page.

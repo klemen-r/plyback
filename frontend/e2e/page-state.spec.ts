@@ -37,6 +37,22 @@ test('The Games search box follows the URL when the Games tab clears the search'
   await expect(page).toHaveURL(/\/games\?q=smith$/)
 })
 
+test('A pending Games search keeps a filter selected while typing', async ({ page }) => {
+  await page.clock.install()
+  await mockApi(page)
+  await page.goto('/games')
+  const search = page.getByRole('textbox', { name: 'Search games' })
+  await expect(search).toBeVisible()
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 5000))
+  await search.fill('smith')
+  await page.getByLabel('Time control').selectOption('blitz')
+  await expect(page).toHaveURL(/time_class=blitz/)
+
+  await page.clock.runFor(300)
+  await expect(page).toHaveURL(url => url.searchParams.get('q') === 'smith' && url.searchParams.get('time_class') === 'blitz')
+  await expect(page.getByLabel('Time control')).toHaveValue('blitz')
+})
+
 test('The PGN file picker can be reached with the keyboard', async ({ page }) => {
   await mockApi(page)
   await page.goto('/import')
