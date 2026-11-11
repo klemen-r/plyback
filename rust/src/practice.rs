@@ -300,7 +300,7 @@ fn queue(db: &Database, account: i64, q: &Query) -> ApiResult {
     let at = now();
     let items = if since.is_some() {
         let mut picked: Vec<&Candidate> = all.iter().collect();
-        picked.shuffle(&mut rand::thread_rng());
+        picked.shuffle(&mut rand::rng());
         picked
             .into_iter()
             .take(limit)

@@ -5,7 +5,7 @@ use base64::{
     Engine as _,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
-use rand::{RngCore, rngs::OsRng};
+use rand::{TryRng, rngs::SysRng};
 use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -27,7 +27,8 @@ pub fn validate_password(password: &str) -> anyhow::Result<()> {
 
 pub fn hash_password(password: &str) -> anyhow::Result<String> {
     let mut salt = [0; 16];
-    OsRng.fill_bytes(&mut salt);
+    // Straight from the operating system; a failure is an error, never a weak salt.
+    SysRng.try_fill_bytes(&mut salt)?;
     let mut digest = [0; 32];
     scrypt::scrypt(
         password.as_bytes(),
@@ -100,7 +101,7 @@ pub fn create_session(db: &Database, user_agent: &str) -> anyhow::Result<String>
 
 fn insert_session(tx: &rusqlite::Transaction<'_>, user_agent: &str) -> anyhow::Result<String> {
     let mut bytes = [0; 32];
-    OsRng.fill_bytes(&mut bytes);
+    SysRng.try_fill_bytes(&mut bytes)?;
     let token = URL_SAFE_NO_PAD.encode(bytes);
     let timestamp = now();
     tx.execute("DELETE FROM sessions WHERE expires_at < ?", [timestamp])?;
