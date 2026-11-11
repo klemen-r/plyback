@@ -10,6 +10,10 @@ services:
       PLYBACK_PASSWORD: ${PLYBACK_PASSWORD:-}
       # Behind an HTTPS reverse proxy, also set:
       # PLYBACK_SECURE_COOKIES: "1"
+      # List published host IPs/names, including with a password:
+      # PLYBACK_ALLOWED_HOSTS: "192.168.1.10,chess.example.org"
+      # Trust only the proxy's actual connecting IP to separate client rate limits:
+      # PLYBACK_TRUSTED_PROXIES: "172.20.0.2"
     volumes:
       - plyback-data:/data
     read_only: true

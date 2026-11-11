@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    net::IpAddr,
+    path::{Path, PathBuf},
+};
 
 pub const MAX_BODY_BYTES: usize = 25 * 1024 * 1024;
 
@@ -9,6 +12,7 @@ pub struct Config {
     pub host: String,
     pub port: u16,
     pub allowed_hosts: Vec<String>,
+    pub trusted_proxies: Vec<IpAddr>,
     pub secure_cookies: bool,
     pub allow_unauthenticated_remote: bool,
     pub background: bool,
@@ -56,6 +60,9 @@ impl Config {
                 .filter(|s| !s.is_empty())
                 .collect(),
             secure_cookies: flag("SECURE_COOKIES"),
+            trusted_proxies: parse_trusted_proxies(
+                &env("TRUSTED_PROXIES", None).unwrap_or_default(),
+            )?,
             allow_unauthenticated_remote: flag("ALLOW_UNAUTHENTICATED_REMOTE"),
             background: !flag("NO_BACKGROUND"),
         })
@@ -64,6 +71,28 @@ impl Config {
     pub fn db_path(&self) -> PathBuf {
         self.data.join("plyback.db")
     }
+
+    pub fn requires_password(&self) -> bool {
+        !crate::security::is_loopback_host(&self.host) && !self.allow_unauthenticated_remote
+    }
+}
+
+fn parse_trusted_proxies(value: &str) -> anyhow::Result<Vec<IpAddr>> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            s.parse::<IpAddr>()
+                .map(|ip| ip.to_canonical())
+                .map_err(|_| {
+                    anyhow::anyhow!(
+                        "Invalid IP address in PLYBACK_TRUSTED_PROXIES: {s}. \
+                         Use exact IPs, not names or CIDR ranges."
+                    )
+                })
+        })
+        .collect()
 }
 
 /// The checkout that compiled this binary. Only a last resort: the executable may
@@ -153,6 +182,29 @@ pub fn check_frontend(frontend: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trusted_proxies_require_explicit_ips() {
+        assert!(parse_trusted_proxies("").unwrap().is_empty());
+        assert_eq!(
+            parse_trusted_proxies("127.0.0.1, ::1, , ::ffff:192.0.2.1").unwrap(),
+            ["127.0.0.1", "::1", "192.0.2.1"].map(|s| s.parse::<IpAddr>().unwrap())
+        );
+        for invalid in [
+            "*",
+            "localhost",
+            "127.0.0.0/8",
+            "127.0.0.1:8000",
+            "127.0.0.1,garbage",
+        ] {
+            assert!(
+                parse_trusted_proxies(invalid)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("PLYBACK_TRUSTED_PROXIES")
+            );
+        }
+    }
 
     fn touch(path: &Path) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();

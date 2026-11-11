@@ -33,3 +33,17 @@ both the data directory and backups. A full external penetration test was not pe
 
 Reference behavior was checked against the installed Starlette body-limit implementation and
 [HTTPX redirect documentation](https://www.python-httpx.org/compatibility/#redirects).
+
+## Native HTTP follow-up — 2026-11-10
+
+Issue #54's Host and shared-proxy rate-limit findings are addressed in the Rust HTTP adapter.
+The Host allowlist applies with a password; protected wildcard binds also accept OS interface IPs
+and the OS hostname discovered at startup. `PLYBACK_ALLOWED_HOSTS` lists additional public names.
+`PLYBACK_TRUSTED_PROXIES` opts exact peer IPs into XFF/Forwarded client identification, walking
+trusted hops from right to left. Invalid chains retain the TCP peer's rate-limit bucket.
+
+Rust regressions in `rust/tests/http_security.rs` and `rust/src/http.rs` cover protected Host
+rejection, explicit/wildcard binds, independent client buckets, spoofing, malformed/repeated chains,
+IPv6 and the passwordless Tailscale Serve Host `plyback.tailnet.example`.
+The separate P2 proposal to reject forwarding headers without a password remains an owner decision;
+this change preserves that existing access. See [deployment settings](../SECURITY.md#running-behind-a-reverse-proxy).

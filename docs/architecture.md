@@ -77,6 +77,11 @@ The server reserves its listening port before touching data, so a duplicate laun
 HTTP permits cap concurrent blocking work. Body uploads have byte and time limits. Password hashing
 runs off the async reactor and transactionally checks the verified password before issuing a session.
 An API request checks session validity again after reading its body.
+Host validation applies regardless of password state. Protected wildcard listeners additionally
+accept interface IPs and the OS hostname captured at startup; aliases use `PLYBACK_ALLOWED_HOSTS`.
+Rate limits normally use the TCP peer. `PLYBACK_TRUSTED_PROXIES` opts exact proxy IPs into
+right-to-left XFF/Forwarded chain validation; malformed chains retain the peer bucket. See
+[proxy configuration](../SECURITY.md#running-behind-a-reverse-proxy) for trust and header precedence.
 
 Live resource changes cancel and join retired workers before starting replacements, using one immutable
 settings snapshot per worker generation. Workers, threads and hash memory have aggregate bounds.

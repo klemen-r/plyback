@@ -16,7 +16,7 @@ credentials.
 | Deployment | Protection |
 |---|---|
 | Local only (default, `127.0.0.1`) | Open without a password. Requests must carry a loopback `Host` header, which blocks DNS-rebinding attacks from web pages. |
-| Reachable from other machines (`--lan`, Docker, a server) | An access password is **required**; the server refuses to start without one unless `PLYBACK_ALLOW_UNAUTHENTICATED_REMOTE=1` is set explicitly. |
+| Bound to a network interface (`--lan`, Docker, a server) | The server requires an access password at startup and while running, unless `PLYBACK_ALLOW_UNAUTHENTICATED_REMOTE=1` is set explicitly. If the password is removed while the server is running, restore access with `plyback set-password`. |
 
 ## Controls
 
@@ -49,9 +49,39 @@ credentials.
 ## Running behind a reverse proxy
 
 Terminate TLS at the proxy, forward to `127.0.0.1:8000`, and set `PLYBACK_SECURE_COOKIES=1`.
-Set `PLYBACK_ALLOWED_HOSTS` only if you need password-less access from other trusted host names.
-Keep proxy headers restricted to a trusted local proxy. Removing the access password through the API
-is refused while configured to listen on a network interface.
+Preserve the public Host and list it in `PLYBACK_ALLOWED_HOSTS`, a comma-separated list of names
+without schemes or ports. Host checks now apply with a password too: existing protected deployments
+using DNS aliases or tailnet names must add them. Loopback names and the bind address are accepted;
+with a password on a wildcard bind (`0.0.0.0` or `::`), OS interface IPs and the OS hostname are
+also accepted. Discovery runs at startup; restart after interface/name changes or list stable aliases
+explicitly. Request Host names are never resolved to decide access. The legacy `*` entry accepts any
+Host and disables this DNS-rebinding defense.
+For Docker's published port, add the host machine's IP/name explicitly: automatic discovery
+sees the container's own interfaces and hostname.
+
+Rate limits use the TCP peer by default, even for loopback peers. To keep clients from sharing a
+proxy's bucket, set `PLYBACK_TRUSTED_PROXIES` to exact connecting proxy IPs, such as `127.0.0.1,::1`.
+Names, CIDR ranges and wildcards are rejected at startup. Trust only controlled proxies; each must
+overwrite incoming client-IP headers or append the actual peer correctly. Restrict direct backend
+access accordingly. For multiple proxy hops, list every controlled hop that should be skipped.
+Strip any unused client-IP header: a proxy that sets only `Forwarded` must remove incoming
+`X-Forwarded-For`, since XFF takes precedence.
+
+Only listed peers may supply `X-Forwarded-For` or RFC-style `Forwarded` client IPs. Chains are read
+right to left, skipping listed proxies and stopping at the first untrusted IP. Repeated header fields
+retain their order. `X-Forwarded-For` takes precedence over `Forwarded`; invalid preferred headers
+never fall through to the other header. Missing/invalid chains use the TCP peer bucket. XFF accepts
+literal IPv4/IPv6 addresses; `Forwarded` also accepts quoted IPs and IP/port pairs (brackets for IPv6).
+Unknown/obfuscated nodes, duplicate `for` parameters, escaped quoted strings and chains over 64 hops
+fall back to the peer. Delimiters in quoted metadata never create extra hops or parameters.
+IPv4-mapped IPv6 addresses share their IPv4 bucket. This setting changes only rate-limit identity;
+the existing loopback-only `X-Forwarded-Proto` handling for scheme/cookies is unchanged.
+
+Passwordless Tailscale Serve remains supported: bind to loopback and set
+`PLYBACK_ALLOWED_HOSTS=plyback.tailnet.example`. Forwarding headers are still accepted without
+a password; everyone who can reach that shared tailnet URL has full API access. The trusted-proxy
+setting is optional and does not enable or require authentication. Removing the access password
+through the API is refused while configured to listen on a network interface.
 
 An instance is shared by one person or household. It does not provide per-user tenant isolation.
 Backups contain password hashes and sessions along with game data; protect backup files as private data.

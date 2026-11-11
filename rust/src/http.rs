@@ -18,7 +18,7 @@ use axum::{
 };
 use serde_json::{Value, json};
 use std::{
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     path::{Component, Path},
     sync::{
         Arc, Mutex, Weak,
@@ -38,10 +38,12 @@ pub struct App {
     permits: Arc<Semaphore>,
     requests: Mutex<Vec<Weak<AtomicBool>>>,
     shutting_down: AtomicBool,
+    local_hosts: Vec<String>,
 }
 
 impl App {
     pub fn open(config: Config) -> anyhow::Result<Arc<Self>> {
+        let local_hosts = local_hosts(&config.host)?;
         let db = Arc::new(Database::open(config.db_path())?);
         let services = Services::new(db.clone())?;
         let insights = Insights::new(db.clone(), services.clone());
@@ -55,6 +57,7 @@ impl App {
             permits: Arc::new(Semaphore::new(16)),
             requests: Mutex::new(Vec::new()),
             shutting_down: AtomicBool::new(false),
+            local_hosts,
         }))
     }
     pub fn start(self: &Arc<Self>) {
@@ -89,24 +92,36 @@ impl App {
             .unwrap_or_else(|p| p.into_inner())
             .take();
     }
+    fn password_protected(&self) -> anyhow::Result<bool> {
+        let protected = security::password_hash(&self.db)?.is_some();
+        if !protected && self.config.requires_password() {
+            return Err(api_error(
+                503,
+                "Network access requires a password. Set one with plyback set-password.",
+            ));
+        }
+        Ok(protected)
+    }
+
     fn preflight(&self, meta: &Meta) -> anyhow::Result<()> {
         let host =
             security::host_name(&meta.host).ok_or_else(|| api_error(400, "Invalid host."))?;
-        let protected = security::password_hash(&self.db)?.is_some();
-        if !protected
-            && !self
-                .config
-                .allowed_hosts
-                .iter()
-                .any(|s| s == "*" || s == &host)
+        let protected = self.password_protected()?;
+        if !self
+            .config
+            .allowed_hosts
+            .iter()
+            .any(|s| s == "*" || s == &host)
             && !security::is_loopback_host(&host)
+            && bind_host(&self.config.host).as_ref() != Some(&host)
+            && !(protected && self.local_hosts.contains(&host))
         {
             return Err(api_error(
                 400,
-                "Unknown host. Set PLYBACK_ALLOWED_HOSTS or a password to allow access from other machines.",
+                "Unknown host. Add this name to PLYBACK_ALLOWED_HOSTS to allow access.",
             ));
         }
-        if meta.path.starts_with("/api/") {
+        if is_api_path(&meta.path) {
             if !matches!(meta.method.as_str(), "GET" | "HEAD" | "OPTIONS") {
                 if !meta.csrf.eq_ignore_ascii_case("plyback") {
                     return Err(api_error(403, "Missing request header."));
@@ -155,10 +170,11 @@ impl App {
         let token = security::cookie_token(&meta.cookies);
         // Authentication may have changed while an upload was arriving. Check
         // immediately before dispatch, without charging the rate limit twice.
+        let protected = self.password_protected()?;
         if !matches!(
             meta.path.as_str(),
             "/api/health" | "/api/auth/session" | "/api/auth/login"
-        ) && security::password_hash(&self.db)?.is_some()
+        ) && protected
             && !security::session_valid(&self.db, token)?
         {
             return Err(api_error(401, "Sign in to continue."));
@@ -357,6 +373,136 @@ fn header(headers: &HeaderMap, key: &str) -> String {
         .to_owned()
 }
 
+fn bind_host(bind: &str) -> Option<String> {
+    if let Ok(IpAddr::V6(ip)) = bind.parse() {
+        security::host_name(&format!("[{ip}]"))
+    } else {
+        security::host_name(bind)
+    }
+}
+
+// Discover OS-owned names once, after CLI bind overrides. Never resolve an
+// incoming Host: an attacker's DNS name can resolve to one of our interfaces.
+fn local_hosts(bind: &str) -> anyhow::Result<Vec<String>> {
+    if !bind.parse::<IpAddr>().is_ok_and(|ip| ip.is_unspecified()) {
+        return Ok(Vec::new());
+    }
+    let mut hosts = Vec::new();
+    for interface in if_addrs::get_if_addrs()? {
+        let ip = interface.ip();
+        if ip.is_unspecified() {
+            continue;
+        }
+        let name = match ip {
+            IpAddr::V4(_) => ip.to_string(),
+            IpAddr::V6(_) => format!("[{ip}]"),
+        };
+        if let Some(host) = security::host_name(&name) {
+            hosts.push(host);
+        }
+    }
+    if let Some(name) = hostname::get()?.to_str()
+        && let Some(host) = security::host_name(name)
+    {
+        hosts.push(host);
+    }
+    hosts.sort();
+    hosts.dedup();
+    Ok(hosts)
+}
+
+fn client_ip(peer: IpAddr, headers: &HeaderMap, trusted: &[IpAddr]) -> IpAddr {
+    let peer = peer.to_canonical();
+    let is_trusted = |ip| trusted.iter().any(|p| p.to_canonical() == ip);
+    if !is_trusted(peer) {
+        return peer;
+    }
+    // XFF takes precedence. Never fall through an invalid preferred header to
+    // another potentially attacker-controlled source. Invalid chains use the
+    // peer bucket, preserving the limiter rather than manufacturing identities.
+    let hops = if headers.contains_key("x-forwarded-for") {
+        forwarded_hops(headers, "x-forwarded-for", false)
+    } else {
+        forwarded_hops(headers, "forwarded", true)
+    };
+    let Some(hops) = hops else { return peer };
+    let mut client = peer;
+    for hop in hops.into_iter().rev() {
+        if !is_trusted(client) {
+            break;
+        }
+        client = hop;
+    }
+    client
+}
+
+fn forwarded_hops(headers: &HeaderMap, name: &str, standard: bool) -> Option<Vec<IpAddr>> {
+    let mut hops = Vec::new();
+    // Preserve wire order across repeated fields, as well as comma lists.
+    for value in headers.get_all(name) {
+        for element in split_forwarded(value.to_str().ok()?, ',')? {
+            if hops.len() >= 64 {
+                return None;
+            }
+            let ip = if standard {
+                let mut address = None;
+                for parameter in split_forwarded(element, ';')? {
+                    let (key, value) = parameter.trim().split_once('=')?;
+                    if key.eq_ignore_ascii_case("for") {
+                        if address.is_some() {
+                            return None;
+                        }
+                        let value = value.trim();
+                        let value = if value.starts_with('"') {
+                            value.strip_prefix('"')?.strip_suffix('"')?
+                        } else {
+                            value
+                        };
+                        address = Some(
+                            value
+                                .parse::<IpAddr>()
+                                .ok()
+                                .or_else(|| value.parse::<SocketAddr>().ok().map(|s| s.ip()))
+                                .or_else(|| {
+                                    value.strip_prefix('[')?.strip_suffix(']')?.parse().ok()
+                                })?,
+                        );
+                    }
+                }
+                address?
+            } else {
+                element.trim().parse::<IpAddr>().ok()?
+            };
+            hops.push(ip.to_canonical());
+        }
+    }
+    if hops.is_empty() { None } else { Some(hops) }
+}
+
+// Quoted metadata may contain delimiters: splitting it naively could manufacture
+// a forged `for` hop. Escaped quoted strings are unsupported and fail closed.
+fn split_forwarded(value: &str, delimiter: char) -> Option<Vec<&str>> {
+    let mut quoted = false;
+    let mut start = 0;
+    let mut parts = Vec::new();
+    for (offset, c) in value.char_indices() {
+        match c {
+            '\\' => return None,
+            '"' => quoted = !quoted,
+            c if c == delimiter && !quoted => {
+                parts.push(&value[start..offset]);
+                start = offset + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    if quoted {
+        return None;
+    }
+    parts.push(&value[start..]);
+    Some(parts)
+}
+
 pub fn router(app: Arc<App>) -> Router {
     Router::new().fallback(handle).with_state(app)
 }
@@ -415,7 +561,7 @@ async fn handle_inner(app: Arc<App>, request: Request<Body>) -> Response {
         cookies: header(headers, "cookie"),
         user_agent: header(headers, "user-agent"),
         client: peer
-            .map(|p| p.ip().to_string())
+            .map(|p| client_ip(p.ip(), headers, &app.config.trusted_proxies).to_string())
             .unwrap_or_else(|| "local-test".into()),
     };
     if let Some(length) = headers.get("content-length")
@@ -444,7 +590,7 @@ async fn handle_inner(app: Arc<App>, request: Request<Body>) -> Response {
         )
             .into_response();
     }
-    if !meta.path.starts_with("/api") {
+    if !is_api_path(&meta.path) {
         if !matches!(meta.method.as_str(), "GET" | "HEAD") {
             return failure(api_error(405, "Method not allowed"));
         }
@@ -568,12 +714,12 @@ fn secure_headers(response: &mut Response, path: &str) {
     ] {
         headers.insert(name, HeaderValue::from_static(value));
     }
-    if !path.starts_with("/api") {
+    if !is_api_path(path) {
         headers.insert("vary", HeaderValue::from_static("Accept-Encoding"));
     }
     // Never pin a transient error (including an encoding-specific 406) in a
     // browser or intermediary cache under an otherwise immutable asset URL.
-    if path.starts_with("/api") || !success {
+    if is_api_path(path) || !success {
         headers.insert("cache-control", HeaderValue::from_static("no-store"));
     } else if path.starts_with("/assets/") {
         headers
@@ -783,9 +929,161 @@ fn static_file(root: &Path, encoded: &str, accept_encoding: &str) -> anyhow::Res
     Ok((mime, std::fs::read(file)?, index, None))
 }
 
+/// Whether a request goes to the API. The security checks and the router must agree: a
+/// path such as "/apix" that only the router treated as API skipped CSRF and sign-in checks.
+fn is_api_path(path: &str) -> bool {
+    path == "/api" || path.starts_with("/api/")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn network_password_is_rechecked_after_preflight() {
+        let directory = tempfile::tempdir().unwrap();
+        let app = App::open(Config {
+            data: directory.path().join("db"),
+            frontend: directory.path().join("web"),
+            host: "0.0.0.0".into(),
+            port: 0,
+            allowed_hosts: vec![],
+            trusted_proxies: vec![],
+            secure_cookies: false,
+            allow_unauthenticated_remote: false,
+            background: false,
+        })
+        .unwrap();
+        security::set_password(&app.db, Some("test-password")).unwrap();
+        let token = security::create_session(&app.db, "test").unwrap();
+        let meta = Meta {
+            method: "PUT".into(),
+            path: "/api/settings".into(),
+            query: Query::new(),
+            host: "localhost".into(),
+            scheme: "http".into(),
+            origin: None,
+            csrf: "plyback".into(),
+            cookies: security::session_cookie(&token, false),
+            user_agent: "test".into(),
+            client: "local-test".into(),
+        };
+        app.preflight(&meta).unwrap();
+        security::set_password(&app.db, None).unwrap();
+        let err = app
+            .dispatch(
+                &meta,
+                &json!({"auto_analyze_new": false}),
+                &AtomicBool::new(false),
+            )
+            .unwrap_err();
+        assert_eq!(err.downcast_ref::<ApiError>().unwrap().0, 503);
+        assert_eq!(
+            services::get_settings(&app.db).unwrap()["auto_analyze_new"],
+            true
+        );
+    }
+
+    #[test]
+    fn proxy_client_ip_validates_chains_and_header_precedence() {
+        let trusted: Vec<IpAddr> = ["127.0.0.1", "::1", "192.0.2.99"]
+            .map(|s| s.parse().unwrap())
+            .into();
+        let peer = "127.0.0.1".parse().unwrap();
+        let check = |name, value: &str, expected: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(name, value.parse().unwrap());
+            assert_eq!(
+                client_ip(peer, &headers, &trusted),
+                expected.parse::<IpAddr>().unwrap(),
+                "{value}"
+            );
+        };
+        check(
+            "x-forwarded-for",
+            "198.51.100.7, 192.0.2.99",
+            "198.51.100.7",
+        );
+        check("x-forwarded-for", "198.51.100.7, 192.0.2.8", "192.0.2.8");
+        check(
+            "x-forwarded-for",
+            "::ffff:198.51.100.7, ::1",
+            "198.51.100.7",
+        );
+        check(
+            "forwarded",
+            "for=198.51.100.7;proto=https, for=192.0.2.99",
+            "198.51.100.7",
+        );
+        check(
+            "forwarded",
+            "For=\"[2001:db8::7]:1234\";host=chess.test",
+            "2001:db8::7",
+        );
+        check("forwarded", "for=\"[2001:db8::7]\"", "2001:db8::7");
+        check("forwarded", "for=\"198.51.100.7:1234\"", "198.51.100.7");
+        check(
+            "forwarded",
+            "for=198.51.100.7;ext=\"a,for=192.0.2.7;ext=b\"",
+            "198.51.100.7",
+        );
+        check(
+            "forwarded",
+            "for=198.51.100.7;ext=\"a;for=192.0.2.7\"",
+            "198.51.100.7",
+        );
+        for invalid in [
+            "",
+            "unknown",
+            "198.51.100.7,",
+            "bad, 192.0.2.99",
+            "198.51.100.7:1234",
+        ] {
+            check("x-forwarded-for", invalid, "127.0.0.1");
+        }
+        for invalid in [
+            "",
+            "for=unknown",
+            "for=_hidden",
+            "by=192.0.2.99",
+            "for=198.51.100.7;for=192.0.2.99",
+            "for=\"[::1]",
+            "for=198.51.100.7,",
+            "for=198.51.100.7;broken",
+        ] {
+            check("forwarded", invalid, "127.0.0.1");
+        }
+        let mut headers = HeaderMap::new();
+        headers.append("x-forwarded-for", "198.51.100.7".parse().unwrap());
+        headers.append("x-forwarded-for", "192.0.2.99".parse().unwrap());
+        assert_eq!(
+            client_ip(peer, &headers, &trusted),
+            "198.51.100.7".parse::<IpAddr>().unwrap()
+        );
+        assert_eq!(
+            client_ip("192.0.2.8".parse().unwrap(), &headers, &trusted),
+            "192.0.2.8".parse::<IpAddr>().unwrap()
+        );
+        headers.insert("forwarded", "for=198.51.100.8".parse().unwrap());
+        assert_eq!(
+            client_ip(peer, &headers, &trusted),
+            "198.51.100.7".parse::<IpAddr>().unwrap()
+        );
+        headers.insert("x-forwarded-for", "bad".parse().unwrap());
+        assert_eq!(client_ip(peer, &headers, &trusted), peer);
+        headers.remove("x-forwarded-for");
+        headers.append("forwarded", "for=192.0.2.99".parse().unwrap());
+        assert_eq!(
+            client_ip(peer, &headers, &trusted),
+            "198.51.100.8".parse::<IpAddr>().unwrap()
+        );
+        assert_eq!(client_ip(peer, &HeaderMap::new(), &trusted), peer);
+        headers.insert(
+            "x-forwarded-for",
+            vec!["192.0.2.99"; 65].join(",").parse().unwrap(),
+        );
+        assert_eq!(client_ip(peer, &headers, &trusted), peer);
+    }
 
     #[test]
     fn static_variants_negotiate_without_changing_mime_or_spa_fallback() {
@@ -871,6 +1169,7 @@ mod tests {
             host: "127.0.0.1".into(),
             port: 0,
             allowed_hosts: vec![],
+            trusted_proxies: vec![],
             secure_cookies: false,
             allow_unauthenticated_remote: false,
             background: false,

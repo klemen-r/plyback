@@ -153,7 +153,8 @@ Do not copy only the main database file from a running WAL database.
 | `PLYBACK_STOCKFISH` | auto-detect | Explicit Stockfish executable |
 | `PLYBACK_PASSWORD` | unset | Initial access password |
 | `PLYBACK_SECURE_COOKIES` | unset | Require HTTPS for session cookies |
-| `PLYBACK_ALLOWED_HOSTS` | loopback only | Extra host names for a password-less instance |
+| `PLYBACK_ALLOWED_HOSTS` | unset | Comma-separated extra Host names, with or without a password |
+| `PLYBACK_TRUSTED_PROXIES` | unset | Comma-separated exact proxy IPs allowed to supply client IPs for rate limits |
 | `PLYBACK_LOG_LEVEL` | `INFO` | Logging level |
 | `PLYBACK_API_DOCS` | unset | `1` enables `/api/docs`, linking to the JSON API schema |
 | `PLYBACK_CHESSCOM_API` | official API | Override for fixtures/development |
@@ -162,6 +163,24 @@ Do not copy only the main database file from a running WAL database.
 Legacy `CHESS_INSIGHT_DATA`, `CHESS_INSIGHT_FRONTEND`, `CHESSCOM_API_BASE`, `STOCKFISH_PATH`,
 `HOST`, `PORT` and `LOG_LEVEL` remain supported. Remote unauthenticated access requires the explicit
 `PLYBACK_ALLOW_UNAUTHENTICATED_REMOTE=1` override; do not use it on an untrusted network.
+
+Host checks apply even with a password. Loopback names and the configured bind address are
+accepted. With a password and a wildcard bind (`0.0.0.0` or `::`), the machine's interface IPs
+and OS hostname are also accepted; these are discovered at startup, so restart after network
+changes. Add DNS aliases, reverse-proxy names or tailnet names explicitly, for example
+`PLYBACK_ALLOWED_HOSTS=chess.example.org,plyback.tailnet.example` (names only, no scheme
+or port). Existing password-protected deployments using other names must now list them.
+The legacy `*` allowlist entry accepts every name and disables this DNS-rebinding protection.
+In Docker, discovery sees the container's addresses and hostname; list the host machine's
+published IP/name explicitly when using it to reach the mapped port.
+
+Behind a proxy, rate limits use the connecting IP unless that exact IP is listed in
+`PLYBACK_TRUSTED_PROXIES` (for example `127.0.0.1,::1` for a local proxy). Configure the proxy
+to overwrite or safely append `X-Forwarded-For` or `Forwarded`; do not trust client-supplied
+headers unchanged. Plyback walks the chain from right to left through configured proxy IPs
+and uses the first untrusted IP. `X-Forwarded-For` takes precedence when both headers exist;
+missing, malformed or unsupported chains fall back to the connecting IP. See
+[SECURITY.md](SECURITY.md#running-behind-a-reverse-proxy) for deployment details.
 
 ## Development and verification
 

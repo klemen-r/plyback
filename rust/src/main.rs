@@ -264,10 +264,7 @@ fn main() -> anyhow::Result<()> {
         security::validate_password(&password)?;
         security::set_password(&db, Some(&password))?;
     }
-    if !security::is_loopback_host(&config.host)
-        && !config.allow_unauthenticated_remote
-        && security::password_hash(&db)?.is_none()
-    {
+    if config.requires_password() && security::password_hash(&db)?.is_none() {
         bail!(
             "Refusing network access without a password. Use `plyback set-password` or PLYBACK_PASSWORD."
         );

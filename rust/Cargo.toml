@@ -13,6 +13,8 @@ base64 = "0.23"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
 hex = "0.4"
+hostname = "0.4"
+if-addrs = "0.15"
 pgn-reader = "0.29"
 rand = "0.8"
 regex = "1"
