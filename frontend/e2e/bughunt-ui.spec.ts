@@ -86,6 +86,21 @@ test('Games: an invalid page in the address falls back to the first page', async
   expect(errors).toEqual([])
 })
 
+test('A saved report displays the review count from its snapshot', async ({ page }) => {
+  const { games, analyzed } = insights.data_quality
+  await fixture(page, async (route, url) => {
+    if (url.pathname === '/api/reports/7') {
+      return route.fulfill({ json: {
+        id: 7, account_id: 1, title: 'Fixture snapshot', status: 'ready', completed_at: 1790000000,
+        total_games: games, analyzed_games: 0, report: insights,
+      } })
+    }
+    await route.fulfill({ json: {} })
+  })
+  await page.goto('/reports/7')
+  await expect(page.getByText(/Snapshot from/)).toContainText(`${analyzed} of ${games} games analysed`, { timeout: 1500 })
+})
+
 test('Import keeps a large file out of the text box and warns about too many games', async ({ page }) => {
   let posted = 0
   const errors = await fixture(page, async (route, url) => {

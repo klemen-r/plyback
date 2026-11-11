@@ -321,13 +321,17 @@ impl Insights {
             if let Some(quality) = data["data_quality"].as_object_mut() {
                 quality.remove("unanalyzed_ids");
             }
-            let (total, analyzed, _) = self.progress(rid)?;
+            let (total, _, _) = self.progress(rid)?;
+            // A manual build can include previous analyses while deeper jobs are queued.
+            let analyzed = data["data_quality"]["analyzed"]
+                .as_i64()
+                .ok_or_else(|| anyhow::anyhow!("Report snapshot omitted analysis coverage"))?;
             // Publish the result and its counters only if every read came from
             // the same committed analysis generation. Computation holds no lock.
             let published=self.db.transaction(|tx|{
                 let current:i64=tx.query_row("SELECT revision FROM data_revision WHERE id=1",[],|r|r.get(0))?;
                 if current!=revision{return Ok(false)}
-                let n=tx.execute("UPDATE reports SET status='ready',completed_at=?,report_json=?,total_games=?,analyzed_games=?,error=NULL WHERE id=? AND status!='ready'",rusqlite::params![now(),data.to_string(),total as i64,analyzed as i64,rid])?;
+                let n=tx.execute("UPDATE reports SET status='ready',completed_at=?,report_json=?,total_games=?,analyzed_games=?,error=NULL WHERE id=? AND status!='ready'",rusqlite::params![now(),data.to_string(),total as i64,analyzed,rid])?;
                 if n>0{tx.execute("INSERT INTO events (ts,level,source,message,account_id) VALUES (?,'info','reports',?,?)",rusqlite::params![now(),format!("Report #{rid} is ready ({analyzed}/{total} games analysed)"),account])?;}
                 Ok(true)
             })?;

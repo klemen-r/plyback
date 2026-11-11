@@ -140,6 +140,33 @@ fn completed_reports_are_immutable_and_membership_is_fixed() {
     service.stop();
 }
 #[test]
+fn report_coverage_counts_reviews_already_included_in_the_snapshot() {
+    let db = fixture();
+    let service = runtime(db.clone());
+    let report = call(&service, "POST", "/api/accounts/1/reports", json!({}));
+    let id = report["id"].as_i64().unwrap();
+    assert!(
+        db.scalar("SELECT COUNT(*) FROM jobs WHERE status='queued'", &[])
+            .unwrap()
+            .as_i64()
+            .unwrap()
+            > 0
+    );
+    call(
+        &service,
+        "POST",
+        &format!("/api/reports/{id}/finalize"),
+        json!({}),
+    );
+    let ready = call(&service, "GET", &format!("/api/reports/{id}"), Value::Null);
+    assert_eq!(ready["status"], "ready");
+    let included = &ready["report"]["data_quality"]["analyzed"];
+    assert!(included.as_u64().unwrap() > 0);
+    assert_eq!(&ready["analyzed_games"], included);
+    service.stop();
+}
+
+#[test]
 fn empty_report_scope_stays_empty_and_deleted_ids_cannot_join_it() {
     let db = fixture();
     let service = runtime(db.clone());

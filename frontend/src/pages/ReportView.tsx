@@ -20,6 +20,7 @@ export default function ReportView() {
   const r = q.data!
   // Variants (e.g. odds chess) are counted in results but never reviewed.
   const variants = Math.max(0, (r.report?.data_quality?.games ?? 0) - r.total_games)
+  const snapshotAnalyzed = r.report?.data_quality?.analyzed ?? r.analyzed_games
   const remaining = r.total_games - r.analyzed_games
   const perGame = status.data?.queue.avg_game_seconds
   const workers = status.data?.queue.workers || 1
@@ -27,7 +28,7 @@ export default function ReportView() {
     <div className="appear">
       {back}
       <PageHeader title={r.title ?? `Report #${r.id}`}
-        subtitle={r.status === 'ready' ? `Snapshot from ${fmtDate(r.completed_at, true)} · ${r.analyzed_games} of ${r.total_games} games analysed${variants ? ` · ${variants} chess variant ${variants === 1 ? 'game' : 'games'} not reviewed` : ''}` : `Created ${fmtDate(r.created_at, true)}`}
+        subtitle={r.status === 'ready' ? `Snapshot from ${fmtDate(r.completed_at, true)} · ${snapshotAnalyzed} of ${r.total_games} games analysed${variants ? ` · ${variants} chess variant ${variants === 1 ? 'game' : 'games'} not reviewed` : ''}` : `Created ${fmtDate(r.created_at, true)}`}
         actions={r.status === 'ready' ? <Button size="sm" onClick={() => window.print()}><Printer className="h-4 w-4" />Print / PDF</Button> : undefined} />
       {r.status === 'analyzing' && (
         <Card>
@@ -39,7 +40,7 @@ export default function ReportView() {
               <Progress value={r.analyzed_games} max={r.total_games} className="mt-2" />
               <p className="mt-2 text-xs text-fg-3">You can leave this page — the report is built automatically when analysis finishes. Games already analysed at the report’s depth are reused; shallower analyses are redone.</p>
             </div>
-            <Button size="sm" onClick={() => finalize.mutate()} loading={finalize.isPending} disabled={r.analyzed_games === 0}>Build now with {r.analyzed_games} games</Button>
+            <Button size="sm" onClick={() => finalize.mutate()} loading={finalize.isPending} disabled={r.analyzed_games === 0}>Build now</Button>
           </div>
         </Card>
       )}
