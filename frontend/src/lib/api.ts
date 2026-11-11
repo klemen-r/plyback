@@ -85,7 +85,7 @@ export const api = {
   game: (id: number, account_id?: number) => request<GameDetail>('GET', `/games/${id}${qs({ account_id })}`),
   analyzeGame: (id: number, depth?: number, force = false) => request<{ queued: boolean }>('POST', `/games/${id}/analyze`, { depth, force }),
   importPgn: (pgn: string, analyze = true) =>
-    request<{ imported: number; existing: number; game_ids: number[]; errors: { index: number; error: string }[] }>('POST', '/games/import', { pgn, analyze }),
+    request<{ imported: number; existing: number; game_ids: number[]; errors: { index: number; error: string }[]; unread_after: number | null }>('POST', '/games/import', { pgn, analyze }),
 
   engine: (fen: string, depth?: number, multipv = 3, signal?: AbortSignal) => request<InteractiveResult>('POST', '/engine/analyse', { fen, depth, multipv }, signal),
 

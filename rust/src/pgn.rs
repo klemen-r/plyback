@@ -273,12 +273,14 @@ impl Read for CountingReader<'_> {
     }
 }
 
-/// Split with the PGN parser rather than blank lines or `[Event` text, which may
-/// also occur inside comments. Preserve the exact original text for game IDs.
 /// The most games one PGN import may contain.
 pub const MAX_IMPORT_GAMES: usize = 10_000;
 
-pub fn split_games(text: &str) -> Result<Vec<String>> {
+/// Splits a PGN archive with the PGN parser rather than at blank lines or `[Event` text, which
+/// may also occur inside comments, and keeps each game's original text for stable IDs.
+/// The second value is true when the text after the last complete game could not be read:
+/// those games are kept, and the unreadable rest is reported rather than imported.
+pub fn split_games(text: &str) -> Result<(Vec<String>, bool)> {
     if text.len() > 20_000_000 || text.contains('\0') {
         return Err(api_error(400, "PGN import exceeds the supported limit"));
     }
@@ -292,12 +294,11 @@ pub fn split_games(text: &str) -> Result<Vec<String>> {
         })
         .set_supported_tag_line_length(16_384)
         .finish();
-        if reader
-            .read_game(&mut BoundaryVisitor)
-            .map_err(|_| api_error(400, "Malformed PGN archive"))?
-            .is_none()
-        {
-            break;
+        match reader.read_game(&mut BoundaryVisitor) {
+            Ok(Some(())) => {}
+            Ok(None) => break,
+            Err(_) if out.is_empty() => return Err(api_error(400, "Malformed PGN archive")),
+            Err(_) => return Ok((out, true)),
         }
         let end = start + bytes_read.get() - reader.buffer().len();
         if end <= start {
@@ -315,7 +316,7 @@ pub fn split_games(text: &str) -> Result<Vec<String>> {
             return Err(api_error(400, "Import at most 10000 games at a time"));
         }
     }
-    Ok(out)
+    Ok((out, false))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -405,10 +406,19 @@ mod tests {
     #[test]
     fn exact_splitting_does_not_use_comment_text() {
         let raw = "[Event \"one\"]\n\n1. e4 {hello\n\n[Event \"fake\"]} e5 *\n\n[Event \"two\"]\n\n1. d4 d5 *";
-        let games = split_games(raw).unwrap();
+        let (games, malformed_tail) = split_games(raw).unwrap();
+        assert!(!malformed_tail);
         assert_eq!(games.len(), 2);
         assert_eq!(parse(&games[0]).unwrap().headers["Event"], "one");
         assert_eq!(parse(&games[1]).unwrap().headers["Event"], "two");
-        assert_eq!(split_games("1. e4 *\n1. d4 *").unwrap().len(), 2);
+        assert_eq!(split_games("1. e4 *\n1. d4 *").unwrap().0.len(), 2);
+    }
+    #[test]
+    fn the_game_limit_counts_complete_games_only() {
+        let full = "[Event \"x\"]\n\n1. e4 *\n\n".repeat(MAX_IMPORT_GAMES);
+        let (games, malformed_tail) =
+            split_games(&format!("{full}[Event \"broken\"]\n\n1. d4 {{unclosed")).unwrap();
+        assert_eq!((games.len(), malformed_tail), (MAX_IMPORT_GAMES, true));
+        assert!(split_games(&format!("{full}[Event \"one more\"]\n\n1. d4 *")).is_err());
     }
 }

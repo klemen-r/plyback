@@ -62,6 +62,7 @@ export default function ImportPgn() {
             <div className="rounded-lg border border-accent/40 bg-accent/5 p-4 text-sm">
               <p><b>{imp.data.imported}</b> new game(s) imported{imp.data.existing ? `, ${imp.data.existing} already existed` : ''}.</p>
               {imp.data.errors.length > 0 && <p className="mt-1 text-bad">{imp.data.errors.length} game(s) skipped: {imp.data.errors.slice(0, 3).map(e => e.error).join('; ')}</p>}
+              {imp.data.unread_after != null && <p className="mt-1 text-bad">Reading stopped after game {imp.data.unread_after.toLocaleString()}: the PGN after it is malformed, so nothing after that point was imported.</p>}
               <div className="mt-2 flex flex-wrap gap-2">
                 {imp.data.game_ids.slice(0, 20).map(id => <Link key={id} to={`/games/${id}`} className="rounded-md bg-hover px-2 py-1 text-xs text-accent hover:underline">Game #{id}</Link>)}
               </div>

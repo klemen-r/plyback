@@ -113,9 +113,11 @@ test.describe.serial('Plyback end to end', () => {
 
   test('imported PGN: review explanations and mating position', async ({ page }) => {
     await page.goto('/import')
-    await page.getByLabel('PGN text').fill(LEGAL)
+    await page.getByLabel('PGN text').fill(`${LEGAL}\n\n[Event "Truncated game"]\n\n1. d4 {unfinished comment`)
     await page.getByRole('button', { name: 'Import' }).click()
     await expect(page.getByText(/1 new game/)).toBeVisible()
+    await expect(page.getByText('Reading stopped after game 1: the PGN after it is malformed')).toBeVisible()
+    await expect(page.getByText(/skipped/)).toHaveCount(0)
     await page.getByRole('link', { name: /Game #/ }).first().click()
     await expect(page.getByText(/Accuracy/).first()).toBeVisible({ timeout: 90_000 })
     await page.goto(page.url().split('?')[0] + '?ply=9')

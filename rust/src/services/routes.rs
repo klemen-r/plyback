@@ -315,13 +315,9 @@ impl Services {
             ));
         }
         let analyze = bool_value(body, "analyze", true)?;
-        let texts = pgn::split_games(text).map_err(|e| api_error(400, e.to_string()))?;
+        let (texts, malformed_tail) = pgn::split_games(text)?;
         if texts.is_empty() {
             return Err(api_error(400, "No games found in the PGN"));
-        }
-        // `split_games` already stops at 10,000 games; keep one limit and one message.
-        if texts.len() > pgn::MAX_IMPORT_GAMES {
-            return Err(api_error(400, "Import at most 10000 games at a time"));
         }
         let mut rows = Vec::new();
         let mut errors = Vec::new();
@@ -336,6 +332,9 @@ impl Services {
                 Err(error) => errors.push(json!({"index":index,"error":error.to_string()})),
             }
         }
+        // The unreadable rest may hold any number of games, so it is not one skipped game:
+        // say after how many complete games reading stopped.
+        let unread_after = malformed_tail.then_some(texts.len());
         if rows.is_empty() {
             return Err(api_error(
                 400,
@@ -385,7 +384,7 @@ impl Services {
         }
         Ok((
             200,
-            json!({"imported":results.iter().filter(|(_,new)|*new).count(),"existing":results.iter().filter(|(_,new)|!*new).count(),"game_ids":ids,"errors":errors}),
+            json!({"imported":results.iter().filter(|(_,new)|*new).count(),"existing":results.iter().filter(|(_,new)|!*new).count(),"game_ids":ids,"errors":errors,"unread_after":unread_after}),
         ))
     }
     fn list_games(&self, q: &Query) -> ApiResult {
@@ -764,6 +763,53 @@ mod tests {
             "PGN import: 1 game(s) already in Plyback"
         );
     }
+    #[test]
+    fn pgn_import_preserves_complete_games_before_a_malformed_tail() {
+        let db = Arc::new(Database::open(":memory:").unwrap());
+        let services = Services::new(Arc::clone(&db)).unwrap();
+        let good = "[Event \"Good\"]\n\n1. e4 e5 *";
+        let broken = "[Event \"Broken\"]\n\n1. d4 {unterminated";
+        let later = "[Event \"Later\"]\n\n1. c4 *";
+        // The unclosed comment swallows the later game too: reading stops after one game,
+        // which is reported as such, not as one skipped game.
+        let (status, result) = services
+            .handle(
+                "POST",
+                "/api/games/import",
+                &Query::new(),
+                &json!({"pgn": format!("{good}\n\n{broken}\n\n{later}"), "analyze": false}),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(result["imported"], 1);
+        assert_eq!(result["errors"], json!([]));
+        assert_eq!(result["unread_after"], 1);
+        let (_, whole) = services
+            .handle(
+                "POST",
+                "/api/games/import",
+                &Query::new(),
+                &json!({"pgn": later, "analyze": false}),
+            )
+            .unwrap()
+            .unwrap();
+        assert!(whole["unread_after"].is_null());
+        db.execute(
+            "DELETE FROM games WHERE id=?",
+            &[whole["game_ids"][0].clone()],
+        )
+        .unwrap();
+        assert_eq!(
+            db.scalar("SELECT pgn FROM games", &[]).unwrap(),
+            format!("{good}\n")
+        );
+        let error = services
+            .import_pgn(&json!({"pgn": broken, "analyze": false}))
+            .unwrap_err();
+        assert_eq!(error.downcast_ref::<crate::ApiError>().unwrap().0, 400);
+    }
+
     #[test]
     fn pgn_import_and_its_jobs_are_saved_together() {
         let db = Arc::new(Database::open(":memory:").unwrap());
