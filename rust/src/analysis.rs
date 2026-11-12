@@ -5,7 +5,7 @@
 //! evaluates the selected best and played moves together under identical limits.
 //! Only a complete exact MultiPV iteration is accepted by the UCI transport.
 use crate::{
-    ANALYSIS_VERSION, api_error,
+    ANALYSIS_VERSION, api_error, board,
     engine::{Engine, Line, MATE_CP, MATE_THRESHOLD, Search, parse_move},
     pgn::{self, ParsedGame},
 };
@@ -561,13 +561,7 @@ pub fn analyze_with(
 }
 
 pub fn role_value(role: Role) -> i32 {
-    match role {
-        Role::Pawn => 1,
-        Role::Knight | Role::Bishop => 3,
-        Role::Rook => 5,
-        Role::Queen => 9,
-        Role::King => 0,
-    }
+    board::piece_value(role, 0)
 }
 fn role_name(role: Role) -> &'static str {
     match role {
@@ -579,17 +573,8 @@ fn role_name(role: Role) -> &'static str {
         Role::King => "king",
     }
 }
-fn material(board: &Chess, color: Color) -> i32 {
-    board
-        .board()
-        .clone()
-        .into_iter()
-        .filter(|(_, p)| p.color == color)
-        .map(|(_, p)| role_value(p.role))
-        .sum()
-}
 fn balance(board: &Chess, color: Color) -> i32 {
-    material(board, color) - material(board, !color)
+    board::material_balance(board, color, 0)
 }
 pub fn phase(board: &Chess, ply: u32, in_book: bool) -> &'static str {
     let mut npm = 0;
@@ -611,25 +596,7 @@ pub fn phase(board: &Chess, ply: u32, in_book: bool) -> &'static str {
     }
 }
 pub fn endgame_type(fen: &str) -> &'static str {
-    let pieces: HashSet<char> = fen
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase()
-        .chars()
-        .filter(|c| "nbrq".contains(*c))
-        .collect();
-    if pieces.is_empty() {
-        "pawn"
-    } else if pieces.len() == 1 && pieces.contains(&'r') {
-        "rook"
-    } else if pieces.iter().all(|p| "nb".contains(*p)) {
-        "minor piece"
-    } else if pieces.len() == 1 && pieces.contains(&'q') {
-        "queen"
-    } else {
-        "mixed"
-    }
+    board::endgame_type(fen.split_whitespace().next().unwrap_or(""))
 }
 fn captured_value(m: Move) -> i32 {
     m.capture().map(role_value).unwrap_or(0) + m.promotion().map(|p| role_value(p) - 1).unwrap_or(0)

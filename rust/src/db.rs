@@ -1,5 +1,6 @@
 //! SQLite compatibility and atomic migrations. Every returned row owns its values;
 //! no caller can retain a database lock while doing network, engine or CPU work.
+use crate::board;
 use anyhow::{Context, Result, bail};
 use rusqlite::{
     Connection, OptionalExtension, Transaction, TransactionBehavior, params_from_iter,
@@ -130,7 +131,14 @@ impl Database {
                     tx.execute(
                         "UPDATE moves SET endgame_type=? WHERE rowid=?",
                         rusqlite::params![
-                            endgame_type(row["fen_before"].as_str().unwrap_or("")),
+                            board::endgame_type(
+                                row["fen_before"]
+                                    .as_str()
+                                    .unwrap_or("")
+                                    .split(' ')
+                                    .next()
+                                    .unwrap_or("")
+                            ),
                             row["rowid"].as_i64()
                         ],
                     )?;
@@ -365,23 +373,6 @@ pub fn query_connection(c: &Connection, sql: &str, params: &[Value]) -> Result<V
     }
     Ok(result)
 }
-fn endgame_type(fen: &str) -> &'static str {
-    let board = fen.split(' ').next().unwrap_or("").to_ascii_lowercase();
-    let kinds: std::collections::HashSet<_> =
-        board.chars().filter(|c| "nbrq".contains(*c)).collect();
-    if kinds.is_empty() {
-        "pawn"
-    } else if kinds.len() == 1 && kinds.contains(&'r') {
-        "rook"
-    } else if kinds.iter().all(|c| "nb".contains(*c)) {
-        "minor piece"
-    } else if kinds.len() == 1 && kinds.contains(&'q') {
-        "queen"
-    } else {
-        "mixed"
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

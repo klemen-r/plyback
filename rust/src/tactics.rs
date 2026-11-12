@@ -1,7 +1,7 @@
 //! Conservative labels from legal board geometry and the stored principal variation.
 //! No search, score changes, persistence or engine calls. Incomplete lines can leave
 //! motifs unlabelled; a geometric threat alone is not evidence of a material win.
-use crate::pgn;
+use crate::{board, pgn};
 use shakmaty::{Chess, Color, Move, Position, Role, Square, san::San, uci::UciMove};
 
 pub const THEMES: &[&str] = &[
@@ -91,19 +91,10 @@ impl Line {
 }
 
 fn value(role: Role) -> i32 {
-    match role {
-        Role::Pawn => 1,
-        Role::Knight | Role::Bishop => 3,
-        Role::Rook => 5,
-        Role::Queen => 9,
-        Role::King => 100,
-    }
+    board::piece_value(role, 100)
 }
 fn balance(pos: &Chess, side: Color) -> i32 {
-    pos.board()
-        .iter()
-        .map(|(_, p)| value(p.role) * if p.color == side { 1 } else { -1 })
-        .sum()
+    board::material_balance(pos, side, 100)
 }
 fn attacked(pos: &Chess, sq: Square, by: Color) -> bool {
     pos.board().attacks_to(sq, by, pos.board().occupied()).any()
@@ -125,40 +116,10 @@ fn profitable_capture(pos: &Chess, target: Square) -> bool {
 }
 /// Whether the piece on `sq` may not leave it because that would expose its own king.
 fn pinned(pos: &Chess, sq: Square) -> bool {
-    let board = pos.board();
-    let Some(piece) = board.piece_at(sq) else {
-        return false;
-    };
-    let Some(king) = board.king_of(piece.color) else {
-        return false;
-    };
-    if piece.role == Role::King || attacked(pos, king, !piece.color) {
-        return false;
-    }
-    let mut without = board.clone();
-    without.discard_piece_at(sq);
-    without
-        .attacks_to(king, !piece.color, without.occupied())
-        .any()
+    board::leaves_king_exposed(pos, sq, None)
 }
-/// Whether moving the piece on `from` to `to` would expose its own king. A piece pinned
-/// by the piece on `to` (or along the same line) can still capture there. While the king
-/// is already in check, pins are ignored, as in `pinned`.
 fn exposes_king(pos: &Chess, from: Square, to: Square) -> bool {
-    let board = pos.board();
-    let Some(piece) = board.piece_at(from) else {
-        return false;
-    };
-    let Some(king) = board.king_of(piece.color) else {
-        return false;
-    };
-    if piece.role == Role::King || attacked(pos, king, !piece.color) {
-        return false;
-    }
-    let mut after = board.clone();
-    after.discard_piece_at(from);
-    after.set_piece_at(to, piece);
-    after.attacks_to(king, !piece.color, after.occupied()).any()
+    board::leaves_king_exposed(pos, from, Some(to))
 }
 /// Whether `by` can retake on `sq`, judged from attacks rather than legal moves, so a
 /// check given by the capture does not hide a defender. Pieces pinned to their king and
