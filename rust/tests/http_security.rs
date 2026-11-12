@@ -742,3 +742,33 @@ fn login_rate_limit_is_per_client_and_hides_internal_data() {
     assert_eq!(headers["retry-after"], "60");
     assert!(!String::from_utf8_lossy(&body).contains("test-password"));
 }
+
+#[test]
+fn https_proxy_on_ipv4_mapped_loopback_is_a_same_origin_request() {
+    // A dual-stack listener sees a local proxy's IPv4 connection as ::ffff:127.0.0.1.
+    let test = TestApp::configured(|c| c.allowed_hosts.push("chess.test".into()));
+    let headers = [
+        ("host", "chess.test"),
+        ("origin", "https://chess.test"),
+        ("x-forwarded-proto", "https"),
+    ];
+    for peer in ["127.0.0.1:40000", "[::ffff:127.0.0.1]:40000", "[::1]:40000"] {
+        let (status, _, _) = test.request_from(
+            peer.parse().unwrap(),
+            "PUT",
+            "/api/settings",
+            json!({"analysis_depth":12}),
+            &headers,
+        );
+        assert_eq!(status, 200, "{peer}");
+    }
+    // A remote peer can't claim https for itself.
+    let (status, _, _) = test.request_from(
+        "192.0.2.10:40000".parse().unwrap(),
+        "PUT",
+        "/api/settings",
+        json!({"analysis_depth":12}),
+        &headers,
+    );
+    assert_ne!(status, 200);
+}

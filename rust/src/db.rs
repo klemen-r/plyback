@@ -41,6 +41,24 @@ impl Drop for ShortConnection<'_> {
         }
     }
 }
+/// Record an activity event and keep only the newest 5,000.
+pub fn insert_event(
+    tx: &Transaction<'_>,
+    level: &str,
+    source: &str,
+    message: &str,
+    account_id: Option<i64>,
+) -> Result<()> {
+    tx.execute(
+        "INSERT INTO events(ts,level,source,message,account_id) VALUES(?,?,?,?,?)",
+        rusqlite::params![crate::now(), level, source, message, account_id],
+    )?;
+    tx.execute(
+        "DELETE FROM events WHERE id < (SELECT MAX(id)-5000 FROM events)",
+        [],
+    )?;
+    Ok(())
+}
 fn is_busy(error: &anyhow::Error) -> bool {
     error.downcast_ref::<rusqlite::Error>().is_some_and(|e|matches!(e,
         rusqlite::Error::SqliteFailure(code,_) if matches!(code.code,rusqlite::ErrorCode::DatabaseBusy|rusqlite::ErrorCode::DatabaseLocked)))
@@ -186,17 +204,9 @@ impl Database {
         cancelled: impl Fn() -> bool,
         mut f: impl FnMut(&Connection) -> Result<T>,
     ) -> Result<Option<T>> {
-        loop {
-            if cancelled() || Instant::now() >= deadline {
-                return Ok(None);
-            }
-            if let Some(value) = self.try_read(&mut f)? {
-                return Ok((!cancelled()).then_some(value));
-            }
-            std::thread::sleep(
-                Duration::from_millis(10).min(deadline.saturating_duration_since(Instant::now())),
-            );
-        }
+        let value =
+            self.retry_until(deadline, &cancelled, |lease| f(&lease.connection).map(Some))?;
+        Ok(value.filter(|_| !cancelled()))
     }
     /// Cancellable worker persistence with a deadline for acquiring the lock.
     /// Mutex contention never blocks a thread;
@@ -209,28 +219,37 @@ impl Database {
         cancelled: impl Fn() -> bool,
         mut f: impl FnMut(&Transaction<'_>) -> Result<T>,
     ) -> Result<Option<T>> {
+        self.retry_until(deadline, &cancelled, |lease| {
+            let tx = lease
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            if cancelled() || Instant::now() >= deadline {
+                return Ok(None);
+            }
+            let value = f(&tx)?;
+            if cancelled() {
+                return Ok(None);
+            }
+            tx.commit()?;
+            Ok(Some(value))
+        })
+    }
+    /// Run `attempt` on a short lease until it finishes, the deadline passes or the work is
+    /// cancelled. Lock contention (a held mutex or a busy SQLite) means try again in 10ms;
+    /// `Ok(None)` from the attempt ends the loop without a value.
+    fn retry_until<T>(
+        &self,
+        deadline: Instant,
+        cancelled: &impl Fn() -> bool,
+        mut attempt: impl FnMut(&mut ShortConnection<'_>) -> Result<Option<T>>,
+    ) -> Result<Option<T>> {
         loop {
             if cancelled() || Instant::now() >= deadline {
                 return Ok(None);
             }
             if let Some(mut lease) = self.try_short_connection()? {
-                let result = (|| -> Result<Option<T>> {
-                    let tx = lease
-                        .connection
-                        .transaction_with_behavior(TransactionBehavior::Immediate)?;
-                    if cancelled() || Instant::now() >= deadline {
-                        return Ok(None);
-                    }
-                    let value = f(&tx)?;
-                    if cancelled() {
-                        return Ok(None);
-                    }
-                    tx.commit()?;
-                    Ok(Some(value))
-                })();
-                match result {
-                    Ok(Some(value)) => return Ok(Some(value)),
-                    Ok(None) => return Ok(None),
+                match attempt(&mut lease) {
+                    Ok(value) => return Ok(value),
                     Err(error) if is_busy(&error) => {}
                     Err(error) => return Err(error),
                 }
@@ -260,17 +279,7 @@ impl Database {
         Ok(result)
     }
     pub fn log_event(&self, level: &str, source: &str, message: &str, account_id: Option<i64>) {
-        let result = self.transaction(|tx| {
-            tx.execute(
-                "INSERT INTO events(ts,level,source,message,account_id) VALUES(?,?,?,?,?)",
-                rusqlite::params![crate::now(), level, source, message, account_id],
-            )?;
-            tx.execute(
-                "DELETE FROM events WHERE id < (SELECT MAX(id)-5000 FROM events)",
-                [],
-            )?;
-            Ok(())
-        });
+        let result = self.transaction(|tx| insert_event(tx, level, source, message, account_id));
         if let Err(error) = result {
             tracing::warn!(%error,"Could not record event");
         }

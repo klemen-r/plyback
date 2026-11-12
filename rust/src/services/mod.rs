@@ -41,6 +41,9 @@ pub struct Services {
     current_sync: Mutex<Option<i64>>,
     /// Accounts whose last sync found the database busy, and when to try them again.
     sync_busy_until: Mutex<HashMap<i64, std::time::Instant>>,
+    /// When each account's last sync failed. Retries are paced from it, so last_sync_at keeps
+    /// meaning the last successful sync (the boundary between history and new games).
+    sync_failed_at: Mutex<HashMap<i64, i64>>,
     client: sync::ChessComClient,
 }
 
@@ -70,6 +73,7 @@ impl Services {
             requested: Mutex::new(HashSet::new()),
             current_sync: Mutex::new(None),
             sync_busy_until: Mutex::new(HashMap::new()),
+            sync_failed_at: Mutex::new(HashMap::new()),
             client: sync::ChessComClient::new()?,
         }))
     }

@@ -537,7 +537,7 @@ async fn handle_inner(app: Arc<App>, request: Request<Body>) -> Response {
         .get::<ConnectInfo<SocketAddr>>()
         .map(|c| c.0);
     let headers = request.headers();
-    let scheme = if peer.is_some_and(|p| p.ip().is_loopback())
+    let scheme = if peer.is_some_and(|p| p.ip().to_canonical().is_loopback())
         && header(headers, "x-forwarded-proto") == "https"
     {
         "https"

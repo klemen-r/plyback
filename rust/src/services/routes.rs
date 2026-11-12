@@ -367,19 +367,15 @@ impl Services {
                 (0, e) => format!("PGN import: {e} game(s) already in Plyback"),
                 (n, e) => format!("Imported {n} game(s) from PGN; {e} already in Plyback"),
             };
-            tx.execute(
-                "INSERT INTO events(ts,level,source,message,account_id) VALUES(?,'info','import',?,NULL)",
-                rusqlite::params![crate::now(), message],
-            )?;
-            // The same 5,000-event window as the other event writers.
-            tx.execute(
-                "DELETE FROM events WHERE id < (SELECT MAX(id)-5000 FROM events)",
-                [],
-            )?;
+            crate::db::insert_event(tx, "info", "import", &message, None)?;
             // Queued in the same transaction: a failed queue write also undoes the import, so
             // an "Analyse immediately" import never leaves games stored without their jobs.
             let ids = result.iter().map(|(id, _)| *id).collect::<Vec<_>>();
-            let queued = if analyze { self.enqueue_import(tx, &ids)? } else { 0 };
+            let queued = if analyze {
+                self.enqueue_import(tx, &ids)?
+            } else {
+                0
+            };
             Ok((result, ids, queued))
         })?;
         let (results, ids, queued) = results;

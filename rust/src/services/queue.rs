@@ -318,12 +318,11 @@ impl Services {
             for release in &releases {
                 if let Some(message)=&release.error {
                     let changed=tx.execute("UPDATE jobs SET status=CASE WHEN attempts>=3 THEN 'failed' ELSE 'queued' END,priority=priority-1,error=?,finished_at=CASE WHEN attempts>=3 THEN ? ELSE NULL END,followup_priority=CASE WHEN attempts<3 THEN followup_priority END,followup_depth=CASE WHEN attempts<3 THEN followup_depth END WHERE id=? AND claim_token=? AND status='running'",rusqlite::params![message,now(),release.id,release.token])?;
-                    if changed>0 {tx.execute("INSERT INTO events(ts,level,source,message) VALUES(?,'error','analysis',?)",rusqlite::params![now(),message])?;}
+                    if changed>0 {crate::db::insert_event(tx,"error","analysis",message,None)?;}
                 }else{
                     tx.execute("UPDATE jobs SET status='queued',attempts=MAX(0,attempts-1),error=NULL WHERE id=? AND claim_token=? AND status='running'",rusqlite::params![release.id,release.token])?;
                 }
             }
-            tx.execute("DELETE FROM events WHERE id < (SELECT MAX(id)-5000 FROM events)",[])?;
             Ok(())
         });
         if !matches!(result, Ok(Some(()))) {

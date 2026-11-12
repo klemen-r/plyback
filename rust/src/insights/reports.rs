@@ -332,7 +332,7 @@ impl Insights {
                 let current:i64=tx.query_row("SELECT revision FROM data_revision WHERE id=1",[],|r|r.get(0))?;
                 if current!=revision{return Ok(false)}
                 let n=tx.execute("UPDATE reports SET status='ready',completed_at=?,report_json=?,total_games=?,analyzed_games=?,error=NULL WHERE id=? AND status!='ready'",rusqlite::params![now(),data.to_string(),total as i64,analyzed,rid])?;
-                if n>0{tx.execute("INSERT INTO events (ts,level,source,message,account_id) VALUES (?,'info','reports',?,?)",rusqlite::params![now(),format!("Report #{rid} is ready ({analyzed}/{total} games analysed)"),account])?;}
+                if n>0{crate::db::insert_event(tx,"info","reports",&format!("Report #{rid} is ready ({analyzed}/{total} games analysed)"),Some(account))?;}
                 Ok(true)
             })?;
             if published {

@@ -89,15 +89,7 @@ impl AccountSync {
             .ok_or_else(|| SyncDbBusy.into())
     }
     fn event(&self, tx: &rusqlite::Transaction<'_>, level: &str, message: &str) -> Result<()> {
-        tx.execute(
-            "INSERT INTO events(ts,level,source,message,account_id) VALUES(?,?,'sync',?,?)",
-            rusqlite::params![now(), level, message, self.id],
-        )?;
-        tx.execute(
-            "DELETE FROM events WHERE id < (SELECT MAX(id)-5000 FROM events)",
-            [],
-        )?;
-        Ok(())
+        crate::db::insert_event(tx, level, "sync", message, Some(self.id))
     }
 }
 impl ChessComClient {
@@ -439,11 +431,12 @@ impl Services {
         let claim = AccountSync::from_row(account)?;
         claim.transaction(self, |tx| {
             tx.execute(
-                "UPDATE accounts SET sync_status='error',sync_error=?,last_sync_at=? WHERE id=?",
-                rusqlite::params![message, now(), claim.id],
+                "UPDATE accounts SET sync_status='error',sync_error=? WHERE id=?",
+                rusqlite::params![message, claim.id],
             )?;
             claim.event(tx, "warning", &format!("Sync failed: {message}"))
         })?;
+        self.sync_failed_at.lock().unwrap().insert(claim.id, now());
         Ok(())
     }
     pub(super) fn sync_loop(&self) {
@@ -501,9 +494,17 @@ impl Services {
                 .unwrap()
                 .get(&id)
                 .is_some_and(|until| *until > Instant::now());
+            // A failure leaves last_sync_at alone; the retry is paced from the failure.
+            let last_attempt = account["last_sync_at"].as_i64().unwrap_or(0).max(
+                self.sync_failed_at
+                    .lock()
+                    .unwrap()
+                    .get(&id)
+                    .copied()
+                    .unwrap_or(0),
+            );
             let due = requested.contains(&id)
-                || (account["sync_enabled"] == 1
-                    && now() - account["last_sync_at"].as_i64().unwrap_or(0) >= interval);
+                || (account["sync_enabled"] == 1 && now() - last_attempt >= interval);
             if busy {
                 // Retried after a short pause; a manual request waits for it too.
                 if requested.contains(&id) {
@@ -515,6 +516,9 @@ impl Services {
                 *self.current_sync.lock().unwrap() = Some(id);
                 let mut result = self.sync_account(account);
                 *self.current_sync.lock().unwrap() = None;
+                if result.is_ok() {
+                    self.sync_failed_at.lock().unwrap().remove(&id);
+                }
                 if let Err(error) = &result
                     && !error.is::<SyncDbBusy>()
                 {
@@ -529,7 +533,7 @@ impl Services {
                 }
                 match result {
                     Err(error) if error.is::<SyncDbBusy>() => {
-                        // Not a failure: last_sync_at is unchanged, so the account stays due,
+                        // Not a failure: nothing was recorded, so the account stays due,
                         // but wait a little rather than refetching its archives every tick.
                         self.sync_busy_until
                             .lock()
@@ -643,7 +647,16 @@ impl Services {
         periods.dedup_by(|a, b| a.0 == b.0);
         let mut new_count = 0;
         let mut fresh_count = 0;
-        let last_sync = account["last_sync_at"].as_i64();
+        // When this account's archives were last read. A failed sync also moves last_sync_at
+        // (for retry pacing) without reading any games, so it can't tell new games from history.
+        let last_sync = self
+            .sync_rows(
+                "SELECT MAX(fetched_at) AS t FROM archives WHERE account_id=?",
+                &[json!(id)],
+            )?
+            .into_iter()
+            .next()
+            .and_then(|row| row["t"].as_i64());
         let mut interrupted = false;
         for (period, url) in periods {
             if self.stop.load(Ordering::SeqCst) {
@@ -1251,12 +1264,15 @@ mod tests {
             &[],
         )
         .unwrap();
+        // A failed attempt after that game ended moved last_sync_at past it without reading
+        // any games: the game is still new.
         db.execute(
             "UPDATE accounts SET history_complete=0,last_sync_at=?",
-            &[last],
+            &[json!(now())],
         )
         .unwrap();
-        db.execute("UPDATE archives SET complete=0", &[]).unwrap();
+        db.execute("UPDATE archives SET complete=0,fetched_at=?", &[last])
+            .unwrap();
         server.extra.store(true, Ordering::SeqCst);
         sync();
         assert_eq!(db.scalar("SELECT COUNT(*) FROM games", &[]).unwrap(), 12);
@@ -1364,7 +1380,7 @@ mod tests {
         .unwrap();
         sync();
         assert_eq!(db.scalar("SELECT COUNT(*) FROM jobs", &[]).unwrap(), 0);
-        // A recorded failure moves last_sync_at; the game still owed a job is queued anyway.
+        // After a recorded failure, the game still owed a job is queued anyway.
         owe(&game);
         service
             .sync_error(
@@ -1520,5 +1536,25 @@ mod tests {
             .unwrap();
         assert_ne!(account["sync_status"], "syncing");
         assert_eq!(account["last_sync_at"], 0);
+    }
+    #[test]
+    fn a_failed_sync_keeps_the_last_successful_time_and_waits_before_retrying() {
+        let db = Arc::new(crate::db::Database::open(":memory:").unwrap());
+        db.execute("INSERT INTO accounts(username,added_at,sync_enabled,last_sync_at) VALUES('fixture',0,1,1000)", &[]).unwrap();
+        let service = Services::new(db.clone()).unwrap();
+        let account = db.one("SELECT * FROM accounts", &[]).unwrap().unwrap();
+        service.sync_error(&account, "archive list 502").unwrap();
+        let account = db.one("SELECT * FROM accounts", &[]).unwrap().unwrap();
+        assert_eq!(account["sync_status"], "error");
+        assert_eq!(account["last_sync_at"], 1000);
+        // last_sync_at alone says the account is long overdue, but the failure was just now:
+        // no sync starts (and nothing reaches the network).
+        service.sync_tick().unwrap();
+        assert!(service.current_sync.lock().unwrap().is_none());
+        assert_eq!(
+            db.scalar("SELECT sync_status FROM accounts", &[]).unwrap(),
+            "error"
+        );
+        assert!(service.sync_failed_at.lock().unwrap().contains_key(&1));
     }
 }
