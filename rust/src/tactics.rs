@@ -622,7 +622,7 @@ mod tests {
         )
     }
 
-    // Real puzzles that an audit on the owner's reviewed games found mislabelled.
+    // Positions from real reviewed games that an earlier detector mislabelled.
     #[test]
     fn real_positions_that_were_mislabelled() {
         // The queen slides up the file and takes the queen it was blocking: nothing is discovered.
@@ -661,7 +661,7 @@ mod tests {
         );
         assert!(!t.contains(&"hanging-piece"), "{t:?}");
     }
-    // Round-2 audit: a defender pinned by the capturing piece can still take it back
+    // A defender pinned by the capturing piece can still take it back
     // along the pin line, so the captured piece was not hanging.
     #[test]
     fn a_defender_pinned_by_the_capturer_still_defends() {

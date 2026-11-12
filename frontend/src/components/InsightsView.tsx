@@ -505,7 +505,7 @@ function Trend({ data }: { data: Insights }) {
   )
 }
 
-export function KPIs({ data }: { data: Insights }) {
+function KPIs({ data }: { data: Insights }) {
   const o = data.overview
   const blunders = o.per_game?.blunder
   const oppBlunders = o.opp_per_game?.blunder

@@ -100,7 +100,7 @@ export default function Board({ fen, orientation, lastMove, shapes, interactive,
     <div data-board={board} className={clsx('board', `orientation-${orientation}`, mini && 'mini', className)}
       // Chessground caches the board's screen position and only refreshes it on scroll or resize.
       // Content above the board can move it without either (a status line, a wrapping header row),
-      // and then every click lands on the wrong square. Measure again on each press (#29).
+      // and then every click lands on the wrong square. Measure again on each press.
       onPointerDownCapture={() => api.current?.state.dom.bounds.clear()}>
       <div ref={el} />
     </div>

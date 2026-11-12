@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { expect, test, type Page, type Route } from '@playwright/test'
 
-// Fixes for the 2026-11-06 bug hunt. All API data is synthetic.
+// Regression tests that span several pages. All API data is synthetic.
 const insights = JSON.parse(readFileSync(new URL('../../rust/tests/fixtures/insights-expected.json', import.meta.url), 'utf8'))[0].result
 
 const account = (id: number, name: string, games: number) => ({

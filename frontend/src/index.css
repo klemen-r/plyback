@@ -164,7 +164,7 @@
 
 @media print {
   :root, [data-theme=dark] { --bg: #fff; --surface: #fff; --subtle: #f6f6f6; --fg: #111; --fg-2: #444; --fg-3: #666; --line: #ddd; color-scheme: light; }
-  header, nav, button, [data-noprint] { display: none !important; }
+  header, nav, button { display: none !important; }
   main { padding: 0 !important; max-width: none !important; }
   section, table { break-inside: avoid; }
 }

@@ -95,6 +95,7 @@ fn token_hash(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
 }
 
+#[cfg(test)]
 pub fn create_session(db: &Database, user_agent: &str) -> anyhow::Result<String> {
     db.transaction(|tx| insert_session(tx, user_agent))
 }
@@ -289,7 +290,7 @@ const RATE_RULES: &[(&str, &str, u32)] = &[
 
 /// The rate-limit bucket and per-minute budget for a request, if any. Practice answers are
 /// cheap local writes made at play speed. They get their own budget instead of falling under
-/// the `/api/accounts` rule, which is meant for adding and syncing accounts (#29).
+/// the `/api/accounts` rule, which is meant for adding and syncing accounts.
 pub fn rate_rule(method: &str, path: &str) -> Option<(&'static str, u32)> {
     if method == "POST"
         && path.starts_with("/api/accounts/")

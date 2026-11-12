@@ -25,7 +25,7 @@ pub const MATE_THRESHOLD: i32 = 99_000;
 const CACHE_ENTRIES: i64 = 20_000;
 /// How long a search waits for the shared connection before treating the
 /// position cache as unavailable. Short next to a search, long enough that
-/// worker contention no longer drops completed results, so warm re-reviews
+/// worker contention does not drop completed results, so warm re-reviews
 /// replay them exactly. Cancellation is still checked every 10ms.
 const CACHE_LOCK_WAIT: Duration = Duration::from_secs(2);
 

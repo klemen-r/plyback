@@ -310,7 +310,7 @@ test('Openings can merge move orders that reach the same position', async ({ pag
   expect(errors).toEqual([])
 })
 
-test('A slow first answer says so, and Skip still moves on (#29)', async ({ page }) => {
+test('A slow first answer says so, and Skip still moves on', async ({ page }) => {
   const errors = await fixture(page, async route => {
     if (route.request().method() === 'POST') return // never answers
     await route.fulfill({ json: { stats, items: [item, { ...item, game_id: 202, opponent: 'Second opponent' }] } })
@@ -328,7 +328,7 @@ test('A slow first answer says so, and Skip still moves on (#29)', async ({ page
   expect(errors).toEqual([])
 })
 
-test('A stuck engine check gives the board back after a timeout (#29)', async ({ page }) => {
+test('A stuck engine check gives the board back after a timeout', async ({ page }) => {
   let checks = 0
   const errors = await fixture(page, async (route, url) => {
     if (url.pathname === '/api/engine/analyse') { checks++; return } // never answers
@@ -359,7 +359,7 @@ test('A stuck engine check gives the board back after a timeout (#29)', async ({
   expect(errors).toEqual([])
 })
 
-test('The promotion picker sits over the board and can be cancelled (#29)', async ({ page }) => {
+test('The promotion picker sits over the board and can be cancelled', async ({ page }) => {
   const posted: unknown[] = []
   const promo: PracticeItem = { ...item, fen: '4k3/1P6/8/8/8/8/8/4K3 w - - 0 1', phase: 'endgame' }
   const errors = await fixture(page, async route => {
@@ -386,7 +386,7 @@ test('The promotion picker sits over the board and can be cancelled (#29)', asyn
   expect(errors).toEqual([])
 })
 
-test('The board still takes moves after the page shifts under it (#29)', async ({ page }) => {
+test('The board still takes moves after the page shifts under it', async ({ page }) => {
   let posted = 0
   const errors = await fixture(page, async route => {
     if (route.request().method() === 'POST') { posted++; await route.fulfill({ json: { ...answer, correct: true, uci: 'e2e4', san: 'e4', line_san: ['e4'] } }); return }

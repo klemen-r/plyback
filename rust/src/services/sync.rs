@@ -533,7 +533,7 @@ impl Services {
                     && !error.is::<SyncDbBusy>()
                 {
                     // Record the real failure. If recording it finds the database busy, retry
-                    // the account soon; any other recording error ends the tick as before.
+                    // the account soon; any other recording error ends the tick.
                     let message = error.to_string();
                     match self.sync_error(account, &message) {
                         Ok(()) => result = Ok(()),

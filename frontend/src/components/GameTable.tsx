@@ -12,7 +12,7 @@ function opponentOf(g: GameSummary) {
   return g.user_color === 'white' ? g.black : g.user_color === 'black' ? g.white : null
 }
 
-export function ErrorCounts({ g }: { g: GameSummary }) {
+function ErrorCounts({ g }: { g: GameSummary }) {
   const c = g.user_color && g.counts ? g.counts[g.user_color] : null
   if (!c) return null
   return (
@@ -24,7 +24,7 @@ export function ErrorCounts({ g }: { g: GameSummary }) {
   )
 }
 
-export function AccuracyCell({ g }: { g: GameSummary }) {
+function AccuracyCell({ g }: { g: GameSummary }) {
   const mine = g.user_color ? g[g.user_color] : null
   if (g.analyzed && mine) return <span className="tnum">{mine.accuracy?.toFixed(1) ?? '—'}</span>
   if (g.job?.status === 'failed') return <span className="text-[12.5px] text-bad" title={g.job.error}>Failed</span>

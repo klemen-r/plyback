@@ -3,7 +3,7 @@ import type { Insights } from './types'
 /**
  * Score by local hour of day. Each 15-minute bucket goes to the local hour that applied on its
  * own date, so summer-time games land in the right hour. Older saved reports only have UTC hours;
- * those use today's offset as before.
+ * those use today's offset.
  */
 export function localHours(r: Pick<Insights['results'], 'by_hour_utc' | 'by_quarter_hour'>) {
   const games = Array<number>(24).fill(0)

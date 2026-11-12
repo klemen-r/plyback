@@ -292,7 +292,7 @@ function PracticeSession() {
 
   const onMove = async (orig: string, dest: string, piece?: Promotion) => {
     // Every path out of here changes the position or puts the board back, so the board
-    // never keeps a half-made move with no legal moves left (#29).
+    // never keeps a half-made move with no legal moves left.
     if (!item || done || answer.isPending || status === 'checking') { setNonce(n => n + 1); return }
     const current = generation.current
     setCheckError(null)
