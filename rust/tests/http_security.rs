@@ -4,7 +4,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use plyback::{
-    config::Config,
+    config::{Config, MAX_BODY_BYTES},
     http::{App, router},
     security,
 };
@@ -96,6 +96,243 @@ impl TestApp {
             )
         })
     }
+}
+
+fn login(test: &TestApp, password: &str) -> String {
+    let (status, headers, _) = test.request(
+        "POST",
+        "/api/auth/login",
+        json!({ "password": password }),
+        &[],
+    );
+    assert_eq!(status, 200);
+    let cookie = headers["set-cookie"].to_str().unwrap();
+    cookie.split(';').next().unwrap().to_string()
+}
+
+fn body_json(body: &[u8]) -> Value {
+    serde_json::from_slice(body).unwrap()
+}
+
+#[test]
+fn password_cannot_be_removed_over_the_api_on_a_network_bind() {
+    let test = TestApp::with_host("0.0.0.0");
+    security::set_password(&test.app.db, Some("test-password")).unwrap();
+    let cookie = login(&test, "test-password");
+    let (status, _, _) = test.request(
+        "POST",
+        "/api/auth/password",
+        json!({"current":"test-password","password":null}),
+        &[("cookie", &cookie)],
+    );
+    assert_eq!(status, 400);
+    assert!(security::password_hash(&test.app.db).unwrap().is_some());
+    assert_eq!(
+        test.request("GET", "/api/accounts", json!({}), &[("cookie", &cookie)])
+            .0,
+        200
+    );
+}
+
+#[test]
+fn password_set_sign_out_and_wrong_password_over_the_api() {
+    let test = TestApp::new();
+    let (_, _, body) = test.request("GET", "/api/auth/session", json!({}), &[]);
+    assert_eq!(
+        body_json(&body),
+        json!({"authenticated":true,"password_set":false,"auth_required":false})
+    );
+    assert_eq!(
+        test.request(
+            "POST",
+            "/api/auth/password",
+            json!({"password":"short"}),
+            &[]
+        )
+        .0,
+        400
+    );
+    assert!(security::password_hash(&test.app.db).unwrap().is_none());
+
+    // The first password needs no current one and signs this browser in.
+    let (status, headers, _) = test.request(
+        "POST",
+        "/api/auth/password",
+        json!({"password":"long-enough-password"}),
+        &[],
+    );
+    assert_eq!(status, 200);
+    let cookie = headers["set-cookie"].to_str().unwrap();
+    let cookie = cookie.split(';').next().unwrap().to_string();
+    assert_eq!(test.request("GET", "/api/accounts", json!({}), &[]).0, 401);
+    assert_eq!(
+        test.request("GET", "/api/accounts", json!({}), &[("cookie", &cookie)])
+            .0,
+        200
+    );
+
+    let (status, headers, _) = test.request(
+        "POST",
+        "/api/auth/logout",
+        json!({}),
+        &[("cookie", &cookie)],
+    );
+    assert_eq!(status, 200);
+    assert!(
+        headers["set-cookie"]
+            .to_str()
+            .unwrap()
+            .contains("Max-Age=0")
+    );
+    assert_eq!(
+        test.request("GET", "/api/accounts", json!({}), &[("cookie", &cookie)])
+            .0,
+        401
+    );
+    let (_, _, body) = test.request(
+        "GET",
+        "/api/auth/session",
+        json!({}),
+        &[("cookie", &cookie)],
+    );
+    assert_eq!(body_json(&body)["authenticated"], false);
+    assert_eq!(
+        test.request(
+            "POST",
+            "/api/auth/login",
+            json!({"password":"not-the-password"}),
+            &[]
+        )
+        .0,
+        401
+    );
+}
+
+#[test]
+fn api_responses_carry_security_headers() {
+    let test = TestApp::new();
+    for path in ["/api/health", "/api/accounts", "/api/no-such-endpoint"] {
+        let (_, headers, _) = test.request("GET", path, json!({}), &[]);
+        assert_eq!(headers["x-content-type-options"], "nosniff", "{path}");
+        assert_eq!(headers["x-frame-options"], "DENY", "{path}");
+        assert_eq!(headers["cache-control"], "no-store", "{path}");
+        let csp = headers["content-security-policy"].to_str().unwrap();
+        assert!(csp.contains("frame-ancestors 'none'"), "{path}");
+        assert!(csp.contains("script-src 'self'"), "{path}");
+    }
+}
+
+#[test]
+fn settings_never_expose_the_password_hash() {
+    let test = TestApp::new();
+    security::set_password(&test.app.db, Some("test-password")).unwrap();
+    let hash = security::password_hash(&test.app.db).unwrap().unwrap();
+    let cookie = login(&test, "test-password");
+    let (status, _, body) = test.request("GET", "/api/settings", json!({}), &[("cookie", &cookie)]);
+    assert_eq!(status, 200);
+    let text = String::from_utf8_lossy(&body);
+    assert!(!text.contains("auth_password_hash"));
+    assert!(!text.contains(&hash));
+}
+
+#[test]
+fn unknown_api_route_is_a_json_404() {
+    let test = TestApp::new();
+    let (status, headers, body) = test.request("GET", "/api/no-such-endpoint", json!({}), &[]);
+    assert_eq!(status, 404);
+    assert!(
+        headers["content-type"]
+            .to_str()
+            .unwrap()
+            .contains("application/json")
+    );
+    assert!(body_json(&body)["detail"].is_string());
+}
+
+#[test]
+fn account_engine_queue_and_paging_inputs_are_validated() {
+    let test = TestApp::new();
+    // Usernames are checked before any request to Chess.com (none is configured here).
+    for username in ["../etc/passwd", "bad name!", ""] {
+        let status = test
+            .request(
+                "POST",
+                "/api/accounts",
+                json!({ "username": username }),
+                &[],
+            )
+            .0;
+        assert!(status == 400 || status == 422, "{username:?} gave {status}");
+    }
+    let long_fen = "8/".repeat(200);
+    for fen in ["garbage", long_fen.as_str()] {
+        let status = test
+            .request("POST", "/api/engine/analyse", json!({ "fen": fen }), &[])
+            .0;
+        assert!(status == 400 || status == 422, "{fen:.20} gave {status}");
+    }
+    let (status, _, body) = test.request(
+        "POST",
+        "/api/games/import",
+        json!({"pgn":"[White \"A\"]\n[Black \"B\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0\n"}),
+        &[],
+    );
+    assert_eq!(status, 200);
+    let game = body_json(&body)["game_ids"][0].as_i64().unwrap();
+    for depth in [json!(-3), json!(0), json!("deep")] {
+        let status = test
+            .request(
+                "POST",
+                &format!("/api/games/{game}/analyze"),
+                json!({ "depth": depth }),
+                &[],
+            )
+            .0;
+        assert!(
+            status == 400 || status == 422,
+            "depth {depth} gave {status}"
+        );
+    }
+    for path in [
+        "/api/events?limit=-1",
+        "/api/games?page_size=-1",
+        "/api/games?page_size=0",
+        "/api/games?page=0",
+    ] {
+        assert_eq!(test.request("GET", path, json!({}), &[]).0, 422, "{path}");
+    }
+    assert_eq!(
+        test.request("POST", "/api/queue/nope", json!({}), &[]).0,
+        404
+    );
+    let (status, _, body) = test.request("GET", "/api/queue", json!({}), &[]);
+    assert_eq!(status, 200);
+    let queue = body_json(&body);
+    assert!(queue["jobs"].is_array() && queue["failed_jobs"].is_array());
+}
+
+#[test]
+fn a_body_without_content_length_is_still_limited() {
+    let test = TestApp::new();
+    // No Content-Length header: the size is only known while reading the body.
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/games/import")
+        .header("host", "localhost")
+        .header("x-requested-with", "plyback")
+        .extension(ConnectInfo(
+            "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+        ))
+        .body(Body::from(vec![b' '; MAX_BODY_BYTES + 1]))
+        .unwrap();
+    assert!(request.headers().get("content-length").is_none());
+    let response = test
+        .rt
+        .block_on(router(test.app.clone()).oneshot(request))
+        .unwrap();
+    assert_eq!(response.status(), 413);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    assert_eq!(response.headers()["x-content-type-options"], "nosniff");
 }
 
 #[test]
