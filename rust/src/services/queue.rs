@@ -846,4 +846,89 @@ mod tests {
                 > 0
         );
     }
+
+    fn one_game_service() -> (Arc<Database>, Arc<Services>) {
+        let db = Arc::new(Database::open(":memory:").unwrap());
+        db.execute(
+            "INSERT INTO games(uuid,pgn,imported_at) VALUES('one','1. e4 e5 *',0)",
+            &[],
+        )
+        .unwrap();
+        let service = Services::new(db.clone()).unwrap();
+        (db, service)
+    }
+
+    #[test]
+    fn retry_failed_keeps_one_row_per_game() {
+        let (db, service) = one_game_service();
+        for error in ["first", "second"] {
+            db.execute(
+                "INSERT INTO jobs(game_id,status,attempts,error,created_at,finished_at) VALUES(1,'failed',3,?,0,0)",
+                &[json!(error)],
+            )
+            .unwrap();
+        }
+        assert_eq!(service.retry_failed().unwrap(), 1);
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM jobs", &[]).unwrap(), 1);
+        let job = db.one("SELECT * FROM jobs", &[]).unwrap().unwrap();
+        assert_eq!(job["status"], "queued");
+        assert_eq!(job["attempts"], 0);
+        assert!(job["error"].is_null());
+    }
+
+    #[test]
+    fn a_job_failing_three_times_keeps_its_error_until_retried() {
+        let (db, service) = one_game_service();
+        service.enqueue(&[1], PRIORITY_NEW, Some(6), false).unwrap();
+        for attempt in 1..=3 {
+            let job = service.claim(&AtomicBool::new(false)).unwrap().unwrap();
+            assert_eq!(job["attempts"], attempt - 1);
+            service.release_job(&job, Some(format!("engine crashed ({attempt})")));
+            service.flush_releases(Duration::from_secs(1));
+        }
+        let job = db.one("SELECT * FROM jobs", &[]).unwrap().unwrap();
+        assert_eq!(job["status"], "failed");
+        assert_eq!(job["error"], "engine crashed (3)");
+        assert!(!job["finished_at"].is_null());
+        assert!(service.claim(&AtomicBool::new(false)).unwrap().is_none());
+        let (_, body) = service
+            .handle(
+                "POST",
+                "/api/queue/retry-failed",
+                &Query::new(),
+                &Value::Null,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(body["retried"], 1);
+        let job = db.one("SELECT * FROM jobs", &[]).unwrap().unwrap();
+        assert_eq!(job["status"], "queued");
+        assert_eq!(job["attempts"], 0);
+    }
+
+    #[test]
+    fn start_requeues_jobs_a_crash_left_running() {
+        let (db, service) = one_game_service();
+        service.enqueue(&[1], PRIORITY_NEW, Some(6), false).unwrap();
+        let job = service.claim(&AtomicBool::new(false)).unwrap().unwrap();
+        assert_eq!(
+            db.scalar("SELECT status FROM jobs", &[]).unwrap(),
+            "running"
+        );
+        drop(service);
+        // A new process over the same database: paused, so no worker claims the job again.
+        db.execute(
+            "INSERT INTO settings(key,value) VALUES('queue_paused','true')",
+            &[],
+        )
+        .unwrap();
+        let restarted = Services::new(db.clone()).unwrap();
+        restarted.start();
+        restarted.stop();
+        let row = db.one("SELECT * FROM jobs", &[]).unwrap().unwrap();
+        assert_eq!(row["id"], job["id"]);
+        assert_eq!(row["status"], "queued");
+        assert_eq!(row["attempts"], 0);
+        assert!(row["claim_token"].is_null());
+    }
 }

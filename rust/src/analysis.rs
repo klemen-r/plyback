@@ -1450,4 +1450,170 @@ mod tests {
             .is_err()
         );
     }
+
+    fn at(fen: &str) -> Chess {
+        pgn::board(fen, false).unwrap()
+    }
+    fn mv(board: &Chess, uci: &str) -> Move {
+        parse_move(uci, board).unwrap()
+    }
+
+    #[test]
+    fn static_exchange_counts_defenders_pins_and_promotion() {
+        // A free knight; the same knight defended by a pawn.
+        assert_eq!(
+            see(&at("4k3/8/8/3n4/8/8/3Q4/4K3 w - - 0 1"), Square::D5, 0),
+            3
+        );
+        assert_eq!(
+            see(&at("4k3/8/4p3/3n4/8/8/3Q4/4K3 w - - 0 1"), Square::D5, 0),
+            0
+        );
+        // The d4 knight is pinned to its king by the d8 rook, so it can't take on e6.
+        assert_eq!(
+            see(&at("3rk3/8/4b3/8/3N4/8/8/3K4 w - - 0 1"), Square::E6, 0),
+            0
+        );
+        // Rook plus the promotion from pawn to queen.
+        assert_eq!(
+            see(&at("1r2k3/P7/8/8/8/8/8/4K3 w - - 0 1"), Square::B8, 0),
+            13
+        );
+    }
+
+    #[test]
+    fn hanging_lists_pieces_the_side_to_move_can_win() {
+        let board = at("4k3/8/8/3n4/8/8/3Q4/4K3 w - - 0 1");
+        assert_eq!(hanging(&board, Color::Black, 3), vec![(Square::D5, 3)]);
+        // Only the side not to move can have hanging pieces.
+        assert!(hanging(&board, Color::White, 3).is_empty());
+    }
+
+    #[test]
+    fn sacrifices_exclude_trades_already_hanging_pieces_and_zwischenzugs() {
+        // Bxf7+: the king takes the bishop.
+        let board = at("r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4");
+        assert!(
+            sacrifice(&board, mv(&board, "c4f7"))
+                .unwrap()
+                .contains("bishop")
+        );
+        // Queen for a pawn-defended knight is a sacrifice; knight for knight is a trade.
+        let board = at("4k3/8/4p3/3n4/8/8/3Q4/4K3 w - - 0 1");
+        assert!(sacrifice(&board, mv(&board, "d2d5")).is_some());
+        let board = at("4k3/8/4p3/3n4/8/2N5/8/4K3 w - - 0 1");
+        assert_eq!(sacrifice(&board, mv(&board, "c3d5")), None);
+        // The h8 rook is already attacked by the f7 knight; Qxg2 doesn't offer it.
+        let board = at("r1b1kbnr/pppp1Npp/8/6q1/2BnP3/8/PPPP1PPP/RNBQK2R b KQkq - 0 5");
+        assert_eq!(sacrifice(&board, mv(&board, "g5g2")), None);
+        // ...Nc5 leaves the f5 bishop en prise, but Bxf5 is met by Nxb3 winning the queen.
+        let board = at("r2qkb1r/ppp2ppp/2n5/3p1b2/4n3/1QPBPN1P/PP3PP1/RNB1K2R b KQkq - 3 8");
+        assert_eq!(sacrifice(&board, mv(&board, "e4c5")), None);
+    }
+
+    #[test]
+    fn fork_targets_name_both_attacked_pieces() {
+        let before = at("r3k3/8/8/1N6/8/8/8/4K3 w - - 0 1");
+        let fork = mv(&before, "b5c7");
+        let mut after = before.clone();
+        after.play_unchecked(fork);
+        let mut targets = fork_targets(&after, fork);
+        targets.sort();
+        assert_eq!(targets, ["king", "rook"]);
+        // A knight that can simply be taken forks nothing.
+        let before = at("r2qk3/8/8/1N6/8/8/8/4K3 w - - 0 1");
+        let fork = mv(&before, "b5c7");
+        let mut after = before.clone();
+        after.play_unchecked(fork);
+        assert!(fork_targets(&after, fork).is_empty());
+    }
+
+    #[test]
+    fn phase_uses_material_ply_and_book() {
+        assert_eq!(phase(&Chess::default(), 5, false), "opening");
+        assert_eq!(
+            phase(&at("4k3/pp6/8/8/8/8/PP6/4K2R w - - 0 40"), 79, false),
+            "endgame"
+        );
+        let middle = at("r1bq1rk1/ppp2ppp/2n2n2/3pp3/1bPP4/2N1PN2/PP3PPP/R1BQKB1R w KQ - 0 12");
+        assert_eq!(phase(&middle, 23, false), "middlegame");
+        // A position still in the opening book stays in the opening.
+        assert_eq!(phase(&middle, 23, true), "opening");
+    }
+
+    #[test]
+    fn material_words_name_the_material() {
+        assert_eq!(material_words(3), "a piece");
+        assert_eq!(material_words(-5), "a rook");
+        assert_eq!(material_words(9), "the queen");
+        assert_eq!(material_words(1), "a pawn");
+    }
+
+    #[test]
+    fn openings_are_found_by_position_after_a_transposition() {
+        let game = pgn::parse("1. Nf3 Nc6 2. e4 e5 3. Bc4 Bc5 *").unwrap();
+        let (opening, plies) = identify_opening(&game);
+        assert_eq!(plies, 6);
+        assert!(
+            opening.unwrap()["name"]
+                .as_str()
+                .unwrap()
+                .contains("Italian")
+        );
+        let game = pgn::parse("1. d4 d5 2. c4 *").unwrap();
+        let (opening, plies) = identify_opening(&game);
+        assert_eq!(plies, 3);
+        assert!(
+            opening.unwrap()["name"]
+                .as_str()
+                .unwrap()
+                .contains("Queen's Gambit")
+        );
+    }
+
+    #[test]
+    fn win_chance_and_eval_text_are_symmetric_capped_and_mate_aware() {
+        assert!((win_pct_white(0) - 50.0).abs() < 1e-9);
+        assert!((win_pct_white(300) + win_pct_white(-300) - 100.0).abs() < 1e-9);
+        assert_eq!(win_pct_white(5000), win_pct_white(1000));
+        assert_eq!(win_pct_white(MATE_CP - 3), 100.0);
+        assert_eq!(win_pct_white(-(MATE_CP - 3)), 0.0);
+        assert_eq!(format_eval(MATE_CP - 3), "M3");
+        assert_eq!(format_eval(-(MATE_CP - 2)), "-M2");
+        assert_eq!(format_eval(MATE_CP), "#");
+        assert_eq!(format_eval(125), "+1.25");
+        assert_eq!(format_eval(-40), "-0.40");
+    }
+
+    #[test]
+    fn move_accuracy_and_centipawn_loss_follow_the_mover() {
+        assert_eq!(accuracy(0.0), 100.0);
+        assert!(accuracy(0.05) > accuracy(0.10) && accuracy(0.10) > accuracy(0.30));
+        assert!(accuracy(1.0) >= 0.0);
+        assert_eq!(cp_loss(100, -50, true), 150);
+        assert_eq!(cp_loss(-100, 50, false), 150);
+        assert_eq!(cp_loss(0, 100, true), 0);
+        assert_eq!(cp_loss(MATE_CP - 1, 0, true), 1000);
+    }
+
+    #[test]
+    fn game_accuracy_rewards_clean_games_and_handles_one_side() {
+        let moves = |accuracies: &[f64]| -> Vec<Value> {
+            accuracies
+                .iter()
+                .enumerate()
+                .map(|(i, a)| json!({"color": if i % 2 == 0 { "w" } else { "b" }, "accuracy": a}))
+                .collect()
+        };
+        let clean = moves(&[100.0; 20]);
+        let (white, black) = game_accuracy(&clean, &[20; 21]);
+        assert!(white.unwrap() > 95.0 && black.unwrap() > 95.0);
+        let mut accuracies = [100.0; 20];
+        accuracies[10] = 10.0;
+        let (white, black) = game_accuracy(&moves(&accuracies), &[20; 21]);
+        assert!(white.unwrap() < black.unwrap());
+        let (white, black) = game_accuracy(&moves(&[90.0]), &[0, 0]);
+        assert!(white.is_some());
+        assert_eq!(black, None);
+    }
 }

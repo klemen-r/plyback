@@ -712,4 +712,40 @@ mod tests {
             Some(1)
         );
     }
+
+    #[test]
+    fn revision_triggers_cover_every_cache_source() {
+        // Insights, Openings and report caches are keyed on data_revision; every table they
+        // read must bump it on insert, update and delete.
+        let db = Database::open(":memory:").unwrap();
+        let mut names: Vec<String> = db
+            .query(
+                "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'revision_%' ORDER BY name",
+                &[],
+            )
+            .unwrap()
+            .into_iter()
+            .map(|row| row["name"].as_str().unwrap().to_string())
+            .collect();
+        let mut expected = Vec::new();
+        for table in ["games", "account_games", "game_analysis", "accounts"] {
+            for event in ["insert", "update", "delete"] {
+                expected.push(format!("revision_{table}_{event}"));
+            }
+        }
+        names.sort();
+        expected.sort();
+        assert_eq!(names, expected);
+        let revision = || {
+            db.scalar("SELECT revision FROM data_revision WHERE id=1", &[])
+                .unwrap()
+        };
+        let before = revision();
+        db.execute(
+            "INSERT INTO games(uuid,pgn,imported_at) VALUES('r','1. e4 *',0)",
+            &[],
+        )
+        .unwrap();
+        assert_ne!(revision(), before);
+    }
 }

@@ -170,20 +170,7 @@ impl ChessComClient {
             let _ = self.client.set(built);
         }
         let client = self.client.get().unwrap();
-        let contact = contact
-            .chars()
-            .filter(|c| !c.is_control() && c.is_ascii())
-            .take(120)
-            .collect::<String>();
-        let agent = format!(
-            "Plyback/{} (self-hosted game review; +https://github.com/klemen-r/plyback){}",
-            crate::APP_VERSION,
-            if contact.is_empty() {
-                String::new()
-            } else {
-                format!(" contact: {contact}")
-            }
-        );
+        let agent = user_agent(contact);
         let mut last_error = "Chess.com unavailable".to_string();
         for attempt in 0..6 {
             if stop.load(Ordering::SeqCst) {
@@ -399,7 +386,30 @@ pub(super) fn valid_period(period: &str) -> bool {
             .parse::<u32>()
             .is_ok_and(|m| (1..=12).contains(&m))
 }
+/// Chess.com can still add a month's games for a short while after it ends, so an archive
+/// counts as final two days after the month closes.
+/// Chess.com asks API clients to identify themselves and give a way to reach them.
+/// The contact is reduced to printable ASCII so it can't break the header.
+fn user_agent(contact: &str) -> String {
+    let contact = contact
+        .chars()
+        .filter(|c| !c.is_control() && c.is_ascii())
+        .take(120)
+        .collect::<String>();
+    format!(
+        "Plyback/{} (self-hosted game review; +https://github.com/klemen-r/plyback){}",
+        crate::APP_VERSION,
+        if contact.is_empty() {
+            String::new()
+        } else {
+            format!(" contact: {contact}")
+        }
+    )
+}
 fn month_is_closed(period: &str) -> bool {
+    month_is_closed_at(period, Utc::now())
+}
+fn month_is_closed_at(period: &str, now: chrono::DateTime<Utc>) -> bool {
     let year = period[..4].parse::<i32>().unwrap_or(0);
     let month = period[5..].parse::<u32>().unwrap_or(0);
     let (year, month) = if month == 12 {
@@ -409,7 +419,7 @@ fn month_is_closed(period: &str) -> bool {
     };
     Utc.with_ymd_and_hms(year, month, 1, 0, 0, 0)
         .single()
-        .is_some_and(|end| Utc::now().signed_duration_since(end).num_seconds() > 2 * 86400)
+        .is_some_and(|end| now.signed_duration_since(end).num_seconds() > 2 * 86400)
 }
 impl Services {
     fn sync_rows(&self, sql: &str, params: &[Value]) -> Result<Vec<Value>> {
@@ -835,6 +845,81 @@ mod tests {
         ] {
             assert!(c.archive_url("fixture", url).is_err(), "{url}");
         }
+    }
+    #[test]
+    fn user_agent_names_plyback_and_a_clean_contact() {
+        let agent = user_agent("me@example.com");
+        assert!(agent.starts_with(&format!("Plyback/{} ", crate::APP_VERSION)));
+        assert!(agent.ends_with(" contact: me@example.com"));
+        assert!(!user_agent("").contains("contact"));
+        let agent = user_agent("a\r\nX-Injected: 1 \u{17e}");
+        assert!(!agent.contains('\r') && !agent.contains('\n') && !agent.contains('\u{17e}'));
+        assert!(user_agent(&"x".repeat(500)).len() < 300);
+        assert!(reqwest::header::HeaderValue::from_str(&user_agent("a\u{7f}b")).is_ok());
+    }
+    #[test]
+    fn a_month_is_closed_two_days_after_it_ends() {
+        let at = |y, m, d, h| Utc.with_ymd_and_hms(y, m, d, h, 0, 0).unwrap();
+        assert!(month_is_closed_at("2026/09", at(2026, 10, 3, 1)));
+        assert!(!month_is_closed_at("2026/09", at(2026, 10, 2, 1)));
+        assert!(!month_is_closed_at("2026/09", at(2026, 10, 3, 0)));
+        assert!(!month_is_closed_at("2026/10", at(2026, 10, 20, 0)));
+        // December closes in the next year.
+        assert!(month_is_closed_at("2025/12", at(2026, 1, 3, 1)));
+        assert!(!month_is_closed_at("2025/12", at(2026, 1, 2, 23)));
+    }
+    #[test]
+    fn first_sync_with_history_review_queues_every_game_as_history() {
+        let server = FixtureServer::start();
+        let db = Arc::new(Database::open(":memory:").unwrap());
+        db.execute(
+            "INSERT INTO accounts(username,added_at,analyze_history,auto_analyze) VALUES('klemen_r',?,1,1)",
+            &[json!(ADDED_AFTER_FIXTURE_GAMES)],
+        )
+        .unwrap();
+        let mut service = Arc::try_unwrap(Services::new(Arc::clone(&db)).unwrap())
+            .ok()
+            .unwrap();
+        service.client = ChessComClient {
+            base: Url::parse(&server.base).unwrap(),
+            client: OnceLock::new(),
+            serial: Mutex::new(None),
+        };
+        service
+            .sync_account(&db.one("SELECT * FROM accounts", &[]).unwrap().unwrap())
+            .unwrap();
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM jobs", &[]).unwrap(), 11);
+        assert_eq!(
+            db.scalar(
+                "SELECT COUNT(*) FROM jobs WHERE priority=?",
+                &[json!(PRIORITY_HISTORY)]
+            )
+            .unwrap(),
+            11
+        );
+        // The first import is history: nothing counts as a new game.
+        assert!(
+            db.scalar("SELECT last_new_game_at FROM accounts", &[])
+                .unwrap()
+                .is_null()
+        );
+        assert_eq!(
+            db.scalar(
+                "SELECT COUNT(*) FROM account_games WHERE color NOT IN ('white','black')",
+                &[]
+            )
+            .unwrap(),
+            0
+        );
+        assert!(
+            !db.scalar("SELECT etag FROM archives WHERE period='2026/11'", &[])
+                .unwrap()
+                .is_null()
+        );
+        assert_eq!(
+            db.scalar("SELECT COUNT(*) FROM sync_pending", &[]).unwrap(),
+            0
+        );
     }
     #[test]
     fn month_validation_is_ascii_and_bounded() {
