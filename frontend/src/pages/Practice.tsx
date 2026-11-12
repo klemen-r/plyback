@@ -226,7 +226,7 @@ function PracticeSession() {
   }, [cancelCheck, resetAnswer])
   const restart = () => {
     resetPuzzle(); setIndex(0); setScore({ right: 0, done: 0 }); setStats(null)
-    void qc.invalidateQueries({ queryKey: ['practice', account?.id] })
+    void qc.resetQueries({ queryKey: ['practice', account?.id] })
   }
   const choose = <T extends string>(key: string, set: (v: T) => void) => (v: T) => {
     store(key, v); set(v); resetPuzzle(); setIndex(0); setScore({ right: 0, done: 0 }); setStats(null)
@@ -265,6 +265,7 @@ function PracticeSession() {
   const ownTarget = lineFor ? Math.min(MAX_OWN_MOVES, Math.ceil(line.length / 2)) : 1
   const done = status === 'solved' || status === 'revealed'
   const firstTry = !!solution && solution.correct
+  const clean = firstTry && tries === 0
 
   const finish = (how: Status, result: PracticeResult | null = solution) => {
     setStatus(how)
@@ -355,7 +356,7 @@ function PracticeSession() {
     const current = ++generation.current
     window.clearTimeout(reply.current)
     cancelCheck()
-    setCheckError(null)
+    setCheckError(null); setTrying(null); setPromotion(null)
     let r = solution
     if (!r) {
       r = await answer.mutateAsync({ reveal: true }).catch(() => null)
@@ -557,9 +558,10 @@ function PracticeSession() {
 
               {done && solution && (
                 <Card>
-                  <div className={clsx('flex items-center gap-2 font-semibold', status === 'solved' && firstTry ? 'text-good' : status === 'solved' ? 'text-fg' : 'text-bad')}>
+                  <div className={clsx('flex items-center gap-2 font-semibold', status === 'solved' && clean ? 'text-good' : status === 'solved' ? 'text-fg' : 'text-bad')}>
                     {status === 'solved' ? <Check className="h-4 w-4" /> : <X className="h-4 w-4" />}
-                    {status === 'solved' && firstTry ? `Solved${ownTarget > 1 ? ' the line' : ''} on the first try`
+                    {status === 'solved' && clean ? `Solved${ownTarget > 1 ? ' the line' : ''} on the first try`
+                      : status === 'solved' && firstTry ? `First move right; solved the line after ${tries} wrong ${tries === 1 ? 'try' : 'tries'}`
                       : status === 'solved' ? `Solved after ${tries} wrong ${tries === 1 ? 'try' : 'tries'}`
                       : `The move was ${solution.best_san}`}
                   </div>

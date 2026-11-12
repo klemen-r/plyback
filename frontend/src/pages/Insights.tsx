@@ -70,7 +70,7 @@ export default function InsightsPage() {
           </div>
           {missing > 0 && (
             <Button variant="primary" size="sm" onClick={() => analyze.mutate()} loading={analyze.isPending}>
-              <Sparkles className="h-4 w-4" />{analyze.data ? `Queued ${analyze.data.queued}` : `Analyse ${missing} remaining`}
+              <Sparkles className="h-4 w-4" />{analyze.data ? `Queued ${analyze.data.queued}` : (dq?.unanalyzed_ids?.length ?? 0) >= 2000 ? 'Analyse all remaining' : `Analyse ${missing} remaining`}
             </Button>
           )}
         </div>

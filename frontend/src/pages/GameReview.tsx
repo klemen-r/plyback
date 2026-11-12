@@ -433,6 +433,7 @@ function GameReviewContent() {
                 </Button>
               </span>
               {analyze.error && <div className="w-full"><ErrorNote error={analyze.error} /></div>}
+              {!analyze.error && job?.status === 'failed' && <div className="w-full"><ErrorNote error={`Deeper analysis failed: ${job.error ?? 'unknown error'}`} /></div>}
             </div>
           )}
         </div>

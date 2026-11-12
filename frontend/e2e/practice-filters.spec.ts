@@ -186,6 +186,25 @@ async function playOnBoard(page: Page, from: string, to: string, orientation: 'w
   }
 }
 
+/** The piece class ('white bishop') shown on a square of the white-oriented board, or ''. */
+async function pieceOn(page: Page, square: string) {
+  return page.locator('cg-board').first().evaluate((board, sq) => {
+    const box = board.getBoundingClientRect()
+    const file = sq.charCodeAt(0) - 97
+    const rank = Number(sq[1]) - 1
+    const x = box.left + (file + 0.5) * box.width / 8
+    const y = box.top + (7 - rank + 0.5) * box.height / 8
+    for (const piece of board.querySelectorAll('piece')) {
+      if (piece.classList.contains('ghost') || piece.classList.contains('fading')) continue
+      const r = piece.getBoundingClientRect()
+      if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) {
+        return [...piece.classList].filter(c => c === 'white' || c === 'black' || ['king', 'queen', 'rook', 'bishop', 'knight', 'pawn'].includes(c)).join(' ')
+      }
+    }
+    return ''
+  }, square)
+}
+
 test('An accepted alternative continues the puzzle with the engine line', async ({ page }) => {
   const engineLine = (uci: string[], san: string[], win: number) => ({ cp: 30, eval: '+0.3', win_white: win, uci, san, depth: 14 })
   const errors = await fixture(page, async (route, url) => {
@@ -535,5 +554,30 @@ test('A finished puzzle can be copied as PGN or opened on Lichess', async ({ pag
   expect(pgn).toContain('[White "practice_fixture"]')
   expect(pgn).toContain('[Black "First opponent"]')
   expect(pgn).toContain('{In the game: a3. Best: e4.} 1. e4 e5 2. Nf3')
+  expect(errors).toEqual([])
+})
+
+test('Show answer during an engine check drops the tried move from the board', async ({ page }) => {
+  const errors = await fixture(page, async (route, url) => {
+    if (url.pathname === '/api/engine/analyse') return // never answers
+    if (route.request().method() === 'POST') {
+      await route.fulfill({ json: { ...answer, correct: true, uci: 'e2e4', san: 'e4', line_san: ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5', 'a6'] } })
+      return
+    }
+    await route.fulfill({ json: { stats, items: [item] } })
+  })
+  await page.clock.install()
+  await page.goto('/practice')
+  await playOnBoard(page, 'e2', 'e4')
+  await page.clock.runFor(500)
+  await playOnBoard(page, 'f1', 'c4')
+  await expect(page.getByText('Checking that move with the engine…')).toBeVisible()
+  await page.getByRole('button', { name: 'Show answer' }).click()
+  await expect(page.getByText('The move was e4')).toBeVisible()
+  // The revealed line starts from the puzzle position, not from the rejected Bc4, and steps on.
+  await expect.poll(() => pieceOn(page, 'c4')).toBe('')
+  await expect.poll(() => pieceOn(page, 'f1')).toBe('white bishop')
+  await page.keyboard.press('ArrowRight')
+  await expect.poll(() => pieceOn(page, 'e4')).toBe('white pawn')
   expect(errors).toEqual([])
 })

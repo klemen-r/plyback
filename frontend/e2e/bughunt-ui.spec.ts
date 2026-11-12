@@ -101,7 +101,7 @@ test('A saved report displays the review count from its snapshot', async ({ page
   await expect(page.getByText(/Snapshot from/)).toContainText(`${analyzed} of ${games} games analysed`, { timeout: 1500 })
 })
 
-test('Import keeps a large file out of the text box and warns about too many games', async ({ page }) => {
+test('Import keeps a large file out of the text box and notes the game limit', async ({ page }) => {
   let posted = 0
   const errors = await fixture(page, async (route, url) => {
     if (url.pathname === '/api/games/import') { posted++; return route.fulfill({ json: { imported: 2, existing: 0, game_ids: [1, 2], errors: [] } }) }
@@ -117,8 +117,9 @@ test('Import keeps a large file out of the text box and warns about too many gam
   await expect(page.getByText(/2.*new game\(s\) imported/)).toBeVisible()
   expect(posted).toBe(1)
   await input.setInputFiles({ name: 'huge.pgn', mimeType: 'application/x-chess-pgn', buffer: Buffer.from(Array.from({ length: 10_001 }, (_, i) => `[Event "${i}"]\n1. e4 *\n`).join('')) })
-  await expect(page.getByText(/about 10,001 games\. Import at most 10,000/)).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Import' })).toBeDisabled()
+  // The count is an estimate (tags in comments or a broken tail also match), so the server decides.
+  await expect(page.getByText(/about 10,001 games \(at most 10,000 are imported at once\)/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Import' })).toBeEnabled()
   expect(errors).toEqual([])
 })
 

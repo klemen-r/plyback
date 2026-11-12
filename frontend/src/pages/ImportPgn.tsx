@@ -43,10 +43,10 @@ export default function ImportPgn() {
       setFileError('The selected file could not be read. Try choosing it again.')
       return
     }
-    // The server imports at most 10,000 games at once; say so before uploading.
-    // Count games by their first tag; files without [Event] tags fall back to [White] tags.
+    // An estimate from the first tag of each game (files without [Event] tags fall back to [White]).
+    // Tags inside comments or a broken last game also count, so it only informs: the server's
+    // parser enforces the 10,000-game limit.
     const games = content.match(/^\s*\[Event\s/gm)?.length || content.match(/^\s*\[White\s/gm)?.length || 0
-    if (games > MAX_GAMES) { setFileError(`This file has about ${games.toLocaleString()} games. Import at most ${MAX_GAMES.toLocaleString()} at a time: split it into smaller files.`); return }
     if (content.length > INLINE_LIMIT) setFile({ name: f.name, size: f.size, text: content, games })
     else setPgn(content)
   }
@@ -63,7 +63,7 @@ export default function ImportPgn() {
           {fileError && <ErrorNote error={fileError} />}
           {file ? (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-surface p-3 text-[13px]">
-              <span className="min-w-0 truncate"><b className="font-semibold">{file.name}</b> · {(file.size / 1_000_000).toFixed(1)} MB{file.games ? ` · about ${file.games.toLocaleString()} games` : ''}</span>
+              <span className="min-w-0 truncate"><b className="font-semibold">{file.name}</b> · {(file.size / 1_000_000).toFixed(1)} MB{file.games ? ` · about ${file.games.toLocaleString()} games` : ''}{file.games > MAX_GAMES ? ` (at most ${MAX_GAMES.toLocaleString()} are imported at once)` : ''}</span>
               <Button size="sm" variant="ghost" onClick={() => { setFile(null); imp.reset() }}>Clear</Button>
             </div>
           ) : <textarea value={pgn} onChange={e => setPgn(e.target.value)} disabled={reading} rows={12} spellCheck={false} aria-label="PGN text"

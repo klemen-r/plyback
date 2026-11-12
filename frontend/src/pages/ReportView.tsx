@@ -40,7 +40,7 @@ export default function ReportView() {
               <Progress value={r.analyzed_games} max={r.total_games} className="mt-2" />
               <p className="mt-2 text-xs text-fg-3">You can leave this page — the report is built automatically when analysis finishes. Games already analysed at the report’s depth are reused; shallower analyses are redone.</p>
             </div>
-            <Button size="sm" onClick={() => finalize.mutate()} loading={finalize.isPending} disabled={r.analyzed_games === 0}>Build now</Button>
+            <Button size="sm" onClick={() => finalize.mutate()} loading={finalize.isPending} disabled={r.total_games === 0}>Build now</Button>
           </div>
         </Card>
       )}
