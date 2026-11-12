@@ -34,4 +34,4 @@ includes its source/provenance record. Do not substitute a modified engine witho
 
 Archived design studies also contain Inter, Fraunces and IBM Plex fonts under SIL OFL-1.1; their original
 copyright and license texts are retained in `docs/design-explorations/licenses`. They are design resources,
-separate from the production font bundle. The studies preserve earlier work; they do not record a final choice.
+separate from the production font bundle. The studies preserve earlier work; the interface follows study A (see README).

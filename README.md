@@ -194,7 +194,7 @@ cargo build --release --locked --manifest-path rust/Cargo.toml
 python -m venv .venv
 .venv\Scripts\python -m pip install --require-hashes -r backend/requirements-dev.txt
 cd backend
-..\.venv\Scripts\python -m ruff check plyback tests bench
+..\.venv\Scripts\python -m ruff check --config pyproject.toml plyback tests bench ../scripts
 ..\.venv\Scripts\python -m pytest -m "not live"
 cd ../frontend
 npm ci

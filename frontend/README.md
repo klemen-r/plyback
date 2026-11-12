@@ -14,7 +14,8 @@ npx playwright install chromium
 npm run e2e
 ```
 
-Run the Python backend separately for development. Override the dev proxy with `API_URL`.
+For development, run the server (`just run`) in another terminal; the dev server (`just dev`) proxies `/api` to
+http://127.0.0.1:8000. Override that with `API_URL`.
 Playwright starts isolated backend/Chess.com fixture servers on 8790/8799 and uses a disposable database.
 Tests exercise the built interface; run `npm run build` first.
 
