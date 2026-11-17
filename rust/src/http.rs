@@ -151,6 +151,25 @@ impl App {
         Ok(protected)
     }
 
+    fn check_forwarded_access(&self, meta: &Meta, protected: bool) -> anyhow::Result<()> {
+        if !protected && meta.forwarded {
+            let host =
+                security::host_name(&meta.host).ok_or_else(|| api_error(400, "Invalid host."))?;
+            if !self
+                .config
+                .allowed_hosts
+                .iter()
+                .any(|allowed| allowed != "*" && allowed == &host)
+            {
+                return Err(api_error(
+                    403,
+                    "Forwarded access requires a password. Set one with plyback set-password, or explicitly list the request Host in PLYBACK_ALLOWED_HOSTS.",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn preflight(&self, meta: &Meta) -> anyhow::Result<()> {
         let host =
             security::host_name(&meta.host).ok_or_else(|| api_error(400, "Invalid host."))?;
@@ -169,6 +188,7 @@ impl App {
                 "Unknown host. Add this name to PLYBACK_ALLOWED_HOSTS to allow access.",
             ));
         }
+        self.check_forwarded_access(meta, protected)?;
         if is_api_path(&meta.path) {
             if !matches!(meta.method.as_str(), "GET" | "HEAD" | "OPTIONS") {
                 if !meta.csrf.eq_ignore_ascii_case("plyback") {
@@ -219,6 +239,7 @@ impl App {
         // Authentication may have changed while an upload was arriving. Check
         // immediately before dispatch, without charging the rate limit twice.
         let protected = self.password_protected()?;
+        self.check_forwarded_access(meta, protected)?;
         if !matches!(
             meta.path.as_str(),
             "/api/health" | "/api/auth/session" | "/api/auth/login"
@@ -450,6 +471,7 @@ struct Meta {
     csrf: String,
     cookies: String,
     user_agent: String,
+    forwarded: bool,
     client: String,
 }
 fn header(headers: &HeaderMap, key: &str) -> String {
@@ -671,6 +693,15 @@ async fn handle_inner(app: Arc<App>, request: Request<Body>) -> Response {
         csrf: header(headers, "x-requested-with"),
         cookies: header(headers, "cookie"),
         user_agent: header(headers, "user-agent"),
+        forwarded: [
+            "forwarded",
+            "x-forwarded-for",
+            "x-forwarded-host",
+            "x-forwarded-proto",
+            "x-real-ip",
+        ]
+        .iter()
+        .any(|name| headers.contains_key(*name)),
         client: peer
             .map(|p| client_ip(p.ip(), headers, &app.config.trusted_proxies).to_string())
             .unwrap_or_else(|| "local-test".into()),
@@ -1041,6 +1072,7 @@ mod tests {
                     csrf: "plyback".into(),
                     cookies: String::new(),
                     user_agent: String::new(),
+                    forwarded: false,
                     client: "local-test".into(),
                 };
                 sender
@@ -1097,6 +1129,7 @@ mod tests {
             csrf: "plyback".into(),
             cookies: security::session_cookie(&token, false),
             user_agent: "test".into(),
+            forwarded: false,
             client: "local-test".into(),
         };
         app.preflight(&meta).unwrap();
@@ -1113,6 +1146,61 @@ mod tests {
             services::get_settings(&app.db).unwrap()["auto_analyze_new"],
             true
         );
+    }
+
+    #[test]
+    fn forwarded_access_is_rechecked_after_password_removal() {
+        for explicitly_allowed in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let app = App::open(Config {
+                data: directory.path().join("db"),
+                frontend: directory.path().join("web"),
+                host: "127.0.0.1".into(),
+                port: 0,
+                allowed_hosts: if explicitly_allowed {
+                    vec!["localhost".into()]
+                } else {
+                    vec![]
+                },
+                trusted_proxies: vec![],
+                secure_cookies: false,
+                background: false,
+            })
+            .unwrap();
+            security::set_password(&app.db, Some("test-password")).unwrap();
+            let token = security::create_session(&app.db, "test").unwrap();
+            let meta = Meta {
+                method: "PUT".into(),
+                path: "/api/settings".into(),
+                query: Query::new(),
+                host: "localhost".into(),
+                scheme: "http".into(),
+                origin: None,
+                csrf: "plyback".into(),
+                cookies: security::session_cookie(&token, false),
+                user_agent: "test".into(),
+                forwarded: true,
+                client: "local-test".into(),
+            };
+            app.preflight(&meta).unwrap();
+            security::set_password(&app.db, None).unwrap();
+            let result = app.dispatch(
+                &meta,
+                &json!({"auto_analyze_new": false}),
+                &AtomicBool::new(false),
+            );
+            if explicitly_allowed {
+                assert_eq!(result.unwrap().0, 200);
+            } else {
+                let error = result.unwrap_err();
+                assert_eq!(error.downcast_ref::<ApiError>().unwrap().0, 403);
+                assert!(error.to_string().contains("password"));
+            }
+            assert_eq!(
+                services::get_settings(&app.db).unwrap()["auto_analyze_new"],
+                !explicitly_allowed
+            );
+        }
     }
 
     #[test]
@@ -1319,6 +1407,7 @@ mod tests {
                 csrf: "plyback".into(),
                 cookies: String::new(),
                 user_agent: String::new(),
+                forwarded: false,
                 client: "local-test".into(),
             };
             let results = [

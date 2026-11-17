@@ -643,6 +643,7 @@ fn only_explicit_trusted_proxies_get_separate_client_buckets() {
     // not grant trust to every peer either.
     for trusted in [vec![], vec!["192.0.2.99".parse().unwrap()]] {
         let test = TestApp::configured(|c| c.trusted_proxies = trusted);
+        security::set_password(&test.app.db, Some("test-password")).unwrap();
         for i in 0..11 {
             let ip = format!("192.0.2.{}", i + 1);
             let forwarded = format!("for={ip}");
@@ -663,6 +664,7 @@ fn only_explicit_trusted_proxies_get_separate_client_buckets() {
 #[test]
 fn spoofed_chain_prefix_and_malformed_headers_cannot_reset_login_budget() {
     let test = TestApp::configured(|c| c.trusted_proxies.push("127.0.0.1".parse().unwrap()));
+    security::set_password(&test.app.db, Some("test-password")).unwrap();
     for i in 0..11 {
         let chain = format!("198.51.100.{}, 192.0.2.1", i + 1);
         assert_eq!(
@@ -1128,4 +1130,97 @@ fn https_proxy_on_ipv4_mapped_loopback_is_a_same_origin_request() {
         &headers,
     );
     assert_ne!(status, 200);
+}
+
+#[test]
+fn passwordless_direct_requests_keep_local_access() {
+    let test = TestApp::new();
+    assert_eq!(test.request("GET", "/api/accounts", json!({}), &[]).0, 200);
+}
+
+#[test]
+fn passwordless_forwarded_requests_require_an_explicit_host() {
+    for allowed in [vec![], vec!["*".to_owned()]] {
+        let test = TestApp::configured(|c| c.allowed_hosts = allowed);
+        for name in [
+            "forwarded",
+            "x-forwarded-for",
+            "x-forwarded-host",
+            "x-forwarded-proto",
+            "x-real-ip",
+        ] {
+            // Presence alone matters, even an empty value on a public route.
+            for path in ["/", "/api/health", "/api/accounts"] {
+                let (status, headers, body) = test.request("GET", path, json!({}), &[(name, "")]);
+                assert_eq!(status, 403, "{name} {path}");
+                assert_eq!(headers["cache-control"], "no-store");
+                assert_eq!(headers["x-content-type-options"], "nosniff");
+                let error = body_json(&body);
+                assert!(error["detail"].as_str().unwrap().contains("password"));
+            }
+        }
+    }
+}
+
+#[test]
+fn passwordless_forwarded_requests_accept_only_the_listed_request_host() {
+    let test = TestApp::configured(|c| c.allowed_hosts.push("localhost".into()));
+    for name in [
+        "forwarded",
+        "x-forwarded-for",
+        "x-forwarded-host",
+        "x-forwarded-proto",
+        "x-real-ip",
+    ] {
+        assert_eq!(
+            test.request("GET", "/api/accounts", json!({}), &[(name, "proxy")])
+                .0,
+            200
+        );
+        assert_eq!(
+            test.request(
+                "GET",
+                "/api/accounts",
+                json!({}),
+                &[(name, "proxy"), ("host", "127.0.0.1:8000")]
+            )
+            .0,
+            403
+        );
+    }
+}
+
+#[test]
+fn password_protected_forwarded_requests_keep_existing_authentication() {
+    let test = TestApp::new();
+    security::set_password(&test.app.db, Some("test-password")).unwrap();
+    let cookie = login(&test, "test-password");
+    for name in [
+        "forwarded",
+        "x-forwarded-for",
+        "x-forwarded-host",
+        "x-forwarded-proto",
+        "x-real-ip",
+    ] {
+        assert_eq!(
+            test.request("GET", "/api/health", json!({}), &[(name, "proxy")])
+                .0,
+            200
+        );
+        assert_eq!(
+            test.request("GET", "/api/accounts", json!({}), &[(name, "proxy")])
+                .0,
+            401
+        );
+        assert_eq!(
+            test.request(
+                "GET",
+                "/api/accounts",
+                json!({}),
+                &[(name, "proxy"), ("cookie", &cookie)]
+            )
+            .0,
+            200
+        );
+    }
 }

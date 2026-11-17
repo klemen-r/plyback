@@ -77,8 +77,11 @@ IPv4-mapped IPv6 addresses share their IPv4 bucket. This setting changes only ra
 the existing loopback-only `X-Forwarded-Proto` handling for scheme/cookies is unchanged.
 
 Passwordless Tailscale Serve remains supported: bind to loopback and set
-`PLYBACK_ALLOWED_HOSTS=plyback.tailnet.example`. Forwarding headers are still accepted without
-a password; everyone who can reach that shared tailnet URL has full API access. The trusted-proxy
+`PLYBACK_ALLOWED_HOSTS=plyback.tailnet.example`. Without a password, requests carrying `Forwarded`,
+`X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto` or `X-Real-IP` receive 403 unless the
+request Host is explicitly listed in `PLYBACK_ALLOWED_HOSTS` (a wildcard does not qualify); set a
+password for forwarded access otherwise. Everyone who can reach an explicitly allowed shared
+tailnet URL has full API access. The trusted-proxy
 setting is optional and does not enable or require authentication. Removing the access password
 through the API is refused while configured to listen on a network interface.
 
