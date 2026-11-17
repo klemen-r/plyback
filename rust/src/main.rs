@@ -313,6 +313,32 @@ async fn shutdown_signal() {
 mod tests {
     use super::*;
     #[test]
+    fn legacy_database_is_adopted_by_copy() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut config = Config::from_env()?;
+        config.data = dir.path().to_path_buf();
+        let source = dir.path().join("chess-insight.db");
+        let writer = rusqlite::Connection::open(&source)?;
+        writer.execute_batch(
+            "CREATE TABLE evidence(value INTEGER); INSERT INTO evidence VALUES(7)",
+        )?;
+        drop(writer);
+        let original = std::fs::read(&source)?;
+        adopt_legacy(&config)?;
+        assert_eq!(std::fs::read(&source)?, original);
+        let reader = rusqlite::Connection::open(config.db_path())?;
+        assert_eq!(
+            reader.query_row("SELECT value FROM evidence", [], |r| r.get::<_, i64>(0))?,
+            7
+        );
+        drop(reader);
+        let adopted = std::fs::read(config.db_path())?;
+        adopt_legacy(&config)?;
+        assert_eq!(std::fs::read(config.db_path())?, adopted);
+        assert_eq!(std::fs::read(source)?, original);
+        Ok(())
+    }
+    #[test]
     fn backup_reads_committed_wal_and_never_overwrites() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
         let source = dir.path().join("source.db");

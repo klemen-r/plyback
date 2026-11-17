@@ -501,6 +501,44 @@ pub fn account_public(db: &Database, account: &Value) -> Result<Value> {
 mod tests {
     use super::*;
     #[test]
+    fn save_analysis_bumps_revision_in_the_same_second() {
+        let db = Database::open(":memory:").unwrap();
+        db.execute(
+            "INSERT INTO games(id,uuid,pgn,imported_at) VALUES(1,'revision','1. e4 e5 *',0)",
+            &[],
+        )
+        .unwrap();
+        db.execute("INSERT INTO jobs(id,game_id,status,created_at,claim_token) VALUES(1,1,'running',0,'claim')", &[]).unwrap();
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let claim = AnalysisClaim {
+            game_id: 1,
+            job_id: 1,
+            token: "claim",
+            uuid: "revision",
+            pgn: "1. e4 e5 *",
+            cancel: &cancel,
+        };
+        let result = json!({"moves":[],"opening":null,"duration_ms":0,"book_plies":0,"counts":{},"key_moments":[],"evals":[]});
+        // now() has one-second resolution, so back-to-back saves normally share
+        // analyzed_at; retry in the rare case a second boundary falls between them.
+        let save = || {
+            db.execute("UPDATE jobs SET status='running' WHERE id=1", &[])
+                .unwrap();
+            assert!(save_analysis(&db, &claim, &result, 6, 2, "fixture").unwrap());
+            db.one("SELECT analyzed_at,revision FROM game_analysis", &[])
+                .unwrap()
+                .unwrap()
+        };
+        let (first, second) = (0..5)
+            .map(|_| (save(), save()))
+            .find(|(first, second)| first["analyzed_at"] == second["analyzed_at"])
+            .expect("five save pairs never fell within one second");
+        assert_eq!(
+            second["revision"].as_i64().unwrap(),
+            first["revision"].as_i64().unwrap() + 1
+        );
+    }
+    #[test]
     fn pgn_time_classes() {
         let class = |tc: &str| {
             game_row_from_pgn(&format!(

@@ -195,6 +195,159 @@ mod wake_tests {
     use super::*;
     use std::time::Instant;
 
+    #[test]
+    fn settings_change_while_working_then_stop_joins_every_worker() {
+        const CHILD: &str = "PLYBACK_RECONFIGURATION_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            // Set the engine override only in a child process: parallel unit tests
+            // must retain their own Stockfish selection.
+            let dir = tempfile::tempdir().unwrap();
+            let engine = dir
+                .path()
+                .join(if cfg!(windows) { "gate.exe" } else { "gate" });
+            assert!(
+                std::process::Command::new("rustc")
+                    .args(["--edition=2024"])
+                    .arg(
+                        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                            .join("tests/fixtures/uci_fixture.rs")
+                    )
+                    .arg("-o")
+                    .arg(&engine)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            let test =
+                "services::wake_tests::settings_change_while_working_then_stop_joins_every_worker";
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", test, "--nocapture", "--test-threads=1"])
+                .env(CHILD, "1")
+                .env("PLYBACK_STOCKFISH", &engine)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            // Drain both pipes while the child runs: a long panic message must not
+            // block the child on a full pipe and turn into a timeout.
+            use std::io::Read;
+            let drain = |pipe: Box<dyn std::io::Read + Send>| {
+                std::thread::spawn(move || {
+                    let mut text = String::new();
+                    let _ = std::io::BufReader::new(pipe).read_to_string(&mut text);
+                    text
+                })
+            };
+            let stdout = drain(Box::new(child.stdout.take().unwrap()));
+            let stderr = drain(Box::new(child.stderr.take().unwrap()));
+            let deadline = Instant::now() + Duration::from_secs(45);
+            let mut timed_out = false;
+            while child.try_wait().unwrap().is_none() {
+                if Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    timed_out = true;
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let status = child.wait().unwrap();
+            let (stdout, stderr) = (stdout.join().unwrap(), stderr.join().unwrap());
+            assert!(
+                !timed_out,
+                "worker shutdown timed out:
+{stdout}
+{stderr}"
+            );
+            assert!(
+                status.success(),
+                "{stdout}
+{stderr}"
+            );
+            // A renamed test would match nothing and still exit successfully.
+            assert!(
+                stdout.contains("1 passed"),
+                "child ran no test:
+{stdout}"
+            );
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::open(dir.path().join("workers.db")).unwrap());
+        save_settings(&db, &serde_json::json!({"workers":1,"hash_mb":16,"analysis_depth":30,"max_seconds_per_position":60.0})).unwrap();
+        let service = Services::new(Arc::clone(&db)).unwrap();
+        struct StopOnDrop(Arc<Services>);
+        impl Drop for StopOnDrop {
+            fn drop(&mut self) {
+                self.0.stop();
+            }
+        }
+        let _cleanup = StopOnDrop(Arc::clone(&service));
+        service
+            .handle(
+                "POST",
+                "/api/games/import",
+                &Query::new(),
+                &serde_json::json!({"pgn":"1. e4 e5 *","analyze":true}),
+            )
+            .unwrap()
+            .unwrap();
+        service.start();
+        let engine = std::path::PathBuf::from(std::env::var_os("PLYBACK_STOCKFISH").unwrap());
+        let wait_for_search = |count: usize| {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
+                let log = std::fs::read_to_string(engine.with_extension("log")).unwrap_or_default();
+                if log.lines().filter(|line| line.starts_with("go ")).count() >= count {
+                    return log;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "worker did not search: {}",
+                    service.stats()
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        wait_for_search(1);
+        assert_eq!(service.stats()["running"], 1);
+        save_settings(&db, &serde_json::json!({"hash_mb":32})).unwrap();
+        service.apply_settings();
+        let log = wait_for_search(2);
+        assert!(log.contains("setoption name Hash value 16"));
+        assert!(log.contains("setoption name Hash value 32"));
+        assert!(
+            log.lines()
+                .filter(|line| line.starts_with("start "))
+                .count()
+                >= 2
+        );
+        // Reconfigure again and stop at once, while the replacement worker is still
+        // blocked in its gated search: stop() must join the retiring worker too.
+        save_settings(&db, &serde_json::json!({"hash_mb":64})).unwrap();
+        service.apply_settings();
+        let started = Instant::now();
+        service.stop();
+        assert!(started.elapsed() < Duration::from_secs(5));
+        // Every worker, the supervisor and the sync loop hold a clone; only this
+        // test's two remain once all of them have been joined.
+        assert_eq!(Arc::strong_count(&service), 2);
+        assert_eq!(service.stats()["workers"], 0);
+        assert_eq!(service.stats()["running"], 0);
+        assert!(service.progress.lock().unwrap().is_empty());
+        let starts = |log: &str| {
+            log.lines()
+                .filter(|line| line.starts_with("start "))
+                .count()
+        };
+        let after_stop = starts(&std::fs::read_to_string(engine.with_extension("log")).unwrap());
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(
+            starts(&std::fs::read_to_string(engine.with_extension("log")).unwrap()),
+            after_stop,
+            "an engine started after stop()"
+        );
+    }
+
     fn enqueue_in_empty_check_race(samples: usize) -> Vec<f64> {
         let db = Arc::new(Database::open(":memory:").unwrap());
         db.execute(

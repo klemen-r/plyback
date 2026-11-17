@@ -1111,6 +1111,87 @@ fn key_moments(moves: &[Value]) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pv_lines_and_reply_keep_full_length() {
+        let continuation = [
+            "e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5a4", "g8f6", "e1g1", "f8e7", "f1e1",
+            "b7b5", "a4b3",
+        ];
+        let sans = [
+            "e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6", "O-O", "Be7", "Re1", "b5", "Bb3",
+        ];
+        let result = analyze_with(
+            "1. e4 e5 2. Nf3 *",
+            &AnalysisOptions::default(),
+            &AtomicBool::new(false),
+            |_, _| {},
+            &LogisticModel,
+            "Fake",
+            |request| {
+                assert!(request.root_moves.is_empty());
+                Ok(vec![
+                    fake_line(0, &continuation[request.moves.len()..]),
+                    fake_line(-1, &[]),
+                ])
+            },
+        )
+        .unwrap();
+        for (i, mv) in result["moves"].as_array().unwrap().iter().enumerate() {
+            assert_eq!(
+                mv["lines"][0]["san"],
+                json!(&sans[i..(i + 12).min(sans.len())])
+            );
+            assert_eq!(
+                mv["reply"]["san"],
+                json!(&sans[i + 1..(i + 13).min(sans.len())])
+            );
+            assert_eq!(mv["best_san"], sans[i]);
+        }
+        assert_eq!(
+            result["moves"][0]["lines"][0]["san"]
+                .as_array()
+                .unwrap()
+                .len(),
+            12
+        );
+    }
+
+    #[test]
+    fn cancel_during_threat_test_is_not_swallowed() {
+        let cancel = AtomicBool::new(false);
+        let mut threat_called = false;
+        let error = analyze_with(
+            "[FEN \"4k3/7p/8/8/8/8/P7/4K3 w - - 0 20\"]\n\n20. a3 *",
+            &AnalysisOptions {
+                depth: 12,
+                ..Default::default()
+            },
+            &cancel,
+            |_, _| {},
+            &LogisticModel,
+            "Fake",
+            |request| {
+                if request.depth == 10 {
+                    threat_called = true;
+                    cancel.store(true, Ordering::Release);
+                    return Err(api_error(499, "cancelled in threat search"));
+                }
+                if request.moves.is_empty() {
+                    Ok(vec![fake_line(300, &["a2a4"]), fake_line(-300, &["a2a3"])])
+                } else {
+                    Ok(vec![fake_line(-300, &["h7h6"])])
+                }
+            },
+        )
+        .unwrap_err();
+        assert!(
+            threat_called,
+            "the cancellation must happen inside the threat search"
+        );
+        assert_eq!(error.downcast_ref::<crate::ApiError>().unwrap().0, 499);
+        assert!(error.to_string().contains("cancelled in threat search"));
+    }
     #[test]
     fn inclusive_boundaries_and_mover_perspective() {
         assert_eq!(base_classification(false, 0.02), "excellent");

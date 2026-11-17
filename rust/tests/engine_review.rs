@@ -61,8 +61,17 @@ fn real_stockfish_review_mates_sacrifice_and_hanging_queen() {
     .unwrap();
     assert_eq!(scholars["moves"][5]["classification"], "blunder");
     assert!(scholars["moves"][5]["tags"].get("allowed_mate").is_some());
+    assert!(
+        scholars["moves"][5]["explanation"]
+            .as_str()
+            .unwrap()
+            .to_lowercase()
+            .contains("mate")
+    );
     assert_eq!(scholars["moves"][6]["classification"], "best");
+    assert!(scholars["moves"][6]["tags"].get("missed_mate").is_none());
     assert_eq!(scholars["moves"][0]["classification"], "book");
+    assert!(!scholars["opening"].is_null());
     assert!(
         scholars["accuracy_white"].as_f64().unwrap() > scholars["accuracy_black"].as_f64().unwrap()
     );
@@ -92,6 +101,10 @@ fn real_stockfish_review_mates_sacrifice_and_hanging_queen() {
     )
     .unwrap();
     assert_eq!(queen["moves"][5]["classification"], "blunder");
+    assert!(queen["moves"][5]["tags"].get("hanging_piece").is_some());
+    let best_san = queen["moves"][5]["best_san"].as_str().unwrap();
+    assert!(!best_san.is_empty());
+    assert_ne!(best_san, "Qh4");
     assert!(
         queen["moves"][5]["explanation"]
             .as_str()
@@ -102,6 +115,26 @@ fn real_stockfish_review_mates_sacrifice_and_hanging_queen() {
         queen["moves"][6]["classification"].as_str(),
         Some("best" | "excellent")
     ));
+    let shilling = analysis::analyze(
+        &mut engine,
+        "1. e4 e5 2. Nf3 Nc6 3. Bc4 Nd4 4. Nxe5 Qg5 5. Nxf7 Qxg2 6. Rf1 Qxe4+ 7. Be2 Nf3# 0-1",
+        &options,
+        &cancel,
+        |_, _| {},
+    )
+    .unwrap();
+    assert!(matches!(
+        shilling["moves"][8]["classification"].as_str(),
+        Some("mistake" | "blunder")
+    ));
+    assert!(matches!(
+        shilling["moves"][9]["classification"].as_str(),
+        Some("best" | "great")
+    ));
+    assert!(shilling["moves"][9]["tags"].get("sacrifice").is_none());
+    assert!(
+        shilling["accuracy_black"].as_f64().unwrap() > shilling["accuracy_white"].as_f64().unwrap()
+    );
 }
 
 #[test]

@@ -492,6 +492,62 @@ mod tests {
         );
     }
     #[test]
+    fn failed_backfill_keeps_version_and_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("backfill.db");
+        let legacy = legacy_database(&path, 2);
+        legacy.execute_batch("INSERT INTO games(id,uuid,pgn,imported_at) VALUES(12,'preserved','1. e4 *',7);
+            INSERT INTO moves(game_id,ply,color,san,uci,fen_before,epd_before,phase) VALUES(12,1,'w','Ra2','a1a2','7k/8/8/8/8/8/7K/R7 w - - 0 1','7k/8/8/8/8/8/7K/R7 w - -','endgame');
+            CREATE TRIGGER reject_backfill BEFORE UPDATE ON moves BEGIN SELECT RAISE(ABORT, 'backfill interrupted'); END;").unwrap();
+        let rows = |c: &Connection| query_connection(c, "SELECT * FROM moves", &[]).unwrap();
+        let before = rows(&legacy);
+        drop(legacy);
+        let error = Database::open(&path).err().expect("backfill must fail");
+        assert!(error.to_string().contains("backfill interrupted"));
+        let legacy = Connection::open(&path).unwrap();
+        assert_eq!(
+            legacy
+                .query_row("SELECT version FROM schema_version", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+        assert_eq!(rows(&legacy), before);
+        assert_eq!(
+            legacy
+                .query_row("SELECT uuid FROM games", [], |r| r.get::<_, String>(0))
+                .unwrap(),
+            "preserved"
+        );
+        assert_eq!(
+            legacy
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('moves') WHERE name='endgame_type'",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+        legacy
+            .execute_batch("DROP TRIGGER reject_backfill")
+            .unwrap();
+        drop(legacy);
+        let upgraded = Database::open(&path).unwrap();
+        assert_eq!(
+            upgraded
+                .scalar("SELECT version FROM schema_version", &[])
+                .unwrap(),
+            MIGRATIONS.len() as i64
+        );
+        assert_eq!(
+            upgraded
+                .scalar("SELECT endgame_type FROM moves", &[])
+                .unwrap(),
+            "rook"
+        );
+    }
+    #[test]
     fn upgrading_v5_preserves_password_sessions_and_ready_report_bytes() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("legacy.db");

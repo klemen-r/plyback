@@ -41,6 +41,10 @@ pub struct Insights {
     refreshes: Mutex<Vec<JoinHandle<()>>>,
     build: Mutex<()>,
     self_ref: OnceLock<Weak<Self>>,
+    #[cfg(test)]
+    before_compute: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    #[cfg(test)]
+    cache_waits: std::sync::atomic::AtomicUsize,
 }
 
 impl Insights {
@@ -56,6 +60,10 @@ impl Insights {
             refreshes: Mutex::new(Vec::new()),
             build: Mutex::new(()),
             self_ref: OnceLock::new(),
+            #[cfg(test)]
+            before_compute: Mutex::new(None),
+            #[cfg(test)]
+            cache_waits: std::sync::atomic::AtomicUsize::new(0),
         });
         let _ = out.self_ref.set(Arc::downgrade(&out));
         out
@@ -161,6 +169,8 @@ impl Insights {
                 if Instant::now() >= deadline {
                     return Err(api_error(503, "Insights are busy. Try again shortly."));
                 }
+                #[cfg(test)]
+                self.cache_waits.fetch_add(1, Ordering::SeqCst);
                 let _guard = self
                     .cache_changed
                     .wait_timeout(cache, Duration::from_millis(250))
@@ -194,6 +204,10 @@ impl Insights {
         }
     }
     fn refresh(&self, key: String, revision: i64, account: i64, filters: &Value) -> Result<Value> {
+        #[cfg(test)]
+        if let Some(hook) = self.before_compute.lock().unwrap().clone() {
+            hook();
+        }
         let result = compute(&self.db, account, filters).map(|mut data| {
             data["generated_at"] = json!(now());
             data
@@ -527,4 +541,122 @@ fn default_title(f: &Value) -> String {
         parts.push(format!("as {c}"));
     }
     format!("Account analysis — {}", parts.join(" "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Barrier, atomic::AtomicUsize, mpsc};
+
+    fn runtime() -> Arc<Insights> {
+        let db = Arc::new(Database::open(":memory:").unwrap());
+        db.execute(
+            "INSERT INTO accounts(id,username,added_at,sync_enabled) VALUES(1,'fixture',0,0)",
+            &[],
+        )
+        .unwrap();
+        Insights::new(db.clone(), Services::new(db).unwrap())
+    }
+
+    /// Block the actual compute call without replacing its result or the cache logic.
+    fn block_compute(
+        service: &Insights,
+        calls: Arc<AtomicUsize>,
+    ) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (started_tx, started) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel();
+        let release_rx = Mutex::new(release_rx);
+        *service.before_compute.lock().unwrap() = Some(Arc::new(move || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            started_tx.send(()).unwrap();
+            release_rx
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(30))
+                .unwrap();
+        }));
+        (started, release)
+    }
+
+    #[test]
+    fn cold_requests_share_one_computation() {
+        let service = runtime();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (started, release) = block_compute(&service, calls.clone());
+        let barrier = Arc::new(Barrier::new(9));
+        let workers = (0..8)
+            .map(|_| {
+                let service = service.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    service.cached(1, &json!({})).unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        barrier.wait();
+        started.recv_timeout(Duration::from_secs(5)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while service.cache_waits.load(Ordering::SeqCst) < 7 {
+            assert!(
+                Instant::now() < deadline,
+                "cold requests did not join the pending computation"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        release.send(()).unwrap();
+        let results = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(results[0]["overview"]["games"], 0);
+        assert!(results.iter().all(|result| result == &results[0]));
+        service.stop();
+    }
+
+    #[test]
+    fn stop_joins_a_background_refresh() {
+        let service = runtime();
+        let original = service.cached(1, &json!({})).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (started, release) = block_compute(&service, calls.clone());
+        service
+            .db
+            .execute("UPDATE accounts SET display_name='Changed' WHERE id=1", &[])
+            .unwrap();
+        let stale = service.cached(1, &json!({})).unwrap();
+        assert_eq!(stale["stale"], true);
+        assert_eq!(stale["overview"], original["overview"]);
+        started.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (closed_tx, closed) = mpsc::channel();
+        let stopping = service.clone();
+        let worker = std::thread::spawn(move || {
+            stopping.stop();
+            closed_tx.send(()).unwrap();
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !service.stop.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline, "shutdown did not start");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(matches!(
+            closed.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        release.send(()).unwrap();
+        closed.recv_timeout(Duration::from_secs(5)).unwrap();
+        worker.join().unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(service.refreshes.lock().unwrap().is_empty());
+        let cache = service.cache.lock().unwrap();
+        assert!(cache.pending.is_empty());
+        let revision = service
+            .db
+            .scalar("SELECT revision FROM data_revision WHERE id=1", &[])
+            .unwrap()
+            .as_i64()
+            .unwrap();
+        assert_eq!(cache.entries.values().next().unwrap().revision, revision);
+    }
 }

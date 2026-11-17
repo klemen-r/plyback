@@ -20,10 +20,13 @@ impl std::error::Error for SyncDbBusy {}
 
 const OFFICIAL_BASE: &str = "https://api.chess.com/pub";
 const MAX_RESPONSE: u64 = 32 * 1024 * 1024;
+type RetryWait = dyn Fn(Duration, &AtomicBool) -> Result<()> + Send + Sync;
+
 pub(super) struct ChessComClient {
     base: Url,
     client: OnceLock<Client>,
     serial: Mutex<Option<Instant>>,
+    retry_wait: Arc<RetryWait>,
 }
 struct ApiResponse {
     data: Value,
@@ -111,6 +114,7 @@ impl ChessComClient {
             base,
             client: OnceLock::new(),
             serial: Mutex::new(None),
+            retry_wait: Arc::new(wait_cancel),
         })
     }
     /// The configured API base without a trailing slash, so "{root}/player/..." never has "//"
@@ -323,7 +327,7 @@ impl ChessComClient {
                 }
             }
             if attempt < 5 {
-                wait_cancel(Duration::from_secs(delay), stop)?;
+                (self.retry_wait)(Duration::from_secs(delay), stop)?;
             }
         }
         Err(api_error(
@@ -827,6 +831,7 @@ mod tests {
             base: Url::parse(OFFICIAL_BASE).unwrap(),
             client: OnceLock::new(),
             serial: Mutex::new(None),
+            retry_wait: Arc::new(wait_cancel),
         };
         assert!(
             c.archive_url(
@@ -884,6 +889,7 @@ mod tests {
             base: Url::parse(&server.base).unwrap(),
             client: OnceLock::new(),
             serial: Mutex::new(None),
+            retry_wait: Arc::new(wait_cancel),
         };
         service
             .sync_account(&db.one("SELECT * FROM accounts", &[]).unwrap().unwrap())
@@ -943,6 +949,8 @@ mod tests {
         stop: Arc<AtomicBool>,
         extra: Arc<AtomicBool>,
         conditionals: Arc<AtomicU64>,
+        requests: Arc<Mutex<Vec<String>>>,
+        responses: Arc<Mutex<std::collections::VecDeque<Option<String>>>>,
         handle: Option<std::thread::JoinHandle<()>>,
     }
     type PausedResponse = (
@@ -978,6 +986,12 @@ mod tests {
             let stop = Arc::new(AtomicBool::new(false));
             let extra = Arc::new(AtomicBool::new(false));
             let conditionals = Arc::new(AtomicU64::new(0));
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let responses = Arc::new(Mutex::new(
+                std::collections::VecDeque::<Option<String>>::new(),
+            ));
+            let seen = Arc::clone(&requests);
+            let scripted = Arc::clone(&responses);
             let (s, e, c) = (
                 Arc::clone(&stop),
                 Arc::clone(&extra),
@@ -1016,13 +1030,20 @@ mod tests {
                         }
                         headers.push_str(&line.to_ascii_lowercase());
                     }
+                    seen.lock().unwrap().push(path.clone());
+                    if let Some(response) = scripted.lock().unwrap().pop_front() {
+                        if let Some(response) = response {
+                            socket.write_all(response.as_bytes()).unwrap();
+                        }
+                        continue;
+                    }
                     if pause
                         .as_ref()
                         .is_some_and(|(suffix, _, _)| path.ends_with(suffix.as_str()))
                     {
                         let (_, entered, resume) = pause.take().unwrap();
                         let _ = entered.send(());
-                        let _ = resume.recv_timeout(Duration::from_secs(5));
+                        let _ = resume.recv_timeout(Duration::from_secs(30));
                     }
                     let mut body = if path.ends_with("/games/archives") {
                         serde_json::from_str(include_str!(
@@ -1084,6 +1105,8 @@ mod tests {
                 stop,
                 extra,
                 conditionals,
+                requests,
+                responses,
                 handle: Some(handle),
             }
         }
@@ -1094,6 +1117,344 @@ mod tests {
             if let Some(h) = self.handle.take() {
                 h.join().unwrap();
             }
+        }
+    }
+
+    fn response(status: u16, headers: &str, body: &str) -> Option<String> {
+        Some(format!(
+            "HTTP/1.1 {status} Fixture\r\nContent-Length: {}\r\nConnection: close\r\n{headers}\r\n{body}",
+            body.len()
+        ))
+    }
+
+    fn fixture_client(server: &FixtureServer) -> (ChessComClient, Arc<Mutex<Vec<Duration>>>) {
+        let waits = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&waits);
+        (
+            ChessComClient {
+                base: Url::parse(&server.base).unwrap(),
+                client: OnceLock::new(),
+                serial: Mutex::new(None),
+                retry_wait: Arc::new(move |duration, stop| {
+                    recorded.lock().unwrap().push(duration);
+                    wait_cancel(Duration::ZERO, stop)
+                }),
+            },
+            waits,
+        )
+    }
+
+    fn fixture_service(db: &Arc<Database>, server: &FixtureServer) -> Services {
+        let mut service = Arc::try_unwrap(Services::new(Arc::clone(db)).unwrap())
+            .ok()
+            .unwrap();
+        service.client = fixture_client(server).0;
+        service
+    }
+
+    #[test]
+    fn retries_honour_retry_after_and_give_up_after_six_attempts() {
+        let server = FixtureServer::start();
+        server.responses.lock().unwrap().extend([
+            response(429, "Retry-After: 7\r\n", ""),
+            response(429, "Retry-After: 7\r\n", ""),
+            response(200, "ETag: \"x\"\r\n", r#"{"ok":true}"#),
+        ]);
+        let (client, waits) = fixture_client(&server);
+        let stop = AtomicBool::new(false);
+        let result = client
+            .get(
+                &format!("{}/player/foo", server.base),
+                None,
+                None,
+                "",
+                &stop,
+            )
+            .unwrap();
+        assert_eq!(result.data, json!({"ok": true}));
+        assert_eq!(result.etag.as_deref(), Some("\"x\""));
+        assert_eq!(server.requests.lock().unwrap().len(), 3);
+        assert_eq!(*waits.lock().unwrap(), [Duration::from_secs(7); 2]);
+
+        server.requests.lock().unwrap().clear();
+        waits.lock().unwrap().clear();
+        server
+            .responses
+            .lock()
+            .unwrap()
+            .extend((0..6).map(|_| response(503, "", "")));
+        let error = client.profile("foo", "", &stop).unwrap_err();
+        assert_eq!(error.downcast_ref::<crate::ApiError>().unwrap().0, 502);
+        assert!(error.to_string().contains("after 6 attempts"));
+        assert_eq!(server.requests.lock().unwrap().len(), 6);
+        assert_eq!(
+            *waits.lock().unwrap(),
+            [2, 4, 8, 16, 32].map(Duration::from_secs)
+        );
+    }
+
+    #[test]
+    fn connection_errors_are_retried_but_other_502_are_not() {
+        let server = FixtureServer::start();
+        server.responses.lock().unwrap().extend([
+            None, // Accept the request, then close the connection without a response.
+            response(200, "", r#"{"ok":true}"#),
+        ]);
+        let (client, waits) = fixture_client(&server);
+        let stop = AtomicBool::new(false);
+        assert_eq!(
+            client.profile("foo", "", &stop).unwrap(),
+            json!({"ok": true})
+        );
+        assert_eq!(server.requests.lock().unwrap().len(), 2);
+        assert_eq!(*waits.lock().unwrap(), [Duration::from_secs(2)]);
+
+        server.requests.lock().unwrap().clear();
+        waits.lock().unwrap().clear();
+        server
+            .responses
+            .lock()
+            .unwrap()
+            .push_back(response(200, "", "not json"));
+        let error = client.profile("foo", "", &stop).unwrap_err();
+        assert_eq!(error.downcast_ref::<crate::ApiError>().unwrap().0, 502);
+        assert!(error.to_string().contains("invalid JSON"));
+        assert_eq!(server.requests.lock().unwrap().len(), 1);
+        assert!(waits.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn missing_player_is_404_and_sync_records_error() {
+        let server = FixtureServer::start();
+        let db = Arc::new(Database::open(":memory:").unwrap());
+        let service = fixture_service(&db, &server);
+        for status in [404, 410] {
+            server
+                .responses
+                .lock()
+                .unwrap()
+                .push_back(response(status, "", "{}"));
+            let error = service
+                .client
+                .profile("ghost_user", "", &service.stop)
+                .unwrap_err();
+            assert_eq!(error.downcast_ref::<crate::ApiError>().unwrap().0, 404);
+            assert!(error.to_string().contains("player not found"));
+        }
+        server
+            .responses
+            .lock()
+            .unwrap()
+            .push_back(response(404, "", "{}"));
+        let error = service
+            .handle(
+                "POST",
+                "/api/accounts",
+                &Query::new(),
+                &json!({"username": "ghost_user"}),
+            )
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(error.downcast_ref::<crate::ApiError>().unwrap().0, 404);
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM accounts", &[]).unwrap(), 0);
+
+        db.execute(
+            "INSERT INTO accounts(username,added_at,analyze_history) VALUES('ghost_user',0,0)",
+            &[],
+        )
+        .unwrap();
+        server
+            .responses
+            .lock()
+            .unwrap()
+            .push_back(response(404, "", "{}"));
+        service.request_sync(1);
+        service.sync_tick().unwrap();
+        let account = db.one("SELECT * FROM accounts", &[]).unwrap().unwrap();
+        assert_eq!(account["sync_status"], "error");
+        assert!(
+            account["sync_error"]
+                .as_str()
+                .unwrap()
+                .contains("not found")
+        );
+
+        db.execute("DELETE FROM accounts", &[]).unwrap();
+        db.execute(
+            "INSERT INTO accounts(username,added_at,analyze_history) VALUES('klemen_r',0,0)",
+            &[],
+        )
+        .unwrap();
+        let id = db
+            .scalar("SELECT id FROM accounts", &[])
+            .unwrap()
+            .as_i64()
+            .unwrap();
+        // A failed profile refresh is tolerated; the following archive-list outage is fatal.
+        server
+            .responses
+            .lock()
+            .unwrap()
+            .extend((0..12).map(|_| response(503, "", "")));
+        service.request_sync(id);
+        service.sync_tick().unwrap();
+        assert_eq!(
+            db.scalar("SELECT sync_status FROM accounts", &[]).unwrap(),
+            "error"
+        );
+        // Six attempts for the profile and six for the archive list.
+        assert!(server.responses.lock().unwrap().is_empty());
+        service.request_sync(id);
+        service.sync_tick().unwrap();
+        let recovered = db.one("SELECT * FROM accounts", &[]).unwrap().unwrap();
+        assert_eq!(recovered["sync_status"], "idle");
+        assert!(recovered["sync_error"].is_null());
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM games", &[]).unwrap(), 11);
+    }
+
+    #[test]
+    fn redirects_are_validated_and_same_origin_redirects_followed() {
+        let server = FixtureServer::start();
+        let (client, waits) = fixture_client(&server);
+        let stop = AtomicBool::new(false);
+        let authority = Url::parse(&server.base).unwrap();
+        for target in [
+            "http://169.254.169.254/latest/meta-data/".to_owned(),
+            format!(
+                "http://{}.evil.test/pub/player/new",
+                authority.host_str().unwrap()
+            ),
+            "/outside/player/new".to_owned(),
+            // Encoded and relative escapes from the API prefix.
+            "/pub/%2e%2e/private".to_owned(),
+            "/pub/player/../../private".to_owned(),
+            "/pub/player/%2fnew".to_owned(),
+            "/pub/player/..%5cnew".to_owned(),
+        ] {
+            server.requests.lock().unwrap().clear();
+            server.responses.lock().unwrap().push_back(response(
+                302,
+                &format!("Location: {target}\r\n"),
+                "",
+            ));
+            let error = client.profile("old", "", &stop).unwrap_err();
+            assert!(error.to_string().contains("outside"), "{target}: {error}");
+            assert_eq!(
+                server.requests.lock().unwrap().as_slice(),
+                ["/pub/player/old"]
+            );
+        }
+        server.requests.lock().unwrap().clear();
+        server.responses.lock().unwrap().extend([
+            response(302, "Location: /pub/player/new\r\n", ""),
+            response(200, "", r#"{"username":"new"}"#),
+        ]);
+        assert_eq!(client.profile("old", "", &stop).unwrap()["username"], "new");
+        assert_eq!(
+            server.requests.lock().unwrap().as_slice(),
+            ["/pub/player/old", "/pub/player/new"]
+        );
+        assert!(waits.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn failed_first_import_stays_history_until_a_sync_completes() {
+        // Stopping while an archive request is in flight fails the sync (the
+        // request is cancelled); the between-archives `interrupted` exit is not
+        // reached here. Either way the imported games must stay history.
+        let (server, blocked, release) = FixtureServer::paused("/2026/10");
+        let db = Arc::new(Database::open(":memory:").unwrap());
+        db.execute(
+            "INSERT INTO accounts(username,added_at,analyze_history) VALUES('klemen_r',?,0)",
+            &[json!(ADDED_AFTER_FIXTURE_GAMES)],
+        )
+        .unwrap();
+        let service = Arc::new(fixture_service(&db, &server));
+        let running = Arc::clone(&service);
+        let account = db.one("SELECT * FROM accounts", &[]).unwrap().unwrap();
+        let worker = std::thread::spawn(move || running.sync_account(&account));
+        // Four paced requests (>= 350 ms apart) come first; allow for a loaded machine.
+        let reached = blocked.recv_timeout(Duration::from_secs(30)).is_ok();
+        service.stop.store(true, Ordering::SeqCst);
+        let _ = release.send(());
+        let result = worker.join().unwrap();
+        assert!(reached, "First import did not reach its second archive");
+        assert!(result.is_err());
+        assert!(
+            db.scalar("SELECT COUNT(*) FROM games", &[])
+                .unwrap()
+                .as_i64()
+                .unwrap()
+                > 0
+        );
+        assert_eq!(
+            db.scalar("SELECT history_complete FROM accounts", &[])
+                .unwrap(),
+            0
+        );
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM jobs", &[]).unwrap(), 0);
+        service.stop.store(false, Ordering::SeqCst);
+        service
+            .sync_account(&db.one("SELECT * FROM accounts", &[]).unwrap().unwrap())
+            .unwrap();
+        assert_eq!(
+            db.scalar("SELECT history_complete FROM accounts", &[])
+                .unwrap(),
+            1
+        );
+        assert!(
+            db.scalar("SELECT last_new_game_at FROM accounts", &[])
+                .unwrap()
+                .is_null()
+        );
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM games", &[]).unwrap(), 11);
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM jobs", &[]).unwrap(), 0);
+    }
+
+    #[test]
+    fn duplicate_account_is_409_and_delete_reports_removed_games() {
+        let server = FixtureServer::start();
+        let db = Arc::new(Database::open(":memory:").unwrap());
+        let service = fixture_service(&db, &server);
+        let request = json!({"username": "klemen_r", "analyze_history": false});
+        let (status, added) = service
+            .handle("POST", "/api/accounts", &Query::new(), &request)
+            .unwrap()
+            .unwrap();
+        assert_eq!(status, 201);
+        let error = service
+            .handle("POST", "/api/accounts", &Query::new(), &request)
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(error.downcast_ref::<crate::ApiError>().unwrap().0, 409);
+        assert_eq!(
+            server.requests.lock().unwrap().len(),
+            1,
+            "Duplicate must not fetch a profile"
+        );
+        let id = added["id"].as_i64().unwrap();
+        service
+            .sync_account(&db.one("SELECT * FROM accounts", &[]).unwrap().unwrap())
+            .unwrap();
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM games", &[]).unwrap(), 11);
+        let (status, deleted) = service
+            .handle(
+                "DELETE",
+                &format!("/api/accounts/{id}"),
+                &Query::new(),
+                &Value::Null,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(deleted["games_removed"], 11);
+        for table in ["accounts", "games", "account_games", "archives", "jobs"] {
+            assert_eq!(
+                db.scalar(&format!("SELECT COUNT(*) FROM {table}"), &[])
+                    .unwrap(),
+                0,
+                "{table}"
+            );
         }
     }
 
@@ -1120,13 +1481,14 @@ mod tests {
                     base: Url::parse(&server.base).unwrap(),
                     client: OnceLock::new(),
                     serial: Mutex::new(None),
+                    retry_wait: Arc::new(wait_cancel),
                 };
                 let service = Arc::new(service);
                 let worker_service = Arc::clone(&service);
                 let worker_account = original.clone();
                 let worker =
                     std::thread::spawn(move || worker_service.sync_account(&worker_account));
-                let reached = blocked.recv_timeout(Duration::from_secs(5)).is_ok();
+                let reached = blocked.recv_timeout(Duration::from_secs(30)).is_ok();
                 if !reached {
                     service.stop.store(true, Ordering::SeqCst);
                     let _ = release.send(());
@@ -1203,6 +1565,7 @@ mod tests {
             base: Url::parse("http://127.0.0.1:9/pub").unwrap(),
             client: OnceLock::new(),
             serial: Mutex::new(None),
+            retry_wait: Arc::new(wait_cancel),
         });
         client
             .client
@@ -1239,6 +1602,7 @@ mod tests {
                 base: Url::parse(&server.base).unwrap(),
                 client: OnceLock::new(),
                 serial: Mutex::new(None),
+                retry_wait: Arc::new(wait_cancel),
             };
             let mut body = json!({"username": "klemen_r"});
             if let Some(value) = override_value {
@@ -1269,6 +1633,7 @@ mod tests {
             base: Url::parse(&server.base).unwrap(),
             client: OnceLock::new(),
             serial: Mutex::new(None),
+            retry_wait: Arc::new(wait_cancel),
         };
         service
             .sync_account(&db.one("SELECT * FROM accounts", &[]).unwrap().unwrap())
@@ -1328,6 +1693,7 @@ mod tests {
             base: Url::parse(&server.base).unwrap(),
             client: OnceLock::new(),
             serial: Mutex::new(None),
+            retry_wait: Arc::new(wait_cancel),
         };
         let sync = || {
             service
@@ -1413,6 +1779,7 @@ mod tests {
             base: Url::parse(&server.base).unwrap(),
             client: OnceLock::new(),
             serial: Mutex::new(None),
+            retry_wait: Arc::new(wait_cancel),
         };
         let sync = || {
             service
@@ -1509,6 +1876,7 @@ mod tests {
             base: Url::parse(&server.base).unwrap(),
             client: OnceLock::new(),
             serial: Mutex::new(None),
+            retry_wait: Arc::new(wait_cancel),
         };
         let sync = || {
             service
@@ -1563,6 +1931,7 @@ mod tests {
             base: Url::parse("http://127.0.0.1:8799").unwrap(),
             client: OnceLock::new(),
             serial: Mutex::new(None),
+            retry_wait: Arc::new(wait_cancel),
         };
         assert_eq!(client.root(), "http://127.0.0.1:8799");
         for raw in [

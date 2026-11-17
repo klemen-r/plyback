@@ -940,6 +940,70 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cancelled_interactive_request_neither_waits_nor_starts_engine() {
+        let directory = tempfile::tempdir().unwrap();
+        let app = App::open(Config {
+            data: directory.path().join("data"),
+            frontend: directory.path().join("web"),
+            host: "127.0.0.1".into(),
+            port: 0,
+            allowed_hosts: vec![],
+            trusted_proxies: vec![],
+            secure_cookies: false,
+            allow_unauthenticated_remote: false,
+            background: false,
+        })
+        .unwrap();
+        // Include an unlocked, already-cancelled request to detect accidental
+        // engine creation as well as both cancellation paths behind a busy lock.
+        for (hold_lock, already_cancelled) in [(false, true), (true, true), (true, false)] {
+            let busy = hold_lock.then(|| app.interactive.lock().unwrap());
+            let cancel = Arc::new(AtomicBool::new(already_cancelled));
+            let worker_cancel = Arc::clone(&cancel);
+            let worker_app = Arc::clone(&app);
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let worker = std::thread::spawn(move || {
+                let meta = Meta {
+                    method: "POST".into(),
+                    path: "/api/engine/analyse".into(),
+                    query: Query::new(),
+                    host: "localhost".into(),
+                    scheme: "http".into(),
+                    origin: None,
+                    csrf: "plyback".into(),
+                    cookies: String::new(),
+                    user_agent: String::new(),
+                    client: "local-test".into(),
+                };
+                sender
+                    .send(worker_app.dispatch(
+                        &meta,
+                        &json!({"fen": crate::pgn::STARTING_FEN}),
+                        &worker_cancel,
+                    ))
+                    .unwrap();
+            });
+            if !already_cancelled {
+                std::thread::sleep(Duration::from_millis(50));
+                cancel.store(true, Ordering::Release);
+            }
+            // Generous on a loaded machine: a request blocked on the held lock still
+            // times out, because the lock is only released after this wait.
+            let result = receiver.recv_timeout(Duration::from_secs(5));
+            // Release before joining even on failure, so a locking regression
+            // reports a failed assertion instead of leaving the test hung.
+            drop(busy);
+            worker.join().unwrap();
+            let error = result
+                .expect("cancelled request waited for the engine lock")
+                .unwrap_err();
+            assert_eq!(error.downcast_ref::<ApiError>().unwrap().0, 499);
+            assert!(app.interactive.lock().unwrap().is_none());
+        }
+        app.stop();
+    }
+
+    #[test]
     fn network_password_is_rechecked_after_preflight() {
         let directory = tempfile::tempdir().unwrap();
         let app = App::open(Config {

@@ -97,6 +97,138 @@ fn call(service: &Insights, method: &str, path: &str, body: Value) -> Value {
         .unwrap()
         .1
 }
+
+fn repeated_errors() -> Arc<Database> {
+    let db = Arc::new(Database::open(":memory:").unwrap());
+    db.execute(
+        "INSERT INTO accounts(id,username,added_at,sync_enabled) VALUES(1,'me',0,0)",
+        &[],
+    )
+    .unwrap();
+    for id in 1..=2 {
+        let pgn = format!(
+            "[White \"me\"]\n[Black \"opponent{id}\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Nf3 Nc6 3. d4 Qh4 4. Nxh4 1-0"
+        );
+        db.execute("INSERT INTO games(id,uuid,pgn,rules,time_control,time_class,white_username,black_username,white_result,black_result,end_time,imported_at) VALUES(?,?,?,'chess','180','blitz','me',?,'win','resigned',?,0)", &[json!(id),json!(format!("repeat-{id}")),json!(pgn),json!(format!("opponent{id}")),json!(1790000000 + id * 3600)]).unwrap();
+        db.execute(
+            "INSERT INTO account_games VALUES(1,?,'white')",
+            &[json!(id)],
+        )
+        .unwrap();
+        save_repeated_analysis(&db, id, false);
+    }
+    db
+}
+
+fn save_repeated_analysis(db: &Database, id: i64, clean: bool) {
+    use plyback::services::store::{AnalysisClaim, save_analysis};
+    use std::sync::atomic::AtomicBool;
+    let game = db
+        .one("SELECT uuid,pgn FROM games WHERE id=?", &[json!(id)])
+        .unwrap()
+        .unwrap();
+    let parsed = plyback::pgn::parse(game["pgn"].as_str().unwrap()).unwrap();
+    let moves = parsed.moves.iter().map(|m| {
+        let (class, loss) = match (clean, m.san.as_str()) {
+            (false, "Nf3") => ("mistake", 0.1),
+            (false, "Qh4") => ("blunder", 0.8),
+            _ => ("best", 0.0),
+        };
+        json!({"ply":m.ply,"color":m.color,"san":m.san,"uci":m.uci,"fen_before":m.fen_before,"eval_before":0,"eval_after":0,"win_before":50.0,"win_after":50.0,"ep_loss":loss,"cp_loss":0,"accuracy":100.0,"best_uci":m.uci,"best_san":m.san,"classification":class,"phase":"opening","clock":100.0,"time_spent":2.0,"is_book":0,"tags":{},"explanation":"Fixture","lines":[],"reply":null,"endgame_type":"mixed"})
+    }).collect::<Vec<_>>();
+    let result = json!({"moves":moves,"duration_ms":0,"accuracy":{"white":100.0,"black":100.0},"acpl":{"white":0.0,"black":0.0},"opening":null,"book_plies":0,"counts":{},"key_moments":[],"evals":[]});
+    db.execute("INSERT INTO jobs(game_id,status,created_at,claim_token) VALUES(?,'running',0,'fixture-claim')", &[json!(id)]).unwrap();
+    let job = db
+        .scalar("SELECT MAX(id) FROM jobs", &[])
+        .unwrap()
+        .as_i64()
+        .unwrap();
+    let cancel = AtomicBool::new(false);
+    let claim = AnalysisClaim {
+        game_id: id,
+        job_id: job,
+        token: "fixture-claim",
+        uuid: game["uuid"].as_str().unwrap(),
+        pgn: game["pgn"].as_str().unwrap(),
+        cancel: &cancel,
+    };
+    assert!(save_analysis(db, &claim, &result, 8, 2, "Fixture engine").unwrap());
+}
+
+#[test]
+fn recurring_lists_only_the_users_repeated_errors() {
+    let db = repeated_errors();
+    let insights = compute(&db, 1, &json!({})).unwrap();
+    assert_eq!(insights["overview"]["opp_per_game"]["blunder"], 1.0);
+    let recurring = insights["recurring"].as_array().unwrap();
+    assert_eq!(recurring.len(), 1);
+    assert_eq!(recurring[0]["occurrences"], 2);
+    assert_eq!(recurring[0]["played"], json!([{"san":"Nf3","count":2}]));
+    for row in recurring {
+        assert!(
+            row["played"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|played| played["san"] != "Qh4")
+        );
+    }
+}
+
+#[test]
+fn saved_reanalysis_refreshes_insights_without_a_manual_revision_bump() {
+    let db = repeated_errors();
+    // Freeze persisted timestamps so the revision, rather than elapsed wall time,
+    // must distinguish both saved analyses even when the test crosses a second.
+    db.execute("UPDATE game_analysis SET analyzed_at=1234567890", &[])
+        .unwrap();
+    db.execute("CREATE TEMP TRIGGER fixed_analysis_update AFTER UPDATE OF analyzed_at ON game_analysis WHEN NEW.analyzed_at!=1234567890 BEGIN UPDATE game_analysis SET analyzed_at=1234567890 WHERE game_id=NEW.game_id; END", &[]).unwrap();
+    let original_rows = db
+        .query(
+            "SELECT game_id,analyzed_at,revision FROM game_analysis ORDER BY game_id",
+            &[],
+        )
+        .unwrap();
+    let service = runtime(db.clone());
+    let first = call(&service, "GET", "/api/accounts/1/insights", Value::Null);
+    assert_eq!(first["overview"]["per_game"]["mistake"], 1.0);
+    assert_eq!(first["recurring"].as_array().unwrap().len(), 1);
+    for id in 1..=2 {
+        save_repeated_analysis(&db, id, true);
+    }
+    let updated_rows = db
+        .query(
+            "SELECT game_id,analyzed_at,revision FROM game_analysis ORDER BY game_id",
+            &[],
+        )
+        .unwrap();
+    assert_eq!(original_rows.len(), 2);
+    assert_eq!(updated_rows.len(), 2);
+    for (original, updated) in original_rows.iter().zip(&updated_rows) {
+        assert_eq!(original["game_id"], updated["game_id"]);
+        assert_eq!(original["analyzed_at"], updated["analyzed_at"]);
+        assert_eq!(
+            updated["revision"].as_i64().unwrap(),
+            original["revision"].as_i64().unwrap() + 1
+        );
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let updated = call(&service, "GET", "/api/accounts/1/insights", Value::Null);
+        if updated["stale"] != true {
+            assert_eq!(updated["overview"]["per_game"]["mistake"], 0.0);
+            assert_eq!(updated["overview"]["opp_per_game"]["blunder"], 0.0);
+            assert!(updated["recurring"].as_array().unwrap().is_empty());
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "saved analysis never reached the response cache"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    service.stop();
+}
 #[test]
 fn completed_reports_are_immutable_and_membership_is_fixed() {
     let db = fixture();

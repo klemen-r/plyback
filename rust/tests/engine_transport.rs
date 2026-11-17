@@ -98,6 +98,48 @@ fn searches(path: &std::path::Path) -> usize {
         .count()
 }
 
+#[test]
+fn cache_separates_engine_identity_time_budget_and_halfmove() {
+    use plyback::engine::Search;
+    let (dir, path) = fixture("complete");
+    let db = Arc::new(plyback::db::Database::open(dir.path().join("cache.db")).unwrap());
+    let mut engine = Engine::with_path(path.clone(), 1, 16).unwrap();
+    engine.attach_database(db.clone());
+    let cancel = AtomicBool::new(false);
+    let base = Search::position(STARTING_FEN, 8, 2, 1.0);
+    let first = engine.search(&base, &cancel).unwrap();
+    assert_eq!(engine.search(&base, &cancel).unwrap(), first);
+    assert_eq!(searches(&path), 1);
+    let mut budget = base.clone();
+    budget.time_cap = 2.0;
+    engine.search(&budget, &cancel).unwrap();
+    assert_eq!(searches(&path), 2);
+    let halfmove = Search::position(&STARTING_FEN.replace("0 1", "1 1"), 8, 2, 1.0);
+    engine.search(&halfmove, &cancel).unwrap();
+    assert_eq!(searches(&path), 3);
+    // The advertised version is independently part of the identity, even when
+    // the executable path/metadata and search request remain unchanged.
+    engine.name = "FakeFish 2".into();
+    engine.search(&base, &cancel).unwrap();
+    assert_eq!(searches(&path), 4);
+    let other_path = dir.path().join(if cfg!(windows) {
+        "other-fish.exe"
+    } else {
+        "other-fish"
+    });
+    std::fs::copy(&path, &other_path).unwrap();
+    let mut other = Engine::with_path(other_path.clone(), 1, 16).unwrap();
+    other.attach_database(db.clone());
+    other.search(&base, &cancel).unwrap();
+    assert_eq!(searches(&other_path), 1);
+    assert_eq!(searches(&path), 4);
+    assert_eq!(
+        db.scalar("SELECT COUNT(*) FROM position_cache", &[])
+            .unwrap(),
+        5
+    );
+}
+
 fn wait_for_searches(path: &std::path::Path, count: usize) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while searches(path) < count {

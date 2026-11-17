@@ -1925,19 +1925,48 @@ mod tests {
     fn strict_filters() {
         for bad in [
             json!([]),
+            json!("blitz"),
+            json!(0),
+            json!({"since":[]}),
             json!({"since":true}),
             json!({"since":-1}),
             json!({"since":1.5}),
             json!({"until":253402300800_i64}),
             json!({"since":2,"until":1}),
+            json!({"since":"x"}),
+            json!({"since":"9".repeat(1000)}),
+            json!({"time_classes":{}}),
+            json!({"time_classes":1}),
+            json!({"time_classes":[["blitz"]]}),
             json!({"time_classes":vec!["blitz";5]}),
+            json!({"time_classes":"unknown"}),
+            json!({"color":["white"]}),
             json!({"color":"purple"}),
+            json!({"rated":{}}),
             json!({"rated":2}),
+            json!({"rated":"sometimes"}),
+            json!({"opening":["Italian"]}),
+            json!({"opening":"x".repeat(513)}),
+            json!({"opponent":{}}),
+            json!({"opponent":"x".repeat(257)}),
             json!({"opponent":[]}),
         ] {
             assert!(normalize_filters(&bad).is_err(), "accepted {bad}");
         }
         assert_eq!(normalize_filters(&json!({"since":"0","until":253402300799_i64,"rated":"false","time_classes":"blitz, rapid,blitz","color":"any"})).unwrap(),json!({"since":0,"until":253402300799_i64,"rated":false,"time_classes":["blitz","rapid"]}));
+        assert_eq!(normalize_filters(&json!({"since":"0","until":253402300799_i64,"time_classes":"blitz, rapid","color":"white","rated":"false","opening":"Italian Game","opponent":"player"})).unwrap(),json!({"since":0,"until":253402300799_i64,"time_classes":["blitz","rapid"],"color":"white","rated":false,"opening":"Italian Game","opponent":"player"}));
+        assert_eq!(
+            normalize_filters(
+                &json!({"time_classes":["blitz","blitz"],"color":"any","rated":"any"})
+            )
+            .unwrap(),
+            json!({"time_classes":["blitz"]})
+        );
+        assert_eq!(
+            normalize_filters(&json!({"since":"","color":"","rated":"","time_classes":""}))
+                .unwrap(),
+            json!({})
+        );
     }
     #[test]
     fn statistical_boundaries() {
@@ -1969,6 +1998,49 @@ mod tests {
             user: vec![],
             opp: vec![],
         }
+    }
+    #[test]
+    fn time_speed_buckets_and_low_clock_exclusion() {
+        let mut g = game(1, 300, 1.0);
+        g.row["time_control"] = json!("180");
+        g.analyzed = true;
+        for (i, (spent, clock)) in [(1.8, 100.0), (5.4, 100.0), (14.4, 100.0), (1.0, 18.0)]
+            .into_iter()
+            .enumerate()
+        {
+            g.user.push(Move {
+                ply: (2 * i + 1) as i64,
+                color: "w".into(),
+                san: "e4".into(),
+                class: "best".into(),
+                phase: "opening".into(),
+                ep: 0.0,
+                cp: 0.0,
+                accuracy: Some(100.0),
+                before: Some(50.0),
+                after: Some(50.0),
+                clock: Some(clock),
+                spent: Some(spent),
+                book: false,
+                tags: Tags::default(),
+                epd: String::new(),
+                best: json!("e4"),
+                endgame: "mixed".into(),
+            });
+        }
+        let result = time_info(&[&g], &[&g]);
+        assert_eq!(
+            result["speed_vs_quality"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|b| b["moves"].as_u64().unwrap())
+                .collect::<Vec<_>>(),
+            [0, 1, 1, 1]
+        );
+        assert_eq!(result["time_trouble"]["moves_low"], 1);
+        assert_eq!(result["time_trouble"]["games"], 1);
+        assert_eq!(result["avg_time_per_move"]["opening"]["user"], 5.65);
     }
     #[test]
     fn tilt_confidence_follows_the_after_loss_sample() {
