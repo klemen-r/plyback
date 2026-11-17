@@ -21,9 +21,3 @@ __pycache__/
 .env.*
 !.env.example
 *.log
-# Personal chess notes and exports stay local.
-/chess_com_games_*.pgn
-/klemen_r_analysis_and_training_plan.md
-# Local agent and editor settings.
-/.claude/
-/.codex-summary.md

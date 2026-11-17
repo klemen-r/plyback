@@ -16,4 +16,4 @@ backend/tests/.e2edata
 .env
 .env.*
 *.pgn
-klemen_r_analysis_and_training_plan.md
+.claude
