@@ -628,15 +628,19 @@ fn offered(before: &Chess, mv: Move) -> Option<(Square, Role)> {
     if after.is_checkmate() {
         return None;
     }
-    let already: HashMap<Square, i32> = before
+    // Pieces already en prise before the move are not offered by it. When the mover is in
+    // check the turn cannot be swapped to see which those are, so only the moved piece counts.
+    let already: Option<HashMap<Square, i32>> = before
         .clone()
         .swap_turn()
         .ok()
-        .map(|b| hanging(&b, mover, 3).into_iter().collect())
-        .unwrap_or_default();
-    let (square, gain) = hanging(&after, mover, 3)
-        .into_iter()
-        .find(|(sq, g)| *sq == mv.to() || already.get(sq).copied().unwrap_or(0) < *g)?;
+        .map(|b| hanging(&b, mover, 3).into_iter().collect());
+    let (square, gain) = hanging(&after, mover, 3).into_iter().find(|(sq, g)| {
+        *sq == mv.to()
+            || already
+                .as_ref()
+                .is_some_and(|a| a.get(sq).copied().unwrap_or(0) < *g)
+    })?;
     let net = gain - captured;
     if net < 2 {
         return None;
@@ -1195,6 +1199,16 @@ mod tests {
         let game = pgn::parse("1. e4 e5 2. Nf3 Nc6 3. d4 Qh4 4. Nxh4 *").unwrap();
         let before = pgn::board(&game.moves[6].fen_before, false).unwrap();
         assert!(sacrifice(&before, parse_move("f3h4", &before).unwrap()).is_none());
+    }
+    #[test]
+    fn a_piece_left_hanging_while_escaping_check_is_not_a_sacrifice() {
+        // White is in check from the rook and steps aside; the knight on d5 was already
+        // attacked by the c6 pawn, so leaving it is not offering it.
+        let before = pgn::board("4r2k/8/2p5/3N4/8/8/8/4K3 w - - 0 1", false).unwrap();
+        assert!(sacrifice(&before, parse_move("e1f2", &before).unwrap()).is_none());
+        // Blocking the check with a piece that can be taken still counts as offering it.
+        let before = pgn::board("4r2k/8/8/8/8/8/8/2B1K3 w - - 0 1", false).unwrap();
+        assert!(sacrifice(&before, parse_move("c1e3", &before).unwrap()).is_some());
     }
     #[test]
     fn played_move_loss_uses_paired_root_not_next_ply_evaluation() {

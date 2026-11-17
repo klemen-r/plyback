@@ -18,7 +18,7 @@ use std::collections::HashMap;
 
 pub type Query = HashMap<String, String>;
 pub type ApiResult = anyhow::Result<(u16, Value)>;
-pub const ANALYSIS_VERSION: i64 = 7;
+pub const ANALYSIS_VERSION: i64 = 8;
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug)]

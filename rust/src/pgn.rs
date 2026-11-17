@@ -327,11 +327,19 @@ pub struct TimeControl {
 }
 
 pub fn parse_time_control(raw: &str) -> TimeControl {
-    if raw.contains('/') {
+    // Chess.com writes daily games as "1/<seconds per move>". Other forms with a slash, such as
+    // classical "40/7200:3600", have no single base time and are treated as unknown.
+    if raw
+        .strip_prefix("1/")
+        .is_some_and(|s| s.parse::<u64>().is_ok())
+    {
         return TimeControl {
             daily: true,
             ..Default::default()
         };
+    }
+    if raw.contains('/') {
+        return TimeControl::default();
     }
     let mut p = raw.split('+');
     let base = p
@@ -464,6 +472,19 @@ mod tests {
         assert_eq!(time_spent(&ordinary), vec![Some(1.0)]);
         assert_eq!(game.moves[2].uci, "g1f3");
         assert!(parse("1. e5 *").is_err());
+    }
+    #[test]
+    fn only_one_move_per_period_is_daily() {
+        assert!(parse_time_control("1/86400").daily);
+        let classical = parse_time_control("40/7200:3600");
+        assert!(!classical.daily && classical.base.is_none());
+        let g = parse(
+            "[TimeControl \"40/7200:3600\"]
+
+1. e4 {[%clk 1:59:50]} e5 {[%clk 1:59:00]} 2. Nf3 {[%clk 1:59:20]} *",
+        )
+        .unwrap();
+        assert_eq!(time_spent(&g), vec![None, None, Some(30.0)]);
     }
     #[test]
     fn black_initial_position_clock_and_chess960() {

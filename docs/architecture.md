@@ -58,9 +58,10 @@ running server is refused. Add a new file for every change; never edit a release
 
 The current schema version is 14.
 
-When stored analysis results change, bump `ANALYSIS_VERSION` in `rust/src/lib.rs` (currently 7).
+When stored analysis results change, bump `ANALYSIS_VERSION` in `rust/src/lib.rs` (currently 8).
 On start, games analysed with an older version are queued for refresh; their old analysis stays
-readable until the new one is stored.
+readable until the new one is stored. Version 8 stops counting pieces that were already hanging
+as sacrifices when the mover was in check.
 
 Reports created now freeze their game IDs and UUIDs at creation. Reports from before migration 006
 freeze on their first update or on finalization if unfinished; ready ones keep their stored JSON.
