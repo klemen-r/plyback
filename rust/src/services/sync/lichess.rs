@@ -110,7 +110,7 @@ impl LichessClient {
     }
 
     fn retry_blocked(&self, id: i64, scope: &RetryScope) -> bool {
-        let mut retries = self.retries.lock().unwrap();
+        let mut retries = self.retries.lock().recover();
         match retries.get(&id) {
             Some(retry) if retry.scope == *scope => retry.until > Instant::now(),
             Some(_) => {
@@ -122,7 +122,7 @@ impl LichessClient {
     }
 
     fn defer_no_progress(&self, id: i64, scope: &RetryScope) -> u32 {
-        let mut retries = self.retries.lock().unwrap();
+        let mut retries = self.retries.lock().recover();
         let retry = retries.entry(id).or_insert_with(|| NoProgressRetry {
             scope: scope.clone(),
             failures: 0,
@@ -139,17 +139,19 @@ impl LichessClient {
     }
 
     fn clear_retry(&self, id: i64, scope: &RetryScope) {
-        let mut retries = self.retries.lock().unwrap();
+        let mut retries = self.retries.lock().recover();
         if retries.get(&id).is_some_and(|retry| retry.scope == *scope) {
             retries.remove(&id);
         }
     }
 
     fn cooling_down(&self) -> bool {
-        self.serial
-            .try_lock()
-            .ok()
-            .is_some_and(|gate| gate.is_some_and(|until| until > Instant::now()))
+        let gate = match self.serial.try_lock() {
+            Ok(gate) => gate,
+            Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return false,
+        };
+        gate.is_some_and(|until| until > Instant::now())
     }
 
     fn endpoint(&self, username: &str, since: Option<i64>) -> Result<Url> {
@@ -450,7 +452,7 @@ impl LichessClient {
                 Err(std::sync::TryLockError::WouldBlock) => {
                     wait_cancel(Duration::from_millis(25), stop)?
                 }
-                Err(_) => return Err(api_error(503, "Lichess request lock failed")),
+                Err(std::sync::TryLockError::Poisoned(error)) => break error.into_inner(),
             }
         };
         if let Some(until) = *gate {
@@ -821,7 +823,7 @@ impl Services {
         if self.lichess_client.cooling_down()
             || self.lichess_client.retry_blocked(claim.id, &retry_scope)
         {
-            self.requested.lock().unwrap().insert(claim.id);
+            self.requested.lock().recover().insert(claim.id);
             return Ok(());
         }
         let username = account["username"].as_str().unwrap_or("");
@@ -836,7 +838,7 @@ impl Services {
             {
                 Ok(profile) => Some(profile),
                 Err(error) if error.is::<RateLimited>() => {
-                    self.requested.lock().unwrap().insert(claim.id);
+                    self.requested.lock().recover().insert(claim.id);
                     return Ok(());
                 }
                 Err(error) if error.is::<RequestDeadline>() => {
@@ -867,7 +869,7 @@ impl Services {
             ) {
                 Ok(batch) => batches.push((true, batch)),
                 Err(error) if error.is::<RateLimited>() => {
-                    self.requested.lock().unwrap().insert(claim.id);
+                    self.requested.lock().recover().insert(claim.id);
                     return Ok(());
                 }
                 Err(error) => return Err(error),
@@ -912,7 +914,7 @@ impl Services {
         let history_complete = !initial || discovery.is_some_and(|batch| batch.complete);
         let incomplete = batches.iter().any(|(_, batch)| !batch.complete);
         if rate_limited {
-            self.requested.lock().unwrap().insert(claim.id);
+            self.requested.lock().recover().insert(claim.id);
         }
         if !batches
             .iter()
@@ -1090,7 +1092,7 @@ impl Services {
         let failures = self.lichess_client.defer_no_progress(claim.id, scope);
         // Preserve manual requests too, but do not notify the loop or bypass the
         // retry deadline. Its regular tick checks the in-memory deadline.
-        self.requested.lock().unwrap().insert(claim.id);
+        self.requested.lock().recover().insert(claim.id);
         if failures == NO_PROGRESS_ERROR_THRESHOLD {
             claim.transaction(self, |tx| {
                 let current: bool = tx.query_row(

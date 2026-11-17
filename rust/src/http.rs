@@ -389,7 +389,13 @@ impl App {
                     }
                     match self.interactive.try_lock() {
                         Ok(lock) => break lock,
-                        Err(std::sync::TryLockError::Poisoned(err)) => break err.into_inner(),
+                        Err(std::sync::TryLockError::Poisoned(err)) => {
+                            let mut lock = err.into_inner();
+                            // A panic can interrupt UCI framing; start a fresh engine.
+                            lock.take();
+                            self.interactive.clear_poison();
+                            break lock;
+                        }
                         Err(std::sync::TryLockError::WouldBlock) => {
                             std::thread::sleep(Duration::from_millis(10))
                         }

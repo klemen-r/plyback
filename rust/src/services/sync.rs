@@ -294,12 +294,7 @@ impl ChessComClient {
                     wait_cancel(Duration::from_millis(25), stop)
                         .map_err(|_| FetchError::Cancelled)?;
                 }
-                Err(std::sync::TryLockError::Poisoned(_)) => {
-                    return Err(FetchError::transient(api_error(
-                        503,
-                        "Chess.com request lock failed",
-                    )));
-                }
+                Err(std::sync::TryLockError::Poisoned(error)) => break error.into_inner(),
             }
         };
         cancelled(stop)?;
@@ -555,7 +550,7 @@ impl Services {
             )?;
             claim.event(tx, "warning", &format!("Sync failed: {message}"))
         })?;
-        self.sync_failed_at.lock().unwrap().insert(claim.id, now());
+        self.sync_failed_at.lock().recover().insert(claim.id, now());
         Ok(())
     }
     pub(super) fn sync_loop(&self) {
@@ -575,11 +570,11 @@ impl Services {
     fn sync_tick(&self) -> Result<()> {
         let settings = self.sync_settings()?;
         let accounts = self.sync_rows("SELECT * FROM accounts ORDER BY id", &[])?;
-        let requested = std::mem::take(&mut *self.requested.lock().unwrap());
+        let requested = std::mem::take(&mut *self.requested.lock().recover());
         let result = self.sync_due(&settings, &accounts, &requested);
         if result.is_err() {
             // A tick cut short keeps the manual requests it had not served yet.
-            self.requested.lock().unwrap().extend(&requested);
+            self.requested.lock().recover().extend(&requested);
         }
         result
     }
@@ -610,14 +605,14 @@ impl Services {
             let busy = self
                 .sync_busy_until
                 .lock()
-                .unwrap()
+                .recover()
                 .get(&id)
                 .is_some_and(|until| *until > Instant::now());
             // A failure leaves last_sync_at alone; the retry is paced from the failure.
             let last_attempt = account["last_sync_at"].as_i64().unwrap_or(0).max(
                 self.sync_failed_at
                     .lock()
-                    .unwrap()
+                    .recover()
                     .get(&id)
                     .copied()
                     .unwrap_or(0),
@@ -627,16 +622,16 @@ impl Services {
             if busy {
                 // Retried after a short pause; a manual request waits for it too.
                 if requested.contains(&id) {
-                    self.requested.lock().unwrap().insert(id);
+                    self.requested.lock().recover().insert(id);
                 }
                 continue;
             }
             if due {
-                *self.current_sync.lock().unwrap() = Some(id);
+                *self.current_sync.lock().recover() = Some(id);
                 let mut result = self.sync_account(account);
-                *self.current_sync.lock().unwrap() = None;
+                *self.current_sync.lock().recover() = None;
                 if result.is_ok() {
-                    self.sync_failed_at.lock().unwrap().remove(&id);
+                    self.sync_failed_at.lock().recover().remove(&id);
                 }
                 if let Err(error) = &result
                     && !error.is::<SyncDbBusy>()
@@ -656,14 +651,14 @@ impl Services {
                         // but wait a little rather than refetching its archives every tick.
                         self.sync_busy_until
                             .lock()
-                            .unwrap()
+                            .recover()
                             .insert(id, Instant::now() + SYNC_BUSY_RETRY);
                         if requested.contains(&id) {
-                            self.requested.lock().unwrap().insert(id);
+                            self.requested.lock().recover().insert(id);
                         }
                     }
                     _ => {
-                        self.sync_busy_until.lock().unwrap().remove(&id);
+                        self.sync_busy_until.lock().recover().remove(&id);
                     }
                 }
             }

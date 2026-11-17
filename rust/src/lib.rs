@@ -5,6 +5,7 @@ pub mod db;
 pub mod engine;
 pub mod http;
 pub mod insights;
+mod locks;
 mod params;
 pub mod pgn;
 pub mod practice;

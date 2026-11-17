@@ -239,7 +239,7 @@ impl Services {
         let active = self
             .progress
             .lock()
-            .unwrap()
+            .recover()
             .values()
             .map(|(v, _)| v.clone())
             .collect::<Vec<_>>();
@@ -251,7 +251,7 @@ impl Services {
             .filter(|v| *v > 0.);
         let workers = self.worker_count.load(Ordering::SeqCst);
         let queued = *counts.get("queued").unwrap_or(&0);
-        json!({"paused":self.paused.load(Ordering::SeqCst),"workers":workers,"engine":*self.engine_name.lock().unwrap(),"engine_error":*self.engine_error.lock().unwrap(),"queued":queued,"running":counts.get("running").copied().unwrap_or(0),"failed":counts.get("failed").copied().unwrap_or(0),"done":counts.get("done").copied().unwrap_or(0),"active":active,"avg_game_seconds":avg.map(|v|(v/100.).round()/10.),"eta_seconds":avg.filter(|_|!self.paused.load(Ordering::SeqCst)).map(|v|(queued as f64*v/1000./workers.max(1) as f64)as i64)})
+        json!({"paused":self.paused.load(Ordering::SeqCst),"workers":workers,"engine":*self.engine_name.lock().recover(),"engine_error":*self.engine_error.lock().recover(),"queued":queued,"running":counts.get("running").copied().unwrap_or(0),"failed":counts.get("failed").copied().unwrap_or(0),"done":counts.get("done").copied().unwrap_or(0),"active":active,"avg_game_seconds":avg.map(|v|(v/100.).round()/10.),"eta_seconds":avg.filter(|_|!self.paused.load(Ordering::SeqCst)).map(|v|(queued as f64*v/1000./workers.max(1) as f64)as i64)})
     }
     pub(super) fn supervise_workers(self: Arc<Self>) {
         let mut workers: Vec<(Arc<AtomicBool>, JoinHandle<()>)> = Vec::new();
@@ -279,14 +279,14 @@ impl Services {
                     }
                 };
                 if let Err(error) = settings::validate_resources(&settings) {
-                    *self.engine_error.lock().unwrap() = Some(error.to_string());
+                    *self.engine_error.lock().recover() = Some(error.to_string());
                     self.worker_count.store(0, Ordering::SeqCst);
                     generation = desired_generation;
                     continue;
                 }
                 let threads = settings["threads_per_worker"].as_u64().unwrap_or(1) as usize;
                 let hash = settings["hash_mb"].as_u64().unwrap_or(64) as usize;
-                *self.engine_error.lock().unwrap() = None;
+                *self.engine_error.lock().recover() = None;
                 let count = settings["workers"].as_u64().unwrap_or(1).clamp(1, 32);
                 self.worker_count.store(count, Ordering::SeqCst);
                 for id in 0..count {
@@ -338,7 +338,7 @@ impl Services {
             .flatten())
     }
     fn release_job(&self, job: &Value, error: Option<String>) {
-        self.pending_releases.lock().unwrap().push(PendingRelease {
+        self.pending_releases.lock().recover().push(PendingRelease {
             id: job["id"].as_i64().unwrap(),
             token: job["claim_token"].as_str().unwrap().to_string(),
             error,
@@ -346,7 +346,7 @@ impl Services {
         self.notify();
     }
     fn flush_releases(&self, budget: Duration) {
-        let releases = std::mem::take(&mut *self.pending_releases.lock().unwrap());
+        let releases = std::mem::take(&mut *self.pending_releases.lock().recover());
         if releases.is_empty() {
             return;
         }
@@ -380,12 +380,12 @@ impl Services {
             if let Err(error) = result {
                 tracing::warn!(%error,"Could not persist worker cleanup; retaining claims for retry");
             }
-            self.pending_releases.lock().unwrap().extend(releases);
+            self.pending_releases.lock().recover().extend(releases);
         }
     }
     /// Stops every analysis in progress; the workers set their own flags.
     fn cancel_running_jobs(&self) {
-        for (_, job_cancel) in self.progress.lock().unwrap().values() {
+        for (_, job_cancel) in self.progress.lock().recover().values() {
             job_cancel.store(true, Ordering::SeqCst);
         }
     }
@@ -422,13 +422,13 @@ impl Services {
                 }
                 match Engine::new(threads, hash) {
                     Ok(mut e) => {
-                        *self.engine_name.lock().unwrap() = Some(e.name.clone());
-                        *self.engine_error.lock().unwrap() = None;
+                        *self.engine_name.lock().recover() = Some(e.name.clone());
+                        *self.engine_error.lock().recover() = None;
                         e.attach_database(Arc::clone(&self.db));
                         engine = Some(e);
                     }
                     Err(error) => {
-                        *self.engine_error.lock().unwrap() =
+                        *self.engine_error.lock().recover() =
                             Some(format!("Could not start Stockfish: {error}"));
                         self.wait(Duration::from_secs(5));
                         continue;
@@ -454,7 +454,7 @@ impl Services {
             let result = self.run_job(&job, engine.as_mut().unwrap(), worker, &cancel, &job_cancel);
             self.progress
                 .lock()
-                .unwrap()
+                .recover()
                 .remove(job["claim_token"].as_str().unwrap());
             match result {
                 Ok(true) => {}
@@ -531,7 +531,7 @@ impl Services {
         let started = Instant::now();
         // Same total as the analysis reports: every position (plies + 1), then every move.
         let total = game["plies"].as_u64().map(|plies| 2 * plies + 1);
-        self.progress.lock().unwrap().insert(
+        self.progress.lock().recover().insert(
             token.to_string(),
             (
                 json!({"job_id":id,"game_id":game_id,"done":0,"total":total,"worker":worker}),
@@ -539,7 +539,7 @@ impl Services {
             ),
         );
         let progress = |done: usize, total: usize| {
-            self.progress.lock().unwrap().insert(
+            self.progress.lock().recover().insert(
                 token.to_string(),
                 (
                     json!({"job_id":id,"game_id":game_id,"done":done,"total":total,"worker":worker}),

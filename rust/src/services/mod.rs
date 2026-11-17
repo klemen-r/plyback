@@ -4,7 +4,7 @@ mod settings;
 pub mod store;
 mod sync;
 
-use crate::{ApiResult, Query, db::Database};
+use crate::{ApiResult, Query, db::Database, locks::RecoverLock};
 use anyhow::Result;
 use serde_json::{Value, json};
 pub use settings::{default_settings, get_settings, save_settings};
@@ -106,21 +106,21 @@ impl Services {
         }
         let queue = Arc::clone(self);
         let sync = Arc::clone(self);
-        let mut handles = self.handles.lock().unwrap();
+        let mut handles = self.handles.lock().recover();
         handles.push(std::thread::spawn(move || queue.supervise_workers()));
         handles.push(std::thread::spawn(move || sync.sync_loop()));
     }
     /// Broadcast cancellation before HTTP graceful drain, without joining threads.
     pub fn request_stop(&self) {
         self.stop.store(true, Ordering::SeqCst);
-        for (_, cancel) in self.progress.lock().unwrap().values() {
+        for (_, cancel) in self.progress.lock().recover().values() {
             cancel.store(true, Ordering::SeqCst);
         }
         self.notify();
     }
     pub fn stop(&self) {
         self.request_stop();
-        let handles = std::mem::take(&mut *self.handles.lock().unwrap());
+        let handles = std::mem::take(&mut *self.handles.lock().recover());
         for handle in handles {
             if handle.join().is_err() {
                 tracing::error!("Background service panicked");
@@ -135,7 +135,7 @@ impl Services {
     fn set_paused(&self, paused: bool) -> Result<()> {
         // Serialize persistence with publication to workers. Concurrent pause
         // and resume requests must leave memory agreeing with the durable row.
-        let _control = self.pause_control.lock().unwrap();
+        let _control = self.pause_control.lock().recover();
         self.db.execute(
             "INSERT INTO settings(key,value) VALUES('queue_paused',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             &[json!(paused.to_string())],
@@ -150,7 +150,7 @@ impl Services {
         self.route(method, path, q, body)
     }
     fn notify(&self) {
-        let mut generation = self.wake.0.lock().unwrap();
+        let mut generation = self.wake.0.lock().recover();
         *generation = generation.wrapping_add(1);
         self.wake.1.notify_all();
     }
@@ -163,18 +163,18 @@ impl Services {
         self.wait_since(self.wake_generation(), duration);
     }
     fn wake_generation(&self) -> u64 {
-        *self.wake.0.lock().unwrap()
+        *self.wake.0.lock().recover()
     }
     /// Observe before checking for work so a notification between the check
     /// and this wait cannot be lost. Returns whether the wait timed out.
     fn wait_since(&self, observed: u64, duration: Duration) -> bool {
-        let lock = self.wake.0.lock().unwrap();
+        let lock = self.wake.0.lock().recover();
         self.wake
             .1
             .wait_timeout_while(lock, duration, |generation| {
                 *generation == observed && !self.stop.load(Ordering::SeqCst)
             })
-            .unwrap()
+            .recover()
             .1
             .timed_out()
     }
@@ -183,16 +183,16 @@ impl Services {
         let error = self
             .engine_error
             .lock()
-            .unwrap()
+            .recover()
             .clone()
             .or_else(|| located.as_ref().err().map(ToString::to_string));
-        json!({"name":*self.engine_name.lock().unwrap(),"path":located.ok().map(|p|p.to_string_lossy().to_string()),"error":error})
+        json!({"name":*self.engine_name.lock().recover(),"path":located.ok().map(|p|p.to_string_lossy().to_string()),"error":error})
     }
     pub fn sync_status(&self) -> Value {
-        json!({"current_account":*self.current_sync.lock().unwrap()})
+        json!({"current_account":*self.current_sync.lock().recover()})
     }
     fn request_sync(&self, id: i64) {
-        self.requested.lock().unwrap().insert(id);
+        self.requested.lock().recover().insert(id);
         self.notify();
     }
 }
@@ -201,6 +201,21 @@ impl Services {
 mod wake_tests {
     use super::*;
     use std::time::Instant;
+
+    #[test]
+    fn poisoned_service_state_and_condvar_remain_usable() {
+        let db = Arc::new(Database::open(":memory:").unwrap());
+        let service = Services::new(db).unwrap();
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = service.wake.0.lock().unwrap();
+            panic!("interrupted notification");
+        }));
+        assert!(panic.is_err());
+        service.notify();
+        let observed = service.wake_generation();
+        assert_eq!(observed, 1);
+        assert!(service.wait_since(observed, Duration::ZERO));
+    }
 
     #[test]
     fn settings_change_while_working_then_stop_joins_every_worker() {

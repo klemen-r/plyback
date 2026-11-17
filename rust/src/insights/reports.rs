@@ -47,6 +47,23 @@ pub struct Insights {
     cache_waits: std::sync::atomic::AtomicUsize,
 }
 
+/// Release the single-flight slot even when computing an insight panics.
+struct PendingRefresh<'a> {
+    owner: &'a Insights,
+    key: String,
+}
+impl Drop for PendingRefresh<'_> {
+    fn drop(&mut self) {
+        self.owner
+            .cache
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .pending
+            .remove(&self.key);
+        self.owner.cache_changed.notify_all();
+    }
+}
+
 impl Insights {
     pub fn new(db: Arc<Database>, services: Arc<Services>) -> Arc<Self> {
         let out = Arc::new(Self {
@@ -204,16 +221,22 @@ impl Insights {
         }
     }
     fn refresh(&self, key: String, revision: i64, account: i64, filters: &Value) -> Result<Value> {
+        let _pending = PendingRefresh {
+            owner: self,
+            key: key.clone(),
+        };
         #[cfg(test)]
-        if let Some(hook) = self.before_compute.lock().unwrap().clone() {
-            hook();
+        {
+            let hook = self.before_compute.lock().unwrap().clone();
+            if let Some(hook) = hook {
+                hook();
+            }
         }
         let result = compute(&self.db, account, filters).map(|mut data| {
             data["generated_at"] = json!(now());
             data
         });
         let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
-        cache.pending.remove(&key);
         if let Ok(data) = &result {
             let bytes = serde_json::to_vec(data)
                 .map(|v| v.len())
@@ -250,7 +273,6 @@ impl Insights {
                 }
             }
         }
-        self.cache_changed.notify_all();
         result
     }
 
@@ -576,6 +598,28 @@ mod tests {
                 .unwrap();
         }));
         (started, release)
+    }
+
+    #[test]
+    fn panicked_refresh_releases_its_pending_slot() {
+        let service = runtime();
+        *service.before_compute.lock().unwrap() = Some(Arc::new(|| {
+            panic!("interrupted insight computation");
+        }));
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            service.cached(1, &json!({})).unwrap();
+        }));
+        assert!(panic.is_err());
+        assert!(service.cache.lock().unwrap().pending.is_empty());
+        *service
+            .before_compute
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = None;
+        assert_eq!(
+            service.cached(1, &json!({})).unwrap()["overview"]["games"],
+            0
+        );
+        service.stop();
     }
 
     #[test]

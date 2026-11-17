@@ -108,10 +108,25 @@ impl Database {
         db.migrate()?;
         Ok(db)
     }
+    fn recover_connection<'a>(
+        &self,
+        connection: MutexGuard<'a, Connection>,
+    ) -> Result<MutexGuard<'a, Connection>> {
+        // A raw BEGIN or a forgotten Transaction can survive unwinding. Never
+        // expose its uncommitted changes to the next request or cache operation.
+        if !connection.is_autocommit() {
+            connection.execute_batch("ROLLBACK")?;
+        }
+        connection.busy_timeout(Duration::from_secs(60))?;
+        // Keep poison set if cleanup fails, so every reuse retries cleanup.
+        self.connection.clear_poison();
+        Ok(connection)
+    }
     fn lock(&self) -> Result<MutexGuard<'_, Connection>> {
-        self.connection
-            .lock()
-            .map_err(|_| anyhow::anyhow!("Database lock was poisoned"))
+        match self.connection.lock() {
+            Ok(connection) => Ok(connection),
+            Err(error) => self.recover_connection(error.into_inner()),
+        }
     }
     pub fn migrate(&self) -> Result<()> {
         let mut c = self.lock()?;
@@ -201,7 +216,7 @@ impl Database {
         let connection = match self.connection.try_lock() {
             Ok(connection) => connection,
             Err(TryLockError::WouldBlock) => return Ok(None),
-            Err(TryLockError::Poisoned(_)) => bail!("Database lock was poisoned"),
+            Err(TryLockError::Poisoned(error)) => self.recover_connection(error.into_inner())?,
         };
         connection.busy_timeout(Duration::from_millis(25))?;
         Ok(Some(ShortConnection { connection }))
@@ -413,6 +428,95 @@ pub fn query_connection(c: &Connection, sql: &str, params: &[Value]) -> Result<V
 mod tests {
     use super::*;
     use serde_json::json;
+    fn panic_with_open_transaction(db: &Database) {
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let connection = db.lock().unwrap();
+            connection
+                .execute_batch("BEGIN IMMEDIATE; INSERT INTO recovery VALUES(9)")
+                .unwrap();
+            panic!("interrupted database operation");
+        }));
+        assert!(panic.is_err());
+        assert!(db.connection.is_poisoned());
+    }
+
+    #[test]
+    fn poisoned_connection_rolls_back_before_blocking_and_short_reads() {
+        for short in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let db = Database::open(dir.path().join("recovery.db")).unwrap();
+            db.execute("CREATE TABLE recovery(value INTEGER)", &[])
+                .unwrap();
+            db.execute("INSERT INTO recovery VALUES(7)", &[]).unwrap();
+            panic_with_open_transaction(&db);
+            let sum = if short {
+                db.try_read(|connection| {
+                    Ok(
+                        connection.query_row("SELECT SUM(value) FROM recovery", [], |row| {
+                            row.get::<_, i64>(0)
+                        })?,
+                    )
+                })
+                .unwrap()
+                .unwrap()
+            } else {
+                db.scalar("SELECT SUM(value) FROM recovery", &[])
+                    .unwrap()
+                    .as_i64()
+                    .unwrap()
+            };
+            assert_eq!(sum, 7);
+            assert!(!db.connection.is_poisoned());
+            db.execute("INSERT INTO recovery VALUES(11)", &[]).unwrap();
+            assert_eq!(
+                db.scalar("SELECT SUM(value) FROM recovery", &[]).unwrap(),
+                18
+            );
+        }
+    }
+
+    #[test]
+    fn poisoned_connection_rolls_back_before_a_short_transaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(dir.path().join("recovery.db")).unwrap();
+        db.execute("CREATE TABLE recovery(value INTEGER)", &[])
+            .unwrap();
+        panic_with_open_transaction(&db);
+        assert_eq!(
+            db.try_transaction(|tx| Ok(tx.execute("INSERT INTO recovery VALUES(11)", [])?))
+                .unwrap(),
+            Some(1)
+        );
+        assert!(!db.connection.is_poisoned());
+        assert_eq!(
+            db.scalar("SELECT SUM(value) FROM recovery", &[]).unwrap(),
+            11
+        );
+    }
+
+    #[test]
+    fn panicked_transaction_rolls_back_and_the_next_query_works() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(dir.path().join("recovery.db")).unwrap();
+        db.execute("CREATE TABLE recovery(value INTEGER)", &[])
+            .unwrap();
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = db.transaction::<()>(|tx| {
+                tx.execute("INSERT INTO recovery VALUES(9)", [])?;
+                panic!("interrupted transaction");
+            });
+        }));
+        assert!(panic.is_err());
+        assert!(db.connection.is_poisoned());
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM recovery", &[]).unwrap(), 0);
+        assert!(!db.connection.is_poisoned());
+        db.execute("INSERT INTO recovery VALUES(11)", &[]).unwrap();
+        assert_eq!(
+            db.scalar("SELECT SUM(value) FROM recovery", &[]).unwrap(),
+            11
+        );
+    }
+
     #[test]
     fn migrations_and_transaction_failure_are_atomic() {
         let d = Database::open(":memory:").unwrap();

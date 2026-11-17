@@ -153,7 +153,7 @@ impl Services {
         if account["platform"] == "lichess"
             && account["id"]
                 .as_i64()
-                .is_some_and(|id| *self.current_sync.lock().unwrap() == Some(id))
+                .is_some_and(|id| *self.current_sync.lock().recover() == Some(id))
         {
             public["sync_status"] = json!("syncing");
         }
@@ -368,7 +368,7 @@ impl Services {
             .iter()
             .filter_map(|r| r["game_id"].as_i64())
             .collect::<HashSet<_>>();
-        for (progress, cancel) in self.progress.lock().unwrap().values() {
+        for (progress, cancel) in self.progress.lock().recover().values() {
             if progress["game_id"]
                 .as_i64()
                 .is_some_and(|id| orphan_ids.contains(&id))
@@ -670,7 +670,7 @@ impl Services {
             ),
             &ids.iter().map(|id| json!(id)).collect::<Vec<_>>(),
         )?;
-        let progress = self.progress.lock().unwrap();
+        let progress = self.progress.lock().recover();
         let mut out = HashMap::new();
         for mut row in rows {
             if let Some((p, _)) = row["claim_token"]
@@ -782,7 +782,7 @@ impl Services {
     fn queue(&self) -> ApiResult {
         let mut stats = self.stats();
         let mut queued = self.db.query(QUEUED_JOBS, &[])?;
-        let progress = self.progress.lock().unwrap();
+        let progress = self.progress.lock().recover();
         for job in &mut queued {
             if let Some((p, _)) = job["claim_token"]
                 .as_str()
