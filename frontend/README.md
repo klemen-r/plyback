@@ -19,5 +19,5 @@ http://127.0.0.1:8000. Override that with `API_URL`.
 Playwright starts isolated backend/Chess.com fixture servers on 8790/8799 and uses a disposable database.
 Tests exercise the built interface; run `npm run build` first.
 
-The visual direction is study A, Vercel tabs (chosen 2026-11-03); the archived studies live in
-[docs/design-explorations](../docs/design-explorations/). Reuse the primitives in `src/components/ui.tsx`.
+The interface uses a breadcrumb header, underlined tabs, bordered cards and stat grids, with sentence case
+and weight 600. Keep the Ctrl/Command+K palette and reuse the primitives in `src/components/ui.tsx`.

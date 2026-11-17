@@ -125,7 +125,7 @@ freeze on their first update or on finalization if unfinished; ready ones keep t
 
 ## Interface
 
-The interface follows design study A, Vercel tabs, chosen on 2026-11-03. Appearance (light/dark/system,
+The interface uses a breadcrumb header, underlined tabs, bordered cards and stat grids. Appearance (light/dark/system,
 cover colour, board colours) is stored per browser in `frontend/src/lib/theme.ts`.
 
 The shell polls status every 5 seconds while reviews or a sync are running and every 15 seconds when

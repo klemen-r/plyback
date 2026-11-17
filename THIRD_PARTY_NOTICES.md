@@ -28,7 +28,3 @@ The Stockfish installer retains COPYING, AUTHORS and README with release tag, so
 provenance in each installed version directory. When distributing a binary or container, preserve those
 notices and satisfy Stockfish's corresponding-source requirements for the exact release. The image
 includes its source/provenance record. Do not substitute a modified engine without updating its source offer.
-
-Archived design studies also contain Inter, Fraunces and IBM Plex fonts under SIL OFL-1.1; their original
-copyright and license texts are retained in `docs/design-explorations/licenses`. They are design resources,
-separate from the production font bundle. The studies preserve earlier work; the interface follows study A (see README).

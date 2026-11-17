@@ -4,7 +4,6 @@
 
 Report security issues privately to the repository owner. Where available, use GitHub's
 [private vulnerability reporting](https://github.com/klemen-r/plyback/security/advisories/new).
-For this private repository, use a private channel available to its collaborators.
 Include steps to reproduce and the version you tested; do not publish exploit details in a public issue.
 
 ## Threat model
@@ -32,8 +31,8 @@ credentials.
   self-hosted; the browser contacts no third party except for Chess.com avatars.
 - **Input limits** — 25 MB request bodies enforced against actual streamed bytes as well as headers, validated usernames, FEN and depth bounds, rate limits on
   engine analysis and imports.
-- **Outbound requests** — only to the Chess.com API base URL; archive URLs returned by the API are
-  checked against it before being fetched, including every redirect destination.
+- **Outbound requests** — Chess.com archive URLs and redirects must stay within the configured API
+  origin and base path. Lichess uses its validated API origin and refuses redirects.
 - **Data at rest** — a single SQLite file in the data directory. Protect it with normal file
   permissions or disk encryption; the Docker image runs as an unprivileged user on a read-only root
   filesystem.
