@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   native:
-    name: Native backend (${{ matrix.os }})
+    name: Server (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     env:
@@ -56,6 +56,7 @@ jobs:
           cargo audit --file rust/Cargo.lock --deny warnings
 
   frontend:
+    name: Interface
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -75,7 +76,7 @@ jobs:
       - run: npm audit --omit=dev
 
   e2e:
-    name: Setup, start and browser workflows (${{ matrix.os }})
+    name: Setup and browser tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     strategy:
@@ -130,6 +131,7 @@ jobs:
           path: frontend/test-results/
 
   container:
+    name: Container
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
