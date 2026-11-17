@@ -43,8 +43,8 @@ credentials.
   sync writes check immutable account generations so deleted IDs cannot receive stale responses.
 - **Engine** — UCI output, deadlines and retries are bounded. Cancelled requests stop searching;
   unresponsive engines are killed and reaped. Worker count, threads and hash have aggregate limits.
-- **Dependencies** — audited in CI with `cargo audit`, `npm audit` and `pip-audit` for the retained
-  development oracle; Dependabot covers all three. The production runtime contains no Python or Node.
+- **Dependencies** — checked in CI with `cargo audit` and `npm audit`; Dependabot covers Rust,
+  JavaScript and GitHub Actions. The production runtime contains no Python or Node.
 
 ## Running behind a reverse proxy
 

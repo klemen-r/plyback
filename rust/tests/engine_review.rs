@@ -92,6 +92,7 @@ fn real_stockfish_review_mates_sacrifice_and_hanging_queen() {
     );
     assert_eq!(legal["moves"][9]["classification"], "blunder");
     assert_eq!(legal["moves"][11]["classification"], "forced");
+    assert_eq!(legal["counts"]["white"]["brilliant"], 1);
     let queen = analysis::analyze(
         &mut engine,
         "1. e4 e5 2. Nf3 Nc6 3. d4 Qh4 4. Nxh4 *",
@@ -198,7 +199,7 @@ fn durable_cache_is_database_owned_and_history_sensitive() {
 }
 
 /// Explicit local benchmark; no live data and no reduced search budgets.
-/// PLYBACK_BENCH_INPUT points at backend/bench/analysis.py --record output.
+/// PLYBACK_BENCH_INPUT selects a preserved recording with games and UCI evaluations.
 /// PLYBACK_BENCH_OUTPUT selects the JSON metrics file. Run with --release --ignored.
 #[test]
 #[ignore = "real-engine benchmark; run explicitly with fixture capture and output paths"]

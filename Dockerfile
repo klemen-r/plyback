@@ -17,7 +17,7 @@ COPY rust/Cargo.toml rust/Cargo.lock rust/
 COPY rust/openapi.json rust/openapi.json
 COPY rust/src rust/src
 COPY rust/migrations rust/migrations
-COPY backend/plyback/data/openings.json backend/plyback/data/openings.json
+COPY rust/data/openings.json rust/data/openings.json
 RUN cargo build --release --locked --manifest-path rust/Cargo.toml
 
 FROM debian:bookworm-slim

@@ -59,7 +59,7 @@ fn integer(v: &Value) -> i64 {
 fn round(x: f64, n: i32) -> f64 {
     // Multiplication before rounding creates false halfway values (69.475 * 100,
     // for example). Fixed-precision formatting rounds the original binary float,
-    // matching the baseline's decimal rounding at classification/statistic edges.
+    // preserving ties-to-even decimal rounding at classification/statistic edges.
     if n == 0 {
         x.round_ties_even()
     } else {
@@ -1649,7 +1649,7 @@ fn advantage(analyzed: &[&Game]) -> Value {
         if series.is_empty() {
             continue;
         }
-        // The first maximum has the same semantics as Python max, including equal plateaus.
+        // Choose the first maximum, including equal plateaus.
         let &(peak_m, peak) = series
             .iter()
             .reduce(|a, b| if b.1 > a.1 { b } else { a })

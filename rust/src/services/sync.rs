@@ -1061,6 +1061,10 @@ mod tests {
                 .is_null()
         );
         assert_eq!(
+            db.scalar("SELECT avatar FROM accounts", &[]).unwrap(),
+            "https://images.chesscomfiles.com/uploads/v1/user/451030352.15afde49.200x200o.535747109fd0.jpg"
+        );
+        assert_eq!(
             db.scalar("SELECT COUNT(*) FROM sync_pending", &[]).unwrap(),
             0
         );
@@ -1185,34 +1189,34 @@ mod tests {
                     }
                     let mut body = if path.ends_with("/games/archives") {
                         serde_json::from_str(include_str!(
-                            "../../../backend/tests/fixtures/chesscom/archives.json"
+                            "../../tests/fixtures/chesscom/archives.json"
                         ))
                         .unwrap()
                     } else if path.ends_with("/stats") {
                         serde_json::from_str(include_str!(
-                            "../../../backend/tests/fixtures/chesscom/stats.json"
+                            "../../tests/fixtures/chesscom/stats.json"
                         ))
                         .unwrap()
                     } else if path.ends_with("/2026/10") {
                         serde_json::from_str(include_str!(
-                            "../../../backend/tests/fixtures/chesscom/2026-10.json"
+                            "../../tests/fixtures/chesscom/2026-10.json"
                         ))
                         .unwrap()
                     } else if path.ends_with("/2026/11") {
                         serde_json::from_str(include_str!(
-                            "../../../backend/tests/fixtures/chesscom/2026-11.json"
+                            "../../tests/fixtures/chesscom/2026-11.json"
                         ))
                         .unwrap()
                     } else {
                         serde_json::from_str::<Value>(include_str!(
-                            "../../../backend/tests/fixtures/chesscom/profile.json"
+                            "../../tests/fixtures/chesscom/profile.json"
                         ))
                         .unwrap()
                     };
                     let has_extra = e.load(Ordering::SeqCst);
                     if has_extra && path.ends_with("/2026/11") {
                         let more: Value = serde_json::from_str(include_str!(
-                            "../../../backend/tests/fixtures/chesscom/2026-11-extra.json"
+                            "../../tests/fixtures/chesscom/2026-11-extra.json"
                         ))
                         .unwrap();
                         body["games"]

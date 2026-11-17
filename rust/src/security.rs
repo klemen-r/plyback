@@ -1,4 +1,4 @@
-//! Authentication format remains compatible with the Python baseline. Secrets and
+//! Versioned scrypt password hashes and hashed sessions. Secrets and
 //! session tokens never appear in API errors or logs.
 use crate::{api_error, db::Database, now};
 use base64::{
@@ -357,7 +357,7 @@ mod tests {
         assert!((0..120).all(|_| limiter.allow("client", "practice-answer", 600)));
     }
     #[test]
-    fn verifies_a_hash_made_independently_by_python_hashlib() {
+    fn verifies_an_independently_generated_scrypt_hash() {
         // hashlib.scrypt(b"correct horse battery", salt=bytes(range(16)), n=16384, r=8, p=1, dklen=32)
         let stored = "scrypt$16384$8$1$AAECAwQFBgcICQoLDA0ODw==$6W7GuoxjojaYIg83x/wEKSXUMMf+reyc6wSvA8q7ny8=";
         assert!(verify_password("correct horse battery", stored));

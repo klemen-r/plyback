@@ -2,8 +2,8 @@
 
 Plyback runs as one native Rust process. Axum serves the JSON API and the built React interface;
 managed background threads sync public games, analyse queued jobs and build reports. Stockfish runs
-as a separate UCI process. SQLite holds all durable state. The Python tree in `backend/` is a
-development reference and benchmark baseline; the launchers and the container never run it.
+as a separate UCI process. SQLite holds all durable state. Opening data and its CC0 TSV sources
+are in `rust/data/`; public game fixtures and preserved contract snapshots are in `rust/tests/fixtures/`.
 
 | Layer | Owning code |
 |---|---|
@@ -148,32 +148,18 @@ Backups use SQLite's backup API, verify integrity and never overwrite an existin
 CI passes its read-only token only to the official Stockfish release metadata API; container builds get
 it as a BuildKit secret. Download checksums are always checked.
 
-## Benchmarks
+## Measurement tools
 
-Two ignored Rust tests measure the app. `benchmark_insights` (in `rust/tests/insights.rs`) times
-uncached insight computation on a seeded database. `benchmark_reference_fixture_cold_and_warm`
-(in `rust/tests/engine_review.rs`) reviews two fixture games with the default budget and reports
-cold searches, an exact replay of the recorded searches, and repeats against a seeded position
-cache; the warm repeats must match the stored output and start no engine process or search. The
-engine benchmark replays evaluations recorded by the Python baseline, so it needs the development
-dependencies from the README.
-
-Use a new empty directory for every run. The seeder refuses to overwrite a file, and the insight
-benchmark backs up its source read-only before migrating. No command below opens the live database.
+`rust/examples/review_benchmark.rs` measures queue reviews against a supplied SQLite backup.
+It creates disposable working copies and writes aggregate results to a new file under
+`benchmark-output/`. Set `PLYBACK_STOCKFISH` to the verified engine and run on an idle machine:
 
 ```sh
-mkdir benchmark-output
-python scripts/seed_benchmark.py benchmark-output/fixture.db
-python scripts/seed_benchmark.py benchmark-output/scale100.db --scale 100
-python backend/bench/run.py --source benchmark-output/fixture.db --scale 100 --repeat 5 --out benchmark-output/python-insights.json
-PLYBACK_INSIGHT_BENCH_SOURCE="$PWD/benchmark-output/scale100.db" PLYBACK_INSIGHT_BENCH_OUTPUT="$PWD/benchmark-output/rust-insights.json" cargo test --release --locked --manifest-path rust/Cargo.toml --test insights benchmark_insights -- --ignored --nocapture
-
-node scripts/install_stockfish.mjs
-export PLYBACK_STOCKFISH="$(cat data/engine/stockfish.path)"
-PLYBACK_DATA="$PWD/benchmark-output/engine-data" python backend/bench/analysis.py --out benchmark-output/python-engine.json --record benchmark-output/evaluations.json
-PLYBACK_BENCH_INPUT="$PWD/benchmark-output/evaluations.json" PLYBACK_BENCH_OUTPUT="$PWD/benchmark-output/rust-engine.json" cargo test --release --locked --manifest-path rust/Cargo.toml --test engine_review benchmark_reference_fixture_cold_and_warm -- --ignored --nocapture
+cargo run --release --locked --manifest-path rust/Cargo.toml --example review_benchmark -- --help
 ```
 
-Run them on an idle machine or in CI. The `Native backend (ubuntu-latest)` job runs the same sequence
-on pushes to `main` and on manual runs, and uploads the results as `native-performance`. Compare timings
-only within one run: hardware, OS, engine hash state and shared-runner load all affect them.
+Preserved recordings can also be replayed by the opt-in test in `rust/tests/engine_review.rs`.
+Cache replay measures reuse of stored evaluations; it does not measure first-time engine analysis.
+
+Regenerate the bundled opening index with `node scripts/build_openings.mjs` after `npm ci --prefix frontend`.
+The generator and Rust tests compare every compiled position against the committed TSV sources.

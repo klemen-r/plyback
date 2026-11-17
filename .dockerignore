@@ -1,6 +1,5 @@
 .git
 .github
-.venv
 rust/target
 data
 benchmark-output
@@ -8,11 +7,6 @@ frontend/node_modules
 frontend/dist
 frontend/test-results
 frontend/playwright-report
-backend/tests/.testdata
-backend/tests/.e2edata
-**/__pycache__
-**/.pytest_cache
-**/.ruff_cache
 .env
 .env.*
 *.pgn

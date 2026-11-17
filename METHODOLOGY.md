@@ -26,10 +26,10 @@ None of this replicates Chess.com's proprietary Game Review; labels and accuracy
 - Default budget per search: one thread and 64 MiB hash per worker, depth 16, MultiPV 2, a 5 s cap and no node cap.
   Threat checks (section 5) search one line to depth 10. Budgets are not lowered to make reviews faster.
 - Cost of the paired comparison: the extra two-candidate searches and threat checks add engine work, so a cold review
-  takes longer than one search per position. In one measured run of the two benchmark games (88 and 45 plies), a review
+  takes longer than one search per position. In one measured run of two fixture games (88 and 45 plies), a review
   made 222 engine calls: 135 positions, 71 paired searches and 16 threat checks. A repeat review of the same games with
   a warm position cache started no engine process. The benchmarks are described in
-  [architecture](docs/architecture.md#benchmarks).
+  [architecture](docs/architecture.md#measurement-tools).
 
 ## 2. Winning chances
 

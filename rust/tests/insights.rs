@@ -1,4 +1,4 @@
-//! Contract oracle generated from the preserved Python baseline and public test fixtures.
+//! Preserved insight contract snapshots over public game fixtures.
 //! Contains no live account data. Numerical JSON representation is compared by value.
 use plyback::{
     Query,
@@ -44,13 +44,13 @@ fn equal(actual: &Value, expected: &Value, path: &str) {
     }
 }
 #[test]
-fn full_insights_match_preserved_python_oracle() {
+fn full_insights_match_preserved_contract_snapshot() {
     let db = fixture();
     let expected: Value =
         serde_json::from_str(include_str!("fixtures/insights-expected.json")).unwrap();
     for case in expected.as_array().unwrap() {
         let mut result = compute(&db, 1, &case["filters"]).unwrap();
-        // Native-only extensions that the preserved Python oracle does not produce.
+        // Additional fields outside the preserved contract snapshot.
         result["results"]
             .as_object_mut()
             .unwrap()
@@ -737,7 +737,7 @@ fn sessions_are_the_same_with_and_without_filters_when_the_account_has_variant_g
 fn missed_mates_count_alike_for_both_sides() {
     let db = fixture();
     // Game 1: the account is white, so ply 8 is the opponent's. An inaccuracy that misses a
-    // mate counts for the account (see the oracle fixture) and so must count for them too.
+    // mate counts for the account (see the contract fixture) and so must count for them too.
     db.execute(
         "UPDATE moves SET classification='inaccuracy', tags='{\"missed_mate\":{\"mate\":3}}' WHERE game_id=1 AND ply=8",
         &[],

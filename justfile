@@ -11,12 +11,7 @@ setup:
     bash setup.sh
 
 # Prepare runtime, development tools and the browser used by tests.
-setup-dev: setup dev-deps browser-install
-
-# Install the locked Python development tools (after setup).
-dev-deps:
-    python3 -m venv .venv
-    .venv/bin/python -m pip install --require-hashes -r backend/requirements-dev.txt
+setup-dev: setup browser-install
 
 # Run locally; optional flags: just run --port 8080 --no-browser.
 run *args:
@@ -31,18 +26,16 @@ build:
     cargo build --release --locked --manifest-path rust/Cargo.toml
     cd frontend && npm run build
 
-# Check native, preserved baseline and frontend code style.
+# Check native and frontend code style.
 lint:
     cargo fmt --manifest-path rust/Cargo.toml --check
     cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets -- -D warnings
-    cd backend && ../.venv/bin/python -m ruff check --config pyproject.toml plyback tests bench ../scripts
     cd frontend && npm run lint
 
 # Run backend and frontend unit tests with isolated data; no live Chess.com requests.
 test:
-    node --test scripts/install_stockfish.test.mjs
+    node --test scripts/*.test.mjs
     cargo test --release --locked --manifest-path rust/Cargo.toml --all-targets
-    cd backend && ../.venv/bin/python -m pytest -m "not live"
     cd frontend && npm test
 
 # Install Chromium for browser tests.
@@ -80,15 +73,11 @@ logs:
 # Check locked dependencies for known vulnerabilities.
 audit:
     cargo audit --file rust/Cargo.lock --deny warnings
-    .venv/bin/python -m pip_audit --disable-pip --no-deps -r backend/requirements-dev.txt
     cd frontend && npm audit
 
-# Refresh supported versions, install them, then run every local check. Requires uv.
+# Refresh supported versions, install them, then run every local check.
 update-deps:
     cargo update --manifest-path rust/Cargo.toml
     node scripts/rust_notices.mjs
-    uv pip compile backend/pyproject.toml --python-version 3.11 --universal --generate-hashes --upgrade --output-file backend/requirements.txt --quiet
-    uv pip compile backend/pyproject.toml --python-version 3.11 --extra dev --universal --generate-hashes --upgrade --constraint backend/requirements.txt --output-file backend/requirements-dev.txt --quiet
-    .venv/bin/python -m pip install --require-hashes -r backend/requirements-dev.txt
     cd frontend && npm update --save --no-audit --no-fund
     just check

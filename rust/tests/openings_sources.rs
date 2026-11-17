@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[test]
 fn compiled_openings_match_tsv_sources() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../backend/plyback/data");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("data");
     let compiled: Value =
         serde_json::from_str(&std::fs::read_to_string(root.join("openings.json")).unwrap())
             .unwrap();

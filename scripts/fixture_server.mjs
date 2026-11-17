@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
-const fixtures = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../backend/tests/fixtures/chesscom')
+const fixtures = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../rust/tests/fixtures/chesscom')
 const portIndex = process.argv.indexOf('--port')
 const port = portIndex < 0 ? 8799 : Number(process.argv[portIndex + 1])
 const lichessPgn = `[Event "Fixture"]

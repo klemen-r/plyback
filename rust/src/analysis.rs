@@ -125,7 +125,7 @@ struct OpeningIndex {
 static OPENINGS: OnceLock<OpeningIndex> = OnceLock::new();
 fn openings() -> &'static OpeningIndex {
     OPENINGS.get_or_init(|| {
-        serde_json::from_str(include_str!("../../backend/plyback/data/openings.json"))
+        serde_json::from_str(include_str!("../data/openings.json"))
             .expect("checked bundled opening index")
     })
 }

@@ -1071,10 +1071,9 @@ mod tests {
     }
     #[test]
     fn malformed_archive_metadata_cannot_reach_sql_or_browser_as_objects() {
-        let fixture: Value = serde_json::from_str(include_str!(
-            "../../../backend/tests/fixtures/chesscom/2026-10.json"
-        ))
-        .unwrap();
+        let fixture: Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/chesscom/2026-10.json"))
+                .unwrap();
         let good = fixture["games"][0].clone();
         assert!(game_row_from_chesscom(&good).unwrap().is_some());
         for (key, value) in [
