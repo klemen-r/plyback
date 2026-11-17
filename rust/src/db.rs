@@ -31,6 +31,7 @@ pub struct Database {
     connection: Mutex<Connection>,
     pub(crate) position_searches: crate::engine::SearchFlights,
     pub(crate) practice_candidates: crate::practice::CandidateCache,
+    pub(crate) insight_games: crate::insights::LoadedGamesCache,
 }
 
 struct ShortConnection<'a> {
@@ -98,6 +99,7 @@ impl Database {
             connection: Mutex::new(connection),
             position_searches: crate::engine::SearchFlights::default(),
             practice_candidates: crate::practice::CandidateCache::default(),
+            insight_games: crate::insights::LoadedGamesCache::default(),
         };
         db.migrate()?;
         Ok(db)

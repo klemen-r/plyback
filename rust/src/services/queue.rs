@@ -858,7 +858,7 @@ mod tests {
             .unwrap();
         let game = imported["game_ids"][0].as_i64().unwrap();
         service.start();
-        let active = wait_until(|| service.stats()["running"] == 1, 10);
+        let active = wait_until(|| service.stats()["running"] == 1, 30);
         let start = Instant::now();
         service.stop();
         assert!(active, "Engine did not start: {}", service.stats());

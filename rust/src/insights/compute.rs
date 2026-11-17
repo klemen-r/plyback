@@ -7,7 +7,7 @@ use serde::{
 };
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 
 const SCOPE_GAMES_SQL: &str =
     "SELECT g.id FROM account_games ag JOIN games g ON g.id=ag.game_id WHERE ";
@@ -520,6 +520,9 @@ fn loss_reason(s: &str) -> &str {
     }
 }
 
+/// The account's games and their moves. Each query takes its own short read lease, so
+/// writers (sync, analysis saves) are not held off for the whole load; callers compare
+/// `data_revision` before and after to detect a load that interleaved with a write.
 fn load(db: &Database, account: i64, filters: &Value, report_id: Option<i64>) -> Result<Vec<Game>> {
     // Report filters describe the selection at creation. Later opening backfills,
     // corrected timestamps or ratings must not change that frozen membership.
@@ -536,13 +539,11 @@ fn load(db: &Database, account: i64, filters: &Value, report_id: Option<i64>) ->
         clauses.push("EXISTS (SELECT 1 FROM report_games rg WHERE rg.report_id=? AND rg.game_id=g.id AND rg.game_uuid=g.uuid)".into());
         params.push(json!(rid));
     }
-    let rows = db.query(
-        &format!(
-            "{INSIGHT_GAMES_SQL}{} ORDER BY g.end_time,g.id",
-            clauses.join(" AND ")
-        ),
-        &params,
-    )?;
+    let sql = format!(
+        "{INSIGHT_GAMES_SQL}{} ORDER BY g.end_time,g.id",
+        clauses.join(" AND ")
+    );
+    let rows = db.read(|connection| crate::db::query_connection(connection, &sql, &params))?;
     let mut games = Vec::with_capacity(rows.len());
     for row in rows {
         let white = row["color"] == "white";
@@ -595,7 +596,6 @@ fn load(db: &Database, account: i64, filters: &Value, report_id: Option<i64>) ->
         );
         // Profiling identified temporary JSON row maps as the dominant load cost.
         // Read only the covering-index columns directly into owned, typed values.
-        // The connection lock ends before grouping or any statistical computation.
         let rows = db.read(|connection| {
             let mut statement = connection.prepare(&sql)?;
             let rows = statement.query_map(
@@ -658,6 +658,218 @@ fn load(db: &Database, account: i64, filters: &Value, report_id: Option<i64>) ->
         }
     }
     Ok(games)
+}
+
+const LOADED_BYTES: usize = 64 * 1024 * 1024;
+const LOADED_ACCOUNTS: usize = 4;
+
+/// One revision of owned, parsed rows per account, shared by filters and reports.
+/// Membership stays in SQLite so its NULL, ASCII LOWER and frozen UUID semantics
+/// remain identical to the original selection. Aggregation borrows cached games.
+#[derive(Default)]
+pub(crate) struct LoadedGamesCache(Mutex<LoadedCache>);
+#[derive(Default)]
+struct LoadedCache {
+    entries: HashMap<i64, LoadedEntry>,
+    clock: u64,
+}
+struct LoadedEntry {
+    revision: i64,
+    games: Arc<Vec<Game>>,
+    bytes: usize,
+    used: u64,
+}
+
+fn value_bytes(value: &Value) -> usize {
+    match value {
+        Value::String(s) => s.capacity(),
+        Value::Array(v) => {
+            v.capacity() * std::mem::size_of::<Value>() + v.iter().map(value_bytes).sum::<usize>()
+        }
+        // Estimate B-tree entry storage; allocator/node overhead is excluded.
+        Value::Object(m) => m
+            .iter()
+            .map(|(k, v)| std::mem::size_of::<(String, Value)>() + k.capacity() + value_bytes(v))
+            .sum(),
+        _ => 0,
+    }
+}
+fn loaded_bytes(games: &[Game], capacity: usize) -> usize {
+    capacity * std::mem::size_of::<Game>()
+        + games
+            .iter()
+            .map(|g| {
+                g.color.capacity()
+                    + g.reason.capacity()
+                    + g.opponent.capacity()
+                    + value_bytes(&g.row)
+                    + [&g.user, &g.opp]
+                        .iter()
+                        .map(|moves| {
+                            moves.capacity() * std::mem::size_of::<Move>()
+                                + moves
+                                    .iter()
+                                    .map(|m| {
+                                        [&m.color, &m.san, &m.class, &m.phase, &m.epd, &m.endgame]
+                                            .iter()
+                                            .map(|s| s.capacity())
+                                            .sum::<usize>()
+                                            + m.tags
+                                                .hanging_piece
+                                                .as_ref()
+                                                .map_or(0, String::capacity)
+                                            + value_bytes(&m.best)
+                                    })
+                                    .sum::<usize>()
+                        })
+                        .sum::<usize>()
+            })
+            .sum::<usize>()
+}
+
+impl LoadedCache {
+    /// The caller must drop the outdated entry after releasing the cache mutex.
+    fn get(
+        &mut self,
+        account: i64,
+        revision: i64,
+    ) -> (Option<Arc<Vec<Game>>>, Option<LoadedEntry>) {
+        self.clock += 1;
+        let Some(entry) = self.entries.get_mut(&account) else {
+            return (None, None);
+        };
+        if entry.revision != revision {
+            // A lookup may have read its revision before a newer fill completed.
+            let removed = if entry.revision < revision {
+                self.entries.remove(&account)
+            } else {
+                None
+            };
+            return (None, removed);
+        }
+        entry.used = self.clock;
+        (Some(entry.games.clone()), None)
+    }
+
+    /// The caller must drop removed entries after releasing the cache mutex.
+    fn insert(
+        &mut self,
+        account: i64,
+        revision: i64,
+        games: &Arc<Vec<Game>>,
+        bytes: usize,
+    ) -> Vec<LoadedEntry> {
+        // Never evict a newer fill that completed while this caller was computing.
+        if self.entries.values().any(|e| e.revision > revision) {
+            return vec![];
+        }
+        let mut removed: Vec<_> = self
+            .entries
+            .extract_if(|_, e| e.revision != revision)
+            .map(|(_, e)| e)
+            .collect();
+        removed.extend(self.entries.remove(&account));
+        if bytes > LOADED_BYTES {
+            return removed;
+        }
+        self.clock += 1;
+        self.entries.insert(
+            account,
+            LoadedEntry {
+                revision,
+                games: games.clone(),
+                bytes,
+                used: self.clock,
+            },
+        );
+        while self.entries.len() > LOADED_ACCOUNTS
+            || self.entries.values().map(|e| e.bytes).sum::<usize>() > LOADED_BYTES
+        {
+            let victim = *self.entries.iter().min_by_key(|(_, e)| e.used).unwrap().0;
+            removed.extend(self.entries.remove(&victim));
+        }
+        removed
+    }
+}
+
+/// Reuse a complete account when retained; only all-games misses can fill it.
+/// A filtered/report miss loads exactly its original SQL scope, even if an
+/// account is oversized or repeatedly evicted. No background work is needed.
+fn loaded_scope(
+    db: &Database,
+    account: i64,
+    filters: &Value,
+    report_id: Option<i64>,
+) -> Result<(Arc<Vec<Game>>, bool)> {
+    let revision = db
+        .scalar("SELECT revision FROM data_revision WHERE id=1", &[])?
+        .as_i64()
+        .unwrap_or(0);
+    // Never hold the cache mutex while waiting for SQLite or loading/parsing rows.
+    let (games, removed) = db
+        .insight_games
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(account, revision);
+    drop(removed);
+    if let Some(games) = games {
+        return Ok((games, true));
+    }
+    if report_id.is_some() || filters.as_object().is_some_and(|m| !m.is_empty()) {
+        return load(db, account, filters, report_id).map(|games| (Arc::new(games), false));
+    }
+    // One full load per compute_scope attempt. A write between its queries changes the
+    // revision: the result is still returned (compute_scope's own before/after check
+    // retries it) but is not cached under a revision it may not match.
+    let games = load(db, account, filters, None)?;
+    let after = db
+        .scalar("SELECT revision FROM data_revision WHERE id=1", &[])?
+        .as_i64()
+        .unwrap_or(0);
+    if after != revision {
+        return Ok((Arc::new(games), true));
+    }
+    let bytes = loaded_bytes(&games, games.capacity());
+    tracing::debug!(
+        account,
+        revision,
+        games = games.len(),
+        bytes,
+        "Loaded account games"
+    );
+    let games = Arc::new(games);
+    let removed = db
+        .insight_games
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(account, revision, &games, bytes);
+    drop(removed);
+    Ok((games, true))
+}
+
+#[cfg(test)]
+fn loaded_games(db: &Database, account: i64) -> Result<Arc<Vec<Game>>> {
+    loaded_scope(db, account, &json!({}), None).map(|(games, _)| games)
+}
+
+fn selected_ids(
+    db: &Database,
+    account: i64,
+    filters: &Value,
+    report_id: Option<i64>,
+) -> Result<HashSet<i64>> {
+    if let Some(rid) = report_id {
+        Ok(db.query(
+            "SELECT g.id FROM report_games rg JOIN games g ON g.id=rg.game_id AND g.uuid=rg.game_uuid
+             JOIN account_games ag ON ag.game_id=g.id WHERE rg.report_id=? AND ag.account_id=?
+             AND g.rules IN ('chess','chess960')",
+            &[json!(rid), json!(account)],
+        )?.iter().map(|r| integer(&r["id"])).collect())
+    } else {
+        Ok(scope_game_ids(db, account, filters)?.into_iter().collect())
+    }
 }
 
 fn groups<'a, T>(items: &[&'a T], key: impl Fn(&T) -> String) -> Vec<(String, Vec<&'a T>)> {
@@ -1832,22 +2044,49 @@ fn compute_once(
     filters: &Value,
     report_id: Option<i64>,
 ) -> Result<Value> {
+    compute_once_with(db, account_id, filters, report_id, true)
+}
+fn compute_once_with(
+    db: &Database,
+    account_id: i64,
+    filters: &Value,
+    report_id: Option<i64>,
+    shared: bool,
+) -> Result<Value> {
     let began = std::time::Instant::now();
     let f = normalize_filters(filters)?;
-    let loaded = load(db, account_id, &f, report_id)?;
+    let (loaded, full_account) = section("load", || {
+        if shared {
+            loaded_scope(db, account_id, &f, report_id)
+        } else {
+            load(db, account_id, &f, report_id).map(|games| (Arc::new(games), false))
+        }
+    })?;
+    let selected =
+        if full_account && (report_id.is_some() || f.as_object().is_some_and(|m| !m.is_empty())) {
+            Some(section("selection", || {
+                selected_ids(db, account_id, &f, report_id)
+            })?)
+        } else {
+            None
+        };
     let loaded_at = std::time::Instant::now();
-    let games = loaded.iter().collect::<Vec<_>>();
+    let games = loaded
+        .iter()
+        .filter(|g| selected.as_ref().is_none_or(|s| s.contains(&g.id)))
+        .collect::<Vec<_>>();
     let analyzed = games
         .iter()
         .copied()
         .filter(|g| g.analyzed && !g.user.is_empty())
         .collect::<Vec<_>>();
-    let overview = overview(&games, &analyzed);
-    let openings = openings(&games, number(&overview["score"]));
+    let overview = section("overview", || overview(&games, &analyzed));
+    let openings = section("openings", || openings(&games, number(&overview["score"])));
     // Always the account's whole timeline, also unfiltered: the loaded games leave out variants,
     // which are sittings too, and every view of the same games must find the same sessions.
-    let sessions = sessions(&games, &timeline(db, account_id)?);
-    let time = time_info(&analyzed, &games);
+    let timeline = section("timeline", || timeline(db, account_id))?;
+    let sessions = section("sessions", || sessions(&games, &timeline));
+    let time = section("time", || time_info(&analyzed, &games));
     let mut notes = Vec::new();
     if analyzed.len() < 10 {
         notes.push(
@@ -1874,9 +2113,20 @@ fn compute_once(
             "{unknown} game(s) in this selection have no recorded result; scores leave them out."
         ));
     }
-    let mut result = json!({"filters":f,"data_quality":{"games":games.len(),"analyzed":analyzed.len(),"coverage":pct(analyzed.len() as f64,games.len()),"unanalyzed_ids":&un[un.len().saturating_sub(2000)..],"notes":notes,"confidence":confidence(analyzed.len(),10,40,150)},"overview":overview,"ratings":ratings(&games),"results":results(&games),"sessions":sessions,"trend":trend(&games),"openings":openings,"phases":phases(&analyzed),"errors":errors(&analyzed),"time":time,"advantage":advantage(&analyzed),"missed":missed(&analyzed),"recurring":recurring(&analyzed),"priorities":priorities(&analyzed,&openings,&time,&sessions)});
+    let ratings = section("ratings", || ratings(&games));
+    let results = section("results", || results(&games));
+    let trend = section("trend", || trend(&games));
+    let phases = section("phases", || phases(&analyzed));
+    let errors = section("errors", || errors(&analyzed));
+    let advantage = section("advantage", || advantage(&analyzed));
+    let missed = section("missed", || missed(&analyzed));
+    let recurring = section("recurring", || recurring(&analyzed));
+    let priorities = section("priorities", || {
+        priorities(&analyzed, &openings, &time, &sessions)
+    });
+    let mut result = json!({"filters":f,"data_quality":{"games":games.len(),"analyzed":analyzed.len(),"coverage":pct(analyzed.len() as f64,games.len()),"unanalyzed_ids":&un[un.len().saturating_sub(2000)..],"notes":notes,"confidence":confidence(analyzed.len(),10,40,150)},"overview":overview,"ratings":ratings,"results":results,"sessions":sessions,"trend":trend,"openings":openings,"phases":phases,"errors":errors,"time":time,"advantage":advantage,"missed":missed,"recurring":recurring,"priorities":priorities});
     let aggregated_at = std::time::Instant::now();
-    hydrate(db, &mut result)?;
+    section("hydrate", || hydrate(db, &mut result))?;
     tracing::debug!(
         games = games.len(),
         load_ms = loaded_at.duration_since(began).as_secs_f64() * 1000.0,
@@ -1887,9 +2137,320 @@ fn compute_once(
     Ok(result)
 }
 
+fn section<T>(name: &'static str, work: impl FnOnce() -> T) -> T {
+    let _span = tracing::debug_span!("insights_section", section = name).entered();
+    let began = std::time::Instant::now();
+    let result = work();
+    tracing::debug!(
+        elapsed_ms = began.elapsed().as_secs_f64() * 1000.0,
+        "Insights section"
+    );
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn fixture() -> Database {
+        let db = Database::open(":memory:").unwrap();
+        db.transaction(|tx| {
+            tx.execute_batch(include_str!("../../tests/fixtures/insights.sql"))?;
+            Ok(())
+        })
+        .unwrap();
+        db
+    }
+
+    #[test]
+    fn cold_filtered_cache_misses_match_all_golden_bytes_without_filling() {
+        let db = fixture();
+        let cases: Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/insights-expected.json"))
+                .unwrap();
+        for case in cases.as_array().unwrap() {
+            let filters = normalize_filters(&case["filters"]).unwrap();
+            if filters.as_object().unwrap().is_empty() {
+                continue;
+            }
+            let cached = compute_once_with(&db, 1, &filters, None, true).unwrap();
+            let uncached = compute_once_with(&db, 1, &filters, None, false).unwrap();
+            assert_eq!(
+                serde_json::to_vec(&cached).unwrap(),
+                serde_json::to_vec(&uncached).unwrap(),
+                "filters={filters}"
+            );
+            assert!(db.insight_games.0.lock().unwrap().entries.is_empty());
+        }
+    }
+
+    #[test]
+    fn oversized_and_evicted_accounts_only_load_filtered_rows_on_miss() {
+        let db = fixture();
+        let games = loaded_games(&db, 1).unwrap();
+        let revision = db
+            .scalar("SELECT revision FROM data_revision WHERE id=1", &[])
+            .unwrap()
+            .as_i64()
+            .unwrap();
+        let removed = {
+            let mut cache = db.insight_games.0.lock().unwrap();
+            // Exercise the real admission and eviction logic without a 65 MiB fixture.
+            let removed = cache.insert(1, revision, &games, LOADED_BYTES + 1);
+            assert!(cache.get(1, revision).0.is_none());
+            removed
+        };
+        drop(removed);
+        // An invalid typed move outside the selected scope detects accidental
+        // full-account loads, including transient loads that are never retained.
+        db.execute(
+            "UPDATE moves SET ep_loss='out of scope' WHERE game_id=1",
+            &[],
+        )
+        .unwrap();
+        let filters = json!({"since":1793447267_i64});
+        for evict in [false, true] {
+            if evict {
+                let mut cache = db.insight_games.0.lock().unwrap();
+                let mut removed = cache.insert(1, revision, &games, LOADED_BYTES / 2 + 1);
+                removed.extend(cache.insert(2, revision, &Arc::new(vec![]), LOADED_BYTES / 2 + 1));
+                assert!(cache.get(1, revision).0.is_none());
+                assert!(cache.get(2, revision).0.is_some());
+                drop(cache);
+                drop(removed);
+            }
+            for until in [253402300797_i64, 253402300798_i64, 253402300799_i64] {
+                let mut filters = filters.clone();
+                filters["until"] = json!(until);
+                let (rows, full) = loaded_scope(&db, 1, &filters, None).unwrap();
+                assert!(!full);
+                assert!(!rows.iter().any(|g| g.id == 1));
+                let cached = compute_once_with(&db, 1, &filters, None, true).unwrap();
+                let uncached = compute_once_with(&db, 1, &filters, None, false).unwrap();
+                assert_eq!(
+                    serde_json::to_vec(&cached).unwrap(),
+                    serde_json::to_vec(&uncached).unwrap()
+                );
+            }
+        }
+        assert!(load(&db, 1, &json!({}), None).is_err());
+    }
+
+    #[test]
+    fn loaded_cache_insert_returns_removed_entries() {
+        // Replacement, revision purge, oversized replacement, byte eviction and
+        // account eviction must all keep the removed allocation alive for the caller.
+        for (revision, account, bytes, other_accounts) in [
+            (1, 1, 0, 0),
+            (2, 2, 0, 0),
+            (1, 1, LOADED_BYTES + 1, 0),
+            (1, 2, LOADED_BYTES / 2 + 1, 0),
+            (1, 5, 0, 3),
+        ] {
+            let cache = Mutex::new(LoadedCache::default());
+            let games = Arc::new(vec![]);
+            let weak = Arc::downgrade(&games);
+            assert!(
+                cache
+                    .lock()
+                    .unwrap()
+                    .insert(1, 1, &games, LOADED_BYTES / 2 + 1)
+                    .is_empty()
+            );
+            drop(games);
+            for other in 2..other_accounts + 2 {
+                assert!(
+                    cache
+                        .lock()
+                        .unwrap()
+                        .insert(other, 1, &Arc::new(vec![]), 0)
+                        .is_empty()
+                );
+            }
+            let mut guard = cache.lock().unwrap();
+            let removed = guard.insert(account, revision, &Arc::new(vec![]), bytes);
+            assert_eq!(removed.len(), 1);
+            assert_eq!(weak.strong_count(), 1);
+            assert!(Arc::ptr_eq(&removed[0].games, &weak.upgrade().unwrap()));
+            drop(guard);
+            assert!(cache.try_lock().is_ok());
+            drop(removed);
+            assert!(weak.upgrade().is_none());
+        }
+    }
+
+    #[test]
+    fn loaded_cache_lookup_removes_outdated_entry_for_drop_after_unlocking() {
+        let cache = Mutex::new(LoadedCache::default());
+        let games = Arc::new(vec![]);
+        let weak = Arc::downgrade(&games);
+        assert!(cache.lock().unwrap().insert(1, 2, &games, 0).is_empty());
+        assert!(
+            cache
+                .lock()
+                .unwrap()
+                .insert(2, 2, &Arc::new(vec![]), 0)
+                .is_empty()
+        );
+        drop(games);
+
+        let mut guard = cache.lock().unwrap();
+        // An older lookup must miss without removing a newer fill.
+        let (hit, removed) = guard.get(1, 1);
+        assert!(hit.is_none());
+        assert!(removed.is_none());
+        assert!(guard.get(1, 2).0.is_some());
+        let (hit, removed) = guard.get(1, 3);
+        assert!(hit.is_none());
+        assert!(removed.is_some());
+        assert!(!guard.entries.contains_key(&1));
+        assert!(guard.get(2, 2).0.is_some());
+        let (hit, missing) = guard.get(1, 3);
+        assert!(hit.is_none());
+        assert!(missing.is_none());
+        assert_eq!(weak.strong_count(), 1);
+        drop(guard);
+        assert!(cache.try_lock().is_ok());
+        drop(removed);
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn delayed_cache_publication_keeps_newer_revision() {
+        let newer = Arc::new(vec![]);
+        let mut cache = LoadedCache::default();
+        cache.insert(1, 2, &newer, 0);
+        for (account, bytes) in [(1, 0), (2, 0), (1, LOADED_BYTES + 1)] {
+            cache.insert(account, 1, &Arc::new(vec![]), bytes);
+            assert!(Arc::ptr_eq(&newer, &cache.get(1, 2).0.unwrap()));
+            assert_eq!(cache.entries.len(), 1);
+        }
+    }
+
+    #[test]
+    fn waiting_for_database_does_not_lock_loaded_cache() {
+        use std::{sync::mpsc, time::Duration};
+        let db = Arc::new(fixture());
+        db.read(|_| {
+            let (started, waiting) = mpsc::sync_channel(0);
+            let (finished, done) = mpsc::channel();
+            let worker_db = db.clone();
+            let worker = std::thread::spawn(move || {
+                started.send(()).unwrap();
+                let rows = loaded_games(&worker_db, 1).unwrap();
+                finished.send(rows.len()).unwrap();
+            });
+            waiting.recv().unwrap();
+            // The caller cannot finish until this read lease is released.
+            assert!(done.recv_timeout(Duration::from_millis(50)).is_err());
+            assert!(db.insight_games.0.try_lock().is_ok());
+            Ok((worker, done))
+        })
+        .map(|(worker, done)| {
+            assert!(done.recv_timeout(Duration::from_secs(5)).unwrap() > 0);
+            worker.join().unwrap();
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn loaded_cache_matches_uncached_bytes_for_all_golden_filters() {
+        let db = Database::open(":memory:").unwrap();
+        db.transaction(|tx| {
+            tx.execute_batch(include_str!("../../tests/fixtures/insights.sql"))?;
+            Ok(())
+        })
+        .unwrap();
+        let cases: Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/insights-expected.json"))
+                .unwrap();
+        let first = loaded_games(&db, 1).unwrap();
+        for case in cases.as_array().unwrap() {
+            let cached = compute_once_with(&db, 1, &case["filters"], None, true).unwrap();
+            let uncached = compute_once_with(&db, 1, &case["filters"], None, false).unwrap();
+            assert_eq!(
+                serde_json::to_vec(&cached).unwrap(),
+                serde_json::to_vec(&uncached).unwrap(),
+                "filters={}",
+                case["filters"]
+            );
+            assert!(Arc::ptr_eq(&first, &loaded_games(&db, 1).unwrap()));
+        }
+        db.transaction(|tx| {
+            tx.execute(
+                "UPDATE moves SET classification='best',ep_loss=0,tags='{}'",
+                [],
+            )?;
+            tx.execute("UPDATE game_analysis SET revision=revision+1", [])?;
+            Ok(())
+        })
+        .unwrap();
+        assert!(!Arc::ptr_eq(&first, &loaded_games(&db, 1).unwrap()));
+        for case in cases.as_array().unwrap() {
+            let cached = compute_once_with(&db, 1, &case["filters"], None, true).unwrap();
+            let uncached = compute_once_with(&db, 1, &case["filters"], None, false).unwrap();
+            assert_eq!(
+                serde_json::to_vec(&cached).unwrap(),
+                serde_json::to_vec(&uncached).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn loaded_cache_reports_keep_frozen_membership_and_database_ownership() {
+        let fixture = || {
+            let db = Database::open(":memory:").unwrap();
+            db.transaction(|tx| {
+                tx.execute_batch(include_str!("../../tests/fixtures/insights.sql"))?;
+                Ok(())
+            })
+            .unwrap();
+            db
+        };
+        let a = fixture();
+        let b = fixture();
+        assert!(!Arc::ptr_eq(
+            &loaded_games(&a, 1).unwrap(),
+            &loaded_games(&b, 1).unwrap()
+        ));
+        // A report ignores its original filters after freezing; UUID joins keep
+        // deleted/reused ids out even while it shares the account's loaded rows.
+        a.transaction(|tx| {
+            tx.execute("INSERT INTO reports(id,account_id,title,status,filters_json,created_at) VALUES(99,1,'Frozen','building','{}',0)", [])?;
+            tx.execute("INSERT INTO report_games(report_id,game_id,game_uuid) SELECT 99,id,uuid FROM games WHERE id IN (1,2)", [])?;
+            Ok(())
+        }).unwrap();
+        a.insight_games.0.lock().unwrap().entries.clear();
+        for filters in [
+            json!({}),
+            json!({"since":253_402_300_000_i64,"color":"black"}),
+        ] {
+            let (rows, full) = loaded_scope(&a, 1, &filters, Some(99)).unwrap();
+            assert!(!full);
+            assert_eq!(rows.len(), 2);
+            assert!(a.insight_games.0.lock().unwrap().entries.is_empty());
+            let cached = compute_once_with(&a, 1, &filters, Some(99), true).unwrap();
+            let uncached = compute_once_with(&a, 1, &filters, Some(99), false).unwrap();
+            assert_eq!(
+                serde_json::to_vec(&cached).unwrap(),
+                serde_json::to_vec(&uncached).unwrap()
+            );
+        }
+        loaded_games(&a, 1).unwrap();
+        let cached = compute_once_with(&a, 1, &json!({}), Some(99), true).unwrap();
+        let uncached = compute_once_with(&a, 1, &json!({}), Some(99), false).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&cached).unwrap(),
+            serde_json::to_vec(&uncached).unwrap()
+        );
+        a.execute("UPDATE games SET uuid='replacement' WHERE id=1", &[])
+            .unwrap();
+        let cached = compute_once_with(&a, 1, &json!({}), Some(99), true).unwrap();
+        let uncached = compute_once_with(&a, 1, &json!({}), Some(99), false).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&cached).unwrap(),
+            serde_json::to_vec(&uncached).unwrap()
+        );
+    }
     #[test]
     fn compact_tags_match_json_presence_and_piece_semantics() {
         for raw in [
