@@ -2,6 +2,8 @@
 
 # Plyback
 
+[![CI](https://github.com/klemen-r/plyback/actions/workflows/ci.yml/badge.svg)](https://github.com/klemen-r/plyback/actions/workflows/ci.yml)
+
 Self-hosted game review for Chess.com and Lichess, powered by Stockfish.
 
 Plyback imports the games you play, reviews every one in the background and turns the reviews into
@@ -33,9 +35,9 @@ No platform password, account or subscription is needed.
 | **Openings** | **Games** |
 | ![Openings](docs/screenshots/openings-light.png) | ![Games](docs/screenshots/games-light.png) |
 
-The screenshots use sample data: 360 engine games for a fictional player rated around 2000, reviewed
-by Plyback itself. In daily use on a desktop PC, Plyback keeps an account of over 1,300 games
-(78,000 moves) reviewed, and a new game is ready about 10 seconds after it is imported.
+The screenshots use sample data: 360 engine games for a fictional player rated around 2000, imported
+and reviewed by Plyback itself. In daily use on an ordinary desktop PC it keeps an account of over
+1,300 games (78,000 moves) fully reviewed and checks for new games every few minutes.
 
 ## Getting started
 
