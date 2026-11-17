@@ -21,3 +21,5 @@ Tests exercise the built interface; run `npm run build` first.
 
 The interface uses a breadcrumb header, underlined tabs, bordered cards and stat grids, with sentence case
 and weight 600. Keep the Ctrl/Command+K palette and reuse the primitives in `src/components/ui.tsx`.
+
+See [development settings](../docs/development.md) for isolated provider overrides and diagnostics.

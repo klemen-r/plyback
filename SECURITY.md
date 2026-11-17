@@ -15,7 +15,7 @@ credentials.
 | Deployment | Protection |
 |---|---|
 | Local only (default, `127.0.0.1`) | Open without a password. Requests must carry a loopback `Host` header, which blocks DNS-rebinding attacks from web pages. |
-| Bound to a network interface (`--lan`, Docker, a server) | The server requires an access password at startup and while running, unless `PLYBACK_ALLOW_UNAUTHENTICATED_REMOTE=1` is set explicitly. If the password is removed while the server is running, restore access with `plyback set-password`. |
+| Bound to a network interface (`--lan`, Docker, a server) | The server requires an access password at startup and while running. If the password is removed while the server is running, restore access with `plyback set-password`. |
 
 ## Controls
 

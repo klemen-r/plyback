@@ -34,7 +34,6 @@ impl TestApp {
             allowed_hosts: vec![],
             trusted_proxies: vec![],
             secure_cookies: false,
-            allow_unauthenticated_remote: false,
             background: false,
         };
         configure(&mut config);
@@ -483,57 +482,48 @@ fn host_allowlist_applies_before_login_even_with_a_password() {
 }
 
 #[test]
-fn explicit_bind_host_is_allowed_with_and_without_password() {
+fn explicit_bind_host_requires_a_password() {
     for bind in ["192.0.2.15", "2001:db8::15", "my-chess.test"] {
-        // Without a password a network bind needs PLYBACK_ALLOW_UNAUTHENTICATED_REMOTE;
-        // otherwise every request is refused before the Host check.
-        let test = TestApp::configured(|c| {
-            c.host = bind.into();
-            c.allow_unauthenticated_remote = true;
-        });
-        for protected in [false, true] {
-            if protected {
-                security::set_password(&test.app.db, Some("test-password")).unwrap();
-            }
-            let host = if bind.contains(':') {
-                format!("[{bind}]")
-            } else {
-                bind.into()
-            };
-            assert_eq!(
-                test.request("GET", "/api/health", json!({}), &[("host", &host)])
-                    .0,
-                200
-            );
-            assert_eq!(
-                test.request(
-                    "GET",
-                    "/api/health",
-                    json!({}),
-                    &[("host", "unlisted.test")]
-                )
+        let test = TestApp::configured(|c| c.host = bind.into());
+        let host = if bind.contains(':') {
+            format!("[{bind}]")
+        } else {
+            bind.into()
+        };
+        assert_eq!(
+            test.request("GET", "/api/health", json!({}), &[("host", &host)])
                 .0,
-                400
-            );
-        }
+            503
+        );
+        security::set_password(&test.app.db, Some("test-password")).unwrap();
+        assert_eq!(
+            test.request("GET", "/api/health", json!({}), &[("host", &host)])
+                .0,
+            200
+        );
+        assert_eq!(
+            test.request(
+                "GET",
+                "/api/health",
+                json!({}),
+                &[("host", "unlisted.test")]
+            )
+            .0,
+            400
+        );
     }
 }
 
 #[test]
 fn protected_wildcard_bind_accepts_machine_ips_and_hostname() {
     for bind in ["0.0.0.0", "::"] {
-        // Without a password a network bind needs PLYBACK_ALLOW_UNAUTHENTICATED_REMOTE;
-        // otherwise every request is refused before the Host check.
-        let test = TestApp::configured(|c| {
-            c.host = bind.into();
-            c.allow_unauthenticated_remote = true;
-        });
+        let test = TestApp::configured(|c| c.host = bind.into());
         let hostname = hostname::get().unwrap().into_string().unwrap();
         if !security::is_loopback_host(&hostname) {
             assert_eq!(
                 test.request("GET", "/api/health", json!({}), &[("host", &hostname)])
                     .0,
-                400
+                503
             );
         }
         security::set_password(&test.app.db, Some("test-password")).unwrap();

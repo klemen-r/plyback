@@ -1019,7 +1019,6 @@ mod tests {
             allowed_hosts: vec![],
             trusted_proxies: vec![],
             secure_cookies: false,
-            allow_unauthenticated_remote: false,
             background: false,
         })
         .unwrap();
@@ -1083,7 +1082,6 @@ mod tests {
             allowed_hosts: vec![],
             trusted_proxies: vec![],
             secure_cookies: false,
-            allow_unauthenticated_remote: false,
             background: false,
         })
         .unwrap();
@@ -1304,7 +1302,6 @@ mod tests {
             allowed_hosts: vec![],
             trusted_proxies: vec![],
             secure_cookies: false,
-            allow_unauthenticated_remote: false,
             background: false,
         })
         .unwrap();

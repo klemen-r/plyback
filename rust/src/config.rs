@@ -14,7 +14,6 @@ pub struct Config {
     pub allowed_hosts: Vec<String>,
     pub trusted_proxies: Vec<IpAddr>,
     pub secure_cookies: bool,
-    pub allow_unauthenticated_remote: bool,
     pub background: bool,
 }
 
@@ -63,7 +62,6 @@ impl Config {
             trusted_proxies: parse_trusted_proxies(
                 &env("TRUSTED_PROXIES", None).unwrap_or_default(),
             )?,
-            allow_unauthenticated_remote: flag("ALLOW_UNAUTHENTICATED_REMOTE"),
             background: !flag("NO_BACKGROUND"),
         })
     }
@@ -73,7 +71,7 @@ impl Config {
     }
 
     pub fn requires_password(&self) -> bool {
-        !crate::security::is_loopback_host(&self.host) && !self.allow_unauthenticated_remote
+        !crate::security::is_loopback_host(&self.host)
     }
 }
 
