@@ -38,9 +38,9 @@ function Menu({ trigger, children, align = 'left', label }: { trigger: (open: bo
   const close = () => setOpen(false)
   useDismiss(ref, open, close)
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative min-w-0" ref={ref}>
       <button type="button" aria-haspopup="menu" aria-expanded={open} aria-label={label} onClick={() => setOpen(o => !o)}
-        className="flex h-10 min-w-10 items-center justify-center gap-2 rounded-md px-1.5 text-[14px] transition-colors hover:bg-hover sm:h-auto sm:min-w-0 sm:py-1">
+        className="flex h-10 min-w-10 max-w-full items-center justify-center gap-2 rounded-md px-1.5 text-[14px] transition-colors hover:bg-hover sm:h-auto sm:min-w-0 sm:py-1">
         {trigger(open)}
       </button>
       {open && (

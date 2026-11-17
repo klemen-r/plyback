@@ -103,6 +103,11 @@ test('connect a Lichess account, import its game and open an engine review', asy
     // Only this test's account is removed; the server uses its isolated temporary database.
     const accounts = await (await page.request.get('/api/accounts')).json() as { id: number; platform: string; username: string }[]
     const connected = accounts.find(a => a.platform === 'lichess' && a.username === 'lichess_fixture')
-    if (connected) expect((await page.request.delete(`/api/accounts/${connected.id}`)).ok()).toBe(true)
+    if (connected) {
+      const response = await page.request.delete(`/api/accounts/${connected.id}`, {
+        headers: { 'X-Requested-With': 'plyback', Origin: new URL(page.url()).origin },
+      })
+      expect(response.ok(), await response.text()).toBe(true)
+    }
   }
 })
