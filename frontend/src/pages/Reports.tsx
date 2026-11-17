@@ -20,7 +20,11 @@ export default function Reports() {
     queryKey: ['reports', account?.id], queryFn: () => api.reports(account!.id), enabled: !!account,
     refetchInterval: q => (q.state.data?.some(r => r.status === 'analyzing') ? 3000 : false),
   })
-  const create = useMutation({ mutationFn: () => api.createReport(account!.id, toInsightFilters(fs), title || undefined), onSuccess: r => nav(`/reports/${r.id}`) })
+  const create = useMutation({ mutationFn: () => api.createReport(account!.id, toInsightFilters(fs), title || undefined), onSuccess: r => {
+    // The list may still be fresh in the cache; make the new report show on the way back.
+    void qc.invalidateQueries({ queryKey: ['reports'] })
+    nav(`/reports/${r.id}`)
+  } })
   const createReport = useSingleFlight(create.mutateAsync)
   // Reports are frozen snapshots that cannot be recreated, so deleting one asks first.
   const [confirming, setConfirming] = useState<number | null>(null)
@@ -57,9 +61,9 @@ export default function Reports() {
       <Card title="Saved reports" bodyClass="p-2">
         {(list.error || del.error) && <ErrorNote error={list.error ?? del.error} />}
         {list.isLoading ? <Loading /> : list.data?.length ? list.data.map(r => (
-          <div key={r.id} className="flex items-center gap-4 rounded-lg px-3 py-3 hover:bg-subtle">
+          <div key={r.id} className="flex flex-wrap items-center gap-4 gap-y-2 rounded-lg px-3 py-3 hover:bg-subtle">
             <FileText className="h-5 w-5 shrink-0 text-fg-3" />
-            <Link to={`/reports/${r.id}`} className="min-w-0 flex-1">
+            <Link to={`/reports/${r.id}`} className="min-w-48 flex-1">
               <div className="truncate font-medium">{r.title ?? `Report #${r.id}`}</div>
               <div className="text-xs text-fg-3">Created {fmtDate(r.created_at, true)} · {r.total_games} games</div>
               {r.status === 'analyzing' && <Progress value={r.analyzed_games} max={r.total_games} className="mt-2 max-w-sm" />}

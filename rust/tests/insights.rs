@@ -50,11 +50,18 @@ fn full_insights_match_preserved_python_oracle() {
         serde_json::from_str(include_str!("fixtures/insights-expected.json")).unwrap();
     for case in expected.as_array().unwrap() {
         let mut result = compute(&db, 1, &case["filters"]).unwrap();
-        // Native-only extension that the preserved Python oracle does not produce.
+        // Native-only extensions that the preserved Python oracle does not produce.
         result["results"]
             .as_object_mut()
             .unwrap()
             .remove("by_quarter_hour");
+        for item in result["recurring"].as_array_mut().unwrap() {
+            // The total counts every game; `games` is only the latest few as examples.
+            let examples = item["games"].as_array().unwrap().len();
+            let total = item["game_count"].as_u64().unwrap() as usize;
+            assert!(total >= 2 && total >= examples && examples <= 8, "{item}");
+            item.as_object_mut().unwrap().remove("game_count");
+        }
         equal(
             &result,
             &case["result"],

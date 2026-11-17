@@ -79,9 +79,10 @@ export default function Board({ fen, orientation, lastMove, shapes, interactive,
     if (!pending) return
     const onKey = (event: KeyboardEvent) => {
       // A promotion choice owns the page's move shortcuts until it is picked or cancelled, but not
-      // browser shortcuts or typing in a field elsewhere (the command palette, a search box).
-      if (event.key !== 'Escape' && (event.metaKey || event.ctrlKey || event.altKey
-        || (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"]')))) return
+      // browser shortcuts, and not keys meant for a field or a dialog above it (the command
+      // palette closes on its own Escape and leaves the choice open).
+      if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return
+      if (event.key !== 'Escape' && (event.metaKey || event.ctrlKey || event.altKey)) return
       if (['Escape', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Backspace', 'f', 'n'].includes(event.key)) {
         event.preventDefault(); event.stopImmediatePropagation()
         if (event.key === 'Escape') cancel()

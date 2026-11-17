@@ -413,7 +413,7 @@ function Recurring({ data }: { data: Insights }) {
           <div key={r.fen} className="flex gap-3 rounded-lg border border-line bg-subtle p-3">
             <div className="w-32 shrink-0"><MiniBoard fen={r.fen} orientation={r.color} played={r.played[0]?.san} best={r.best_san} /></div>
             <div className="min-w-0 flex-1 text-sm">
-              <div className="font-semibold">{r.occurrences}× in {r.games.length} games</div>
+              <div className="font-semibold">{r.occurrences}× in {r.game_count ?? r.games.length} games</div>
               <div className="text-xs text-fg-2">Move {moveNumber(r.fen, r.move_number)} · {PHASE_LABEL[r.phase]}</div>
               <div className="mt-1.5 text-xs">You played {r.played.map(p => <span key={p.san} className="mr-1 font-mono text-bad">{p.san}{p.count > 1 ? `×${p.count}` : ''}</span>)}</div>
               <div className="text-xs">Better: <span className="font-mono text-accent">{r.best_san}</span></div>

@@ -13,7 +13,10 @@ export default function ReportView() {
   const valid = Number.isInteger(id) && id > 0
   const q = useQuery({ queryKey: ['report', id], queryFn: () => api.report(id), enabled: valid, refetchInterval: query => (query.state.data?.status === 'analyzing' ? 3000 : false) })
   const status = useQuery({ queryKey: ['status'], queryFn: api.status, refetchInterval: 4000, enabled: q.data?.status === 'analyzing' })
-  const finalize = useMutation({ mutationFn: () => api.finalizeReport(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['report', id] }) })
+  const finalize = useMutation({ mutationFn: () => api.finalizeReport(id), onSuccess: () => {
+    void qc.invalidateQueries({ queryKey: ['report', id] })
+    void qc.invalidateQueries({ queryKey: ['reports'] })
+  } })
   const buildReport = useSingleFlight(finalize.mutateAsync)
   const back = <Link to="/reports" className="mb-3 inline-flex items-center gap-1 text-sm text-fg-2 hover:text-fg"><ArrowLeft className="h-4 w-4" />Reports</Link>
   if (!valid) return <div className="appear">{back}<ErrorNote error="Report not found" /></div>

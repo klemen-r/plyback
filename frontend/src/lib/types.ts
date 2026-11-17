@@ -272,7 +272,7 @@ export interface Insights {
     missed_count: number; missed_mates: number; examples: Example[]; missed_mate_examples: Example[]
   }
   recurring: {
-    fen: string; occurrences: number; games: number[]; played: { san: string; count: number }[]
+    fen: string; occurrences: number; game_count?: number; games: number[]; played: { san: string; count: number }[]
     best_san: string | null; avg_ep_loss: number; phase: string; move_number: number; color: Color
     explanation: string | null; example: Example; lichess_url: string | null; impact: number
   }[]

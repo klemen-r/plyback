@@ -140,7 +140,14 @@ export default function SettingsPage() {
       <Card title="Engine" subtitle={status.data.engine.error ? undefined : `${status.data.engine.name ?? 'Stockfish'} · ${status.data.engine.path ?? ''}`}>
         {status.data.engine.error && <div className="mb-3"><ErrorNote error={status.data.engine.error} /></div>}
         <Row label="Analysis depth" description="Deeper is more accurate but slower. Standard (16) is a good balance; changes apply to newly queued games.">
-          <Tabs label="Analysis depth" value={presetValue} onChange={v => v !== 'custom' && set('analysis_depth', presets[v])}
+          <Tabs label="Analysis depth" value={presetValue} onChange={v => {
+              // Custom is whatever the depth field says; choosing it moves focus there.
+              if (v === 'custom') {
+                const field = document.querySelector<HTMLInputElement>('input[aria-label="Custom depth"]')
+                field?.focus()
+                field?.select()
+              } else set('analysis_depth', presets[v])
+            }}
             options={[...Object.entries(presets).sort(([, a], [, b]) => a - b).map(([k, d]) => ({ value: k, label: <>{k[0].toUpperCase()}{k.slice(1)}<span className="max-sm:hidden"> ({d})</span></> })), { value: 'custom', label: 'Custom' }]} />
         </Row>
         <NumberField label="Custom depth" value={form.analysis_depth} onChange={v => set('analysis_depth', v)} min={6} max={30} />

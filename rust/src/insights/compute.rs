@@ -1741,7 +1741,7 @@ fn recurring(analyzed: &[&Game]) -> Value {
             .iter()
             .reduce(|a, b| if b.1.ep > a.1.ep { b } else { a })
             .unwrap();
-        out.push(json!({"fen":null,"occurrences":items.len(),"games":&gids[gids.len().saturating_sub(8)..],"played":played.into_iter().map(|(s,n)|json!({"san":s,"count":n})).collect::<Vec<_>>(),"best_san":best[0].0,"avg_ep_loss":round(avg_loss,3),"phase":m.phase,"move_number":(m.ply+1)/2,"color":g.color,"explanation":null,"example":example(g,m),"lichess_url":null,"impact":round(avg_loss*items.len() as f64,3)}));
+        out.push(json!({"fen":null,"occurrences":items.len(),"game_count":gids.len(),"games":&gids[gids.len().saturating_sub(8)..],"played":played.into_iter().map(|(s,n)|json!({"san":s,"count":n})).collect::<Vec<_>>(),"best_san":best[0].0,"avg_ep_loss":round(avg_loss,3),"phase":m.phase,"move_number":(m.ply+1)/2,"color":g.color,"explanation":null,"example":example(g,m),"lichess_url":null,"impact":round(avg_loss*items.len() as f64,3)}));
     }
     out.sort_by(|a, b| number(&b["impact"]).total_cmp(&number(&a["impact"])));
     out.truncate(15);

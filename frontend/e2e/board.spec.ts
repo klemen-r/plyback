@@ -38,3 +38,17 @@ test('a pending promotion blocks typed practice moves until cancelled', async ({
   await page.getByLabel('Type your move').fill('a8=Q+')
   await expect(page.getByRole('button', { name: 'Play', exact: true })).toBeEnabled()
 })
+
+test('Escape closes the search palette above a pending promotion, not the promotion', async ({ page }) => {
+  await promotionPuzzle(page)
+  await page.keyboard.press('Control+k')
+  const search = page.getByRole('dialog', { name: 'Search' })
+  await expect(search).toBeVisible()
+  await page.keyboard.type('ga')
+  await page.keyboard.press('Escape')
+  await expect(search).toHaveCount(0)
+  await expect(page.getByRole('group', { name: 'Promote pawn' })).toBeVisible()
+  // A second Escape, now aimed at the board, cancels the promotion.
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('group', { name: 'Promote pawn' })).toHaveCount(0)
+})
