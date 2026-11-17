@@ -2,64 +2,24 @@ use super::*;
 use crate::{
     ANALYSIS_VERSION, api_error,
     db::{query_connection, sql_values},
-    now, pgn,
+    now,
+    params::{RangeError, bool_value, depth, id, object, query_bool, query_integer},
+    pgn,
 };
 use rusqlite::params_from_iter;
 use store::decode;
 
-fn id(raw: &str) -> Result<i64> {
-    raw.parse::<i64>()
-        .ok()
-        .filter(|v| *v > 0)
-        .ok_or_else(|| api_error(422, "Invalid identifier"))
-}
-fn integer(q: &Query, key: &str, default: i64, min: i64, max: i64) -> Result<i64> {
-    let n = match q.get(key) {
-        Some(v) => v
-            .parse()
-            .map_err(|_| api_error(422, format!("Invalid {key}")))?,
-        None => default,
-    };
-    if !(min..=max).contains(&n) {
-        return Err(api_error(
-            422,
-            format!("{key} must be between {min} and {max}"),
-        ));
-    }
-    Ok(n)
-}
-fn bool_value(value: &Value, key: &str, default: bool) -> Result<bool> {
-    match value.get(key) {
-        None => Ok(default),
-        Some(Value::Bool(b)) => Ok(*b),
-        _ => Err(api_error(422, format!("{key} must be true or false"))),
-    }
-}
-fn query_bool(q: &Query, key: &str) -> Result<Option<bool>> {
-    q.get(key)
-        .map(|v| match v.to_ascii_lowercase().as_str() {
-            "true" | "1" | "yes" | "on" => Ok(true),
-            "false" | "0" | "no" | "off" => Ok(false),
-            _ => Err(api_error(422, format!("Invalid {key}"))),
-        })
-        .transpose()
-}
-fn depth(body: &Value) -> Result<Option<i64>> {
-    match body.get("depth") {
-        None | Some(Value::Null) => Ok(None),
-        Some(v) => v
-            .as_i64()
-            .filter(|v| (6..=30).contains(v))
-            .map(Some)
-            .ok_or_else(|| api_error(422, "Depth must be between 6 and 30")),
-    }
-}
-fn object(body: &Value) -> Result<()> {
-    if !body.is_object() {
-        return Err(api_error(422, "Expected a JSON object"));
-    }
-    Ok(())
-}
+const INSERT_ACCOUNT: &str = "INSERT INTO accounts(username,display_name,avatar,profile_json,added_at,auto_analyze,analyze_history,import_since) VALUES(?,?,?,?,?,?,?,?)";
+const ACCOUNT_ORPHAN_GAMES: &str = "SELECT game_id FROM account_games WHERE account_id=? AND game_id NOT IN(SELECT game_id FROM account_games WHERE account_id!=?)";
+const ACCOUNT_OPENINGS: &str = "SELECT g.opening_family AS family,COUNT(*) AS n FROM games g JOIN account_games ag ON ag.game_id=g.id WHERE ag.account_id=? AND g.opening_family IS NOT NULL GROUP BY 1 ORDER BY n DESC";
+const ALL_OPENINGS: &str = "SELECT opening_family AS family,COUNT(*) AS n FROM games WHERE opening_family IS NOT NULL GROUP BY 1 ORDER BY n DESC";
+const QUEUED_JOBS: &str = "SELECT j.id,j.game_id,j.priority,j.depth,j.status,j.attempts,j.created_at,j.claim_token,g.white_username,g.black_username,g.end_time,g.time_class FROM jobs j JOIN games g ON g.id=j.game_id WHERE j.status IN('queued','running') ORDER BY j.status='running' DESC,j.priority DESC,j.sort_key DESC LIMIT 50";
+const FAILED_JOBS: &str = "SELECT j.id,j.game_id,j.error,j.attempts,j.finished_at,g.white_username,g.black_username FROM jobs j JOIN games g ON g.id=j.game_id WHERE j.status='failed' ORDER BY j.finished_at DESC LIMIT 50";
+const GAME_COLUMNS: &str = "g.id,g.url,g.source,g.end_time,g.time_class,g.time_control,g.rated,g.rules,g.result,g.termination,g.plies,g.white_username,g.white_rating,g.white_result,g.black_username,g.black_rating,g.black_result,g.chesscom_accuracy_white,g.chesscom_accuracy_black,g.opening_eco,g.opening_name,g.opening_family";
+const GAME_ANALYSIS_COLUMNS: &str =
+    "ga.accuracy_white,ga.accuracy_black,ga.counts_json,ga.analyzed_at,ga.depth";
+const GAME_JOBS: &str = "SELECT id,game_id,status,error,claim_token FROM jobs WHERE game_id IN";
+const PENDING_JOB_STATUS: &str = "AND status IN('queued','running','failed') ORDER BY id";
 
 impl Services {
     pub(super) fn route(
@@ -207,9 +167,29 @@ impl Services {
                         .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
             })
             .unwrap_or(username);
-        let id=self.db.transaction(|tx|{
-            let result=tx.execute("INSERT INTO accounts(username,display_name,avatar,profile_json,added_at,auto_analyze,analyze_history,import_since) VALUES(?,?,?,?,?,?,?,?)",rusqlite::params![canonical,canonical,profile["avatar"].as_str(),profile.to_string(),now(),auto,history,since]);
-            match result {Ok(_)=>Ok(tx.last_insert_rowid()),Err(rusqlite::Error::SqliteFailure(e,_))if e.code==rusqlite::ErrorCode::ConstraintViolation=>Err(api_error(409,format!("{username} is already connected"))),Err(error)=>Err(error.into())}
+        let id = self.db.transaction(|tx| {
+            let result = tx.execute(
+                INSERT_ACCOUNT,
+                rusqlite::params![
+                    canonical,
+                    canonical,
+                    profile["avatar"].as_str(),
+                    profile.to_string(),
+                    now(),
+                    auto,
+                    history,
+                    since
+                ],
+            );
+            match result {
+                Ok(_) => Ok(tx.last_insert_rowid()),
+                Err(rusqlite::Error::SqliteFailure(e, _))
+                    if e.code == rusqlite::ErrorCode::ConstraintViolation =>
+                {
+                    Err(api_error(409, format!("{username} is already connected")))
+                }
+                Err(error) => Err(error.into()),
+            }
         })?;
         self.db.log_event(
             "info",
@@ -271,7 +251,9 @@ impl Services {
     }
     fn delete_account(&self, id: i64) -> ApiResult {
         self.account(id)?;
-        let orphans=self.db.query("SELECT game_id FROM account_games WHERE account_id=? AND game_id NOT IN(SELECT game_id FROM account_games WHERE account_id!=?)",&[json!(id),json!(id)])?;
+        let orphans = self
+            .db
+            .query(ACCOUNT_ORPHAN_GAMES, &[json!(id), json!(id)])?;
         let orphan_ids = orphans
             .iter()
             .filter_map(|r| r["game_id"].as_i64())
@@ -284,11 +266,17 @@ impl Services {
                 cancel.store(true, Ordering::SeqCst);
             }
         }
-        let removed=self.db.transaction(|tx|{
+        let removed = self.db.transaction(|tx| {
             // Re-evaluate ownership inside the same transaction as deletion.
-            let orphans=query_connection(tx,"SELECT game_id FROM account_games WHERE account_id=? AND game_id NOT IN(SELECT game_id FROM account_games WHERE account_id!=?)",&[json!(id),json!(id)])?;
-            tx.execute("DELETE FROM accounts WHERE id=?",[id])?;
-            for row in &orphans {tx.execute("DELETE FROM games WHERE id=?",[row["game_id"].as_i64().unwrap()])?;}Ok(orphans.len())
+            let orphans = query_connection(tx, ACCOUNT_ORPHAN_GAMES, &[json!(id), json!(id)])?;
+            tx.execute("DELETE FROM accounts WHERE id=?", [id])?;
+            for row in &orphans {
+                tx.execute(
+                    "DELETE FROM games WHERE id=?",
+                    [row["game_id"].as_i64().unwrap()],
+                )?;
+            }
+            Ok(orphans.len())
         })?;
         self.db.log_event(
             "info",
@@ -388,8 +376,8 @@ impl Services {
         ))
     }
     fn list_games(&self, q: &Query) -> ApiResult {
-        let page = integer(q, "page", 1, 1, 1_000_000_000)?;
-        let size = integer(q, "page_size", 50, 1, 200)?;
+        let page = query_integer(q, "page", 1, 1, 1_000_000_000, RangeError::Bounds)?;
+        let size = query_integer(q, "page_size", 50, 1, 200, RangeError::Bounds)?;
         let account = q.get("account_id").map(|v| id(v)).transpose()?;
         let mut params = Vec::new();
         let mut conditions = Vec::new();
@@ -492,7 +480,14 @@ impl Services {
         for (key, operator) in [("since", ">="), ("until", "<")] {
             if q.contains_key(key) {
                 conditions.push(format!("g.end_time {operator} ?"));
-                params.push(json!(integer(q, key, 0, 0, 253402300799)?));
+                params.push(json!(query_integer(
+                    q,
+                    key,
+                    0,
+                    0,
+                    253402300799,
+                    RangeError::Bounds
+                )?));
             }
         }
         let where_sql = if conditions.is_empty() {
@@ -518,7 +513,11 @@ impl Services {
             .scalar(&format!("SELECT COUNT(*) {base}"), &params)?;
         params.push(json!(size));
         params.push(json!((page - 1) * size));
-        let rows=self.db.query(&format!("SELECT g.id,g.url,g.source,g.end_time,g.time_class,g.time_control,g.rated,g.rules,g.result,g.termination,g.plies,g.white_username,g.white_rating,g.white_result,g.black_username,g.black_rating,g.black_result,g.chesscom_accuracy_white,g.chesscom_accuracy_black,g.opening_eco,g.opening_name,g.opening_family,{color} AS user_color,ga.accuracy_white,ga.accuracy_black,ga.counts_json,ga.analyzed_at,ga.depth {base} ORDER BY {order},g.id DESC LIMIT ? OFFSET ?"),&params)?;
+        let columns = format!("{GAME_COLUMNS},{color} AS user_color,{GAME_ANALYSIS_COLUMNS}");
+        let rows = self.db.query(
+            &format!("SELECT {columns} {base} ORDER BY {order},g.id DESC LIMIT ? OFFSET ?"),
+            &params,
+        )?;
         let jobs = self.job_map(
             &rows
                 .iter()
@@ -536,9 +535,9 @@ impl Services {
     }
     fn openings(&self, q: &Query) -> ApiResult {
         let rows = if let Some(account) = q.get("account_id") {
-            self.db.query("SELECT g.opening_family AS family,COUNT(*) AS n FROM games g JOIN account_games ag ON ag.game_id=g.id WHERE ag.account_id=? AND g.opening_family IS NOT NULL GROUP BY 1 ORDER BY n DESC",&[json!(id(account)?)])?
+            self.db.query(ACCOUNT_OPENINGS, &[json!(id(account)?)])?
         } else {
-            self.db.query("SELECT opening_family AS family,COUNT(*) AS n FROM games WHERE opening_family IS NOT NULL GROUP BY 1 ORDER BY n DESC",&[])?
+            self.db.query(ALL_OPENINGS, &[])?
         };
         Ok((200, json!(rows)))
     }
@@ -546,7 +545,13 @@ impl Services {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let rows=self.db.query(&format!("SELECT id,game_id,status,error,claim_token FROM jobs WHERE game_id IN({}) AND status IN('queued','running','failed') ORDER BY id",vec!["?";ids.len()].join(",")),&ids.iter().map(|id|json!(id)).collect::<Vec<_>>())?;
+        let rows = self.db.query(
+            &format!(
+                "{GAME_JOBS}({}) {PENDING_JOB_STATUS}",
+                vec!["?"; ids.len()].join(",")
+            ),
+            &ids.iter().map(|id| json!(id)).collect::<Vec<_>>(),
+        )?;
         let progress = self.progress.lock().unwrap();
         let mut out = HashMap::new();
         for mut row in rows {
@@ -570,7 +575,7 @@ impl Services {
         if let Some(account) = q.get("account_id") {
             color = self.db.scalar(
                 "SELECT color FROM account_games WHERE account_id=? AND game_id=?",
-                &[json!(crate_id(account)?), json!(id)],
+                &[json!(crate::params::id(account)?), json!(id)],
             )?;
         }
         if color.is_null() {
@@ -658,7 +663,7 @@ impl Services {
     }
     fn queue(&self) -> ApiResult {
         let mut stats = self.stats();
-        let mut queued=self.db.query("SELECT j.id,j.game_id,j.priority,j.depth,j.status,j.attempts,j.created_at,j.claim_token,g.white_username,g.black_username,g.end_time,g.time_class FROM jobs j JOIN games g ON g.id=j.game_id WHERE j.status IN('queued','running') ORDER BY j.status='running' DESC,j.priority DESC,j.sort_key DESC LIMIT 50",&[])?;
+        let mut queued = self.db.query(QUEUED_JOBS, &[])?;
         let progress = self.progress.lock().unwrap();
         for job in &mut queued {
             if let Some((p, _)) = job["claim_token"]
@@ -672,7 +677,7 @@ impl Services {
         }
         drop(progress);
         stats["jobs"] = json!(queued);
-        stats["failed_jobs"]=json!(self.db.query("SELECT j.id,j.game_id,j.error,j.attempts,j.finished_at,g.white_username,g.black_username FROM jobs j JOIN games g ON g.id=j.game_id WHERE j.status='failed' ORDER BY j.finished_at DESC LIMIT 50",&[])?);
+        stats["failed_jobs"] = json!(self.db.query(FAILED_JOBS, &[])?);
         Ok((200, stats))
     }
     fn queue_action(&self, action: &str) -> ApiResult {
@@ -695,9 +700,6 @@ impl Services {
         }
         Ok((200, json!({"paused":self.paused.load(Ordering::SeqCst)})))
     }
-}
-fn crate_id(raw: &str) -> Result<i64> {
-    id(raw)
 }
 fn game_summary(r: &Value, job: Option<&Value>) -> Value {
     let outcome = r["user_color"].as_str().and_then(|color| {

@@ -152,6 +152,11 @@ impl Services {
         *generation = generation.wrapping_add(1);
         self.wake.1.notify_all();
     }
+    fn db_wait(&self) -> (std::time::Instant, impl Fn() -> bool + '_) {
+        (std::time::Instant::now() + Duration::from_secs(2), || {
+            self.stop.load(Ordering::SeqCst)
+        })
+    }
     fn wait(&self, duration: Duration) {
         self.wait_since(self.wake_generation(), duration);
     }

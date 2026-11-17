@@ -40,38 +40,23 @@ impl Default for AnalysisOptions {
     }
 }
 
-/// Replace this trait implementation when a calibrated expected-points model is
-/// available. The default is a probability-like public logistic heuristic, not
-/// a claim that the values are empirically calibrated win/draw/loss frequencies.
-pub trait ExpectedPointsModel {
-    fn id(&self) -> &'static str;
-    fn expected_points(&self, cp_white: i32, white: bool) -> f64;
-}
-pub struct LogisticModel;
+const MODEL_ID: &str = "lichess-logistic-cp-v1";
 struct ReviewContext<'a> {
     options: &'a AnalysisOptions,
     cancel: &'a AtomicBool,
-    model: &'a dyn ExpectedPointsModel,
 }
-impl ExpectedPointsModel for LogisticModel {
-    fn id(&self) -> &'static str {
-        "lichess-logistic-cp-v1"
-    }
-    fn expected_points(&self, cp: i32, white: bool) -> f64 {
-        let probability = if cp.abs() >= MATE_THRESHOLD {
-            if cp > 0 { 1.0 } else { 0.0 }
-        } else {
-            1.0 / (1.0 + (-0.003_682_08 * f64::from(cp.clamp(-1000, 1000))).exp())
-        };
-        if white {
-            probability
-        } else {
-            1.0 - probability
-        }
-    }
-}
+/// Public logistic heuristic, not empirically calibrated win/draw/loss frequencies.
 pub fn expected_points(cp: i32, white: bool) -> f64 {
-    LogisticModel.expected_points(cp, white)
+    let probability = if cp.abs() >= MATE_THRESHOLD {
+        if cp > 0 { 1.0 } else { 0.0 }
+    } else {
+        1.0 / (1.0 + (-0.003_682_08 * f64::from(cp.clamp(-1000, 1000))).exp())
+    };
+    if white {
+        probability
+    } else {
+        1.0 - probability
+    }
 }
 pub fn win_pct_white(cp: i32) -> f64 {
     expected_points(cp, true) * 100.0
@@ -234,32 +219,24 @@ pub fn analyze(
     progress: impl Fn(usize, usize),
 ) -> Result<Value> {
     let name = engine.name.clone();
-    analyze_with(
-        text,
-        options,
-        cancel,
-        progress,
-        &LogisticModel,
-        &name,
-        |request| {
-            let before = engine.metrics();
-            let started = Instant::now();
-            let result = engine.search(request, cancel);
-            let after = engine.metrics();
-            tracing::debug!(
-                target: "plyback::review_timing",
-                event = "search",
-                kind = if !request.root_moves.is_empty() { "paired" } else if request.depth == options.threat_depth && request.multipv == 1 { "threat" } else { "main" },
-                elapsed_us = started.elapsed().as_micros() as u64,
-                searches = after.searches - before.searches,
-                cache_hits = after.cache_hits - before.cache_hits,
-                shared_search_hits = after.shared_search_hits - before.shared_search_hits,
-                depth = result.as_ref().ok().and_then(|lines| lines.first()).map(|line| line.depth),
-                nodes = result.as_ref().ok().and_then(|lines| lines.last()).map(|line| line.nodes),
-            );
-            result
-        },
-    )
+    analyze_with(text, options, cancel, progress, &name, |request| {
+        let before = engine.metrics();
+        let started = Instant::now();
+        let result = engine.search(request, cancel);
+        let after = engine.metrics();
+        tracing::debug!(
+            target: "plyback::review_timing",
+            event = "search",
+            kind = if !request.root_moves.is_empty() { "paired" } else if request.depth == options.threat_depth && request.multipv == 1 { "threat" } else { "main" },
+            elapsed_us = started.elapsed().as_micros() as u64,
+            searches = after.searches - before.searches,
+            cache_hits = after.cache_hits - before.cache_hits,
+            shared_search_hits = after.shared_search_hits - before.shared_search_hits,
+            depth = result.as_ref().ok().and_then(|lines| lines.first()).map(|line| line.depth),
+            nodes = result.as_ref().ok().and_then(|lines| lines.last()).map(|line| line.nodes),
+        );
+        result
+    })
 }
 
 /// Engine-agnostic path used by deterministic tactical and score-perspective tests.
@@ -268,7 +245,6 @@ pub fn analyze_with(
     options: &AnalysisOptions,
     cancel: &AtomicBool,
     progress: impl Fn(usize, usize),
-    model: &dyn ExpectedPointsModel,
     engine_name: &str,
     mut evaluate: impl FnMut(&Search) -> Result<Vec<Line>>,
 ) -> Result<Value> {
@@ -381,18 +357,18 @@ pub fn analyze_with(
         let played_line = played_score.expect("score resolved above");
         let best_cp = best.cp;
         let played_cp = played_line.cp;
-        let ep_best = model.expected_points(best_cp, white);
-        let ep_played = model.expected_points(played_cp, white);
+        let ep_best = expected_points(best_cp, white);
+        let ep_played = expected_points(played_cp, white);
         let loss = (ep_best - ep_played).max(0.0);
         let base = base_classification(is_best, loss);
         let second = evaluations[i].get(1);
-        let ep_second = second.map(|l| model.expected_points(l.cp, white));
+        let ep_second = second.map(|l| expected_points(l.cp, white));
         let n_legal = before.legal_moves().len();
         let in_book = i < book_plies;
         let abs_ply = 2 * (before.fullmoves().get() - 1) + u32::from(!white) + 1;
         let phase = phase(before, abs_ply, in_book);
         let mut tags = Map::new();
-        tags.insert("evaluation".into(), json!({"model":model.id(),"comparison_depth":best.depth,
+        tags.insert("evaluation".into(), json!({"model":MODEL_ID,"comparison_depth":best.depth,
             "source":source,"best_mate":best.mate,"played_mate":played_line.mate,"base_classification":base}));
         let mut class = base;
         if n_legal == 1 {
@@ -419,9 +395,8 @@ pub fn analyze_with(
             if class != "brilliant"
                 && full_best.depth >= 10
                 && second.is_some_and(|s| s.depth == full_best.depth)
-                && ep_second.is_some_and(|s| {
-                    model.expected_points(full_best.cp, white) - s >= 0.15 && s < 0.9
-                })
+                && ep_second
+                    .is_some_and(|s| expected_points(full_best.cp, white) - s >= 0.15 && s < 0.9)
                 && ep_played >= 0.35
             {
                 let recapture = i > 0
@@ -438,7 +413,7 @@ pub fn analyze_with(
             }
         } else if matches!(base, "mistake" | "blunder") && i > 0 {
             let previous_loss = out[i - 1]["ep_loss"].as_f64().unwrap_or(0.0);
-            let previous_best = model.expected_points(
+            let previous_best = expected_points(
                 out[i - 1]["eval_before"].as_i64().unwrap_or(0) as i32,
                 white,
             );
@@ -470,11 +445,7 @@ pub fn analyze_with(
                     before,
                     reply,
                     ep_best,
-                    &ReviewContext {
-                        options,
-                        cancel,
-                        model,
-                    },
+                    &ReviewContext { options, cancel },
                     &mut evaluate,
                     &mut tags,
                 )?;
@@ -554,7 +525,7 @@ pub fn analyze_with(
     let moments = key_moments(&out);
     Ok(
         json!({"depth":options.depth,"multipv":options.multipv,"engine":engine_name,"version":ANALYSIS_VERSION,
-        "model":model.id(),"evals":evals,"moves":out,"accuracy_white":aw,"accuracy_black":ab,"accuracy":{"white":aw,"black":ab},
+        "model":MODEL_ID,"evals":evals,"moves":out,"accuracy_white":aw,"accuracy_black":ab,"accuracy":{"white":aw,"black":ab},
         "acpl_white":acpl_w,"acpl_black":acpl_b,"acpl":{"white":acpl_w,"black":acpl_b},"counts":counts,"opening":opening,
         "book_plies":book_plies,"key_moments":moments,"duration_ms":started.elapsed().as_millis()}),
     )
@@ -871,11 +842,7 @@ fn threat_test(
     evaluate: &mut impl FnMut(&Search) -> Result<Vec<Line>>,
     tags: &mut Map<String, Value>,
 ) -> Result<()> {
-    let ReviewContext {
-        options,
-        cancel,
-        model,
-    } = context;
+    let ReviewContext { options, cancel } = context;
     let Ok(null) = before.clone().swap_turn() else {
         return Ok(());
     };
@@ -894,7 +861,7 @@ fn threat_test(
         }
     };
     if let Some(line) = lines.first()
-        && ep_best - model.expected_points(line.cp, before.turn().is_white()) >= 0.15
+        && ep_best - expected_points(line.cp, before.turn().is_white()) >= 0.15
         && let (Some(threat), Some(refutation)) = (
             line.pv.first().and_then(|s| parse_move(s, &null).ok()),
             reply.pv.first(),
@@ -1126,7 +1093,6 @@ mod tests {
             &AnalysisOptions::default(),
             &AtomicBool::new(false),
             |_, _| {},
-            &LogisticModel,
             "Fake",
             |request| {
                 assert!(request.root_moves.is_empty());
@@ -1169,7 +1135,6 @@ mod tests {
             },
             &cancel,
             |_, _| {},
-            &LogisticModel,
             "Fake",
             |request| {
                 if request.depth == 10 {
@@ -1247,7 +1212,6 @@ mod tests {
             },
             &AtomicBool::new(false),
             |_, _| {},
-            &LogisticModel,
             "Fake",
             |request| {
                 if !request.root_moves.is_empty() {
@@ -1333,7 +1297,6 @@ mod tests {
                 &AnalysisOptions::default(),
                 &AtomicBool::new(false),
                 |_, _| {},
-                &LogisticModel,
                 "Fake",
                 |request| {
                     if !request.moves.is_empty() {
@@ -1377,7 +1340,6 @@ mod tests {
                 &AnalysisOptions::default(),
                 &AtomicBool::new(false),
                 |_, _| {},
-                &LogisticModel,
                 "Fake",
                 |request| {
                     if !request.moves.is_empty() {
@@ -1397,7 +1359,6 @@ mod tests {
             &AnalysisOptions::default(),
             &AtomicBool::new(false),
             |_, _| {},
-            &LogisticModel,
             "Fake",
             |request| {
                 if !request.moves.is_empty() {
@@ -1421,7 +1382,6 @@ mod tests {
             &AnalysisOptions::default(),
             &AtomicBool::new(false),
             |_, _| {},
-            &LogisticModel,
             "Fake",
             |request| {
                 Ok(if request.moves.is_empty() {
@@ -1438,7 +1398,6 @@ mod tests {
             &AnalysisOptions::default(),
             &AtomicBool::new(false),
             |_, _| {},
-            &LogisticModel,
             "Fake",
             |request| {
                 let mut lines = if request.moves.is_empty() {
@@ -1465,7 +1424,6 @@ mod tests {
             &AnalysisOptions::default(),
             &AtomicBool::new(false),
             |_, _| {},
-            &LogisticModel,
             "Fake",
             |request| {
                 Ok(if request.initial_fen != initial {
@@ -1511,7 +1469,6 @@ mod tests {
             &AnalysisOptions::default(),
             &AtomicBool::new(false),
             |_, _| {},
-            &LogisticModel,
             "Fake",
             evaluator(false),
         )
@@ -1524,7 +1481,6 @@ mod tests {
                 &AnalysisOptions::default(),
                 &AtomicBool::new(false),
                 |_, _| {},
-                &LogisticModel,
                 "Fake",
                 evaluator(true)
             )

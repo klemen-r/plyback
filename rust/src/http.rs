@@ -6,6 +6,7 @@ use crate::{
     db::Database,
     engine::Engine,
     insights::Insights,
+    params::{RangeError, body_integer, optional_string, query_integer, required_string},
     security,
     services::{self, Services},
 };
@@ -273,7 +274,7 @@ impl App {
                 }));
             }
             ("GET", "/api/events") => {
-                let limit = query_integer(&meta.query, "limit", 100, 1, 500)?;
+                let limit = query_integer(&meta.query, "limit", 100, 1, 500, RangeError::Invalid)?;
                 let rows = if let Some(account) = meta.query.get("account_id") {
                     let id = account
                         .parse::<i64>()
@@ -728,59 +729,6 @@ fn secure_headers(response: &mut Response, path: &str) {
                 "public, max-age=31536000, immutable",
             ));
     }
-}
-
-fn optional_string<'a>(
-    body: &'a Value,
-    key: &str,
-    limit: usize,
-) -> anyhow::Result<Option<&'a str>> {
-    match body.get(key) {
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::String(value)) if value.chars().count() <= limit => Ok(Some(value)),
-        _ => Err(api_error(
-            422,
-            format!("{key} must be a string of at most {limit} characters"),
-        )),
-    }
-}
-fn required_string<'a>(body: &'a Value, key: &str, limit: usize) -> anyhow::Result<&'a str> {
-    optional_string(body, key, limit)?.ok_or_else(|| api_error(422, format!("{key} is required")))
-}
-fn body_integer(body: &Value, key: &str, default: i64, min: i64, max: i64) -> anyhow::Result<i64> {
-    let value = match body.get(key) {
-        None | Some(Value::Null) => default,
-        Some(value) => value
-            .as_i64()
-            .ok_or_else(|| api_error(422, format!("{key} must be an integer")))?,
-    };
-    if !(min..=max).contains(&value) {
-        return Err(api_error(
-            422,
-            format!("{key} must be between {min} and {max}"),
-        ));
-    }
-    Ok(value)
-}
-fn query_integer(
-    query: &Query,
-    key: &str,
-    default: i64,
-    min: i64,
-    max: i64,
-) -> anyhow::Result<i64> {
-    let value = query
-        .get(key)
-        .map(|v| {
-            v.parse::<i64>()
-                .map_err(|_| api_error(422, format!("Invalid {key}")))
-        })
-        .transpose()?
-        .unwrap_or(default);
-    if !(min..=max).contains(&value) {
-        return Err(api_error(422, format!("Invalid {key}")));
-    }
-    Ok(value)
 }
 
 type StaticFile = (&'static str, Vec<u8>, bool, Option<&'static str>);

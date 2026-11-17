@@ -203,7 +203,6 @@ fn durable_cache_is_database_owned_and_history_sensitive() {
 #[test]
 #[ignore = "real-engine benchmark; run explicitly with fixture capture and output paths"]
 fn benchmark_reference_fixture_cold_and_warm() {
-    use analysis::LogisticModel;
     use plyback::engine::{Line, Search};
     use serde_json::{Value, json};
     let input = std::env::var_os("PLYBACK_BENCH_INPUT")
@@ -276,7 +275,6 @@ fn benchmark_reference_fixture_cold_and_warm() {
             &options,
             &cancel,
             |_, _| {},
-            &LogisticModel,
             &name,
             |request| {
                 let start = Instant::now();
@@ -312,7 +310,6 @@ fn benchmark_reference_fixture_cold_and_warm() {
                 &options,
                 &cancel,
                 |_, _| {},
-                &LogisticModel,
                 &name,
                 |request| {
                     let (stored, lines) = expected.next().expect("no extra search");

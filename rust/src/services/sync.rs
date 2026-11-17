@@ -20,6 +20,11 @@ impl std::error::Error for SyncDbBusy {}
 
 const OFFICIAL_BASE: &str = "https://api.chess.com/pub";
 const MAX_RESPONSE: u64 = 32 * 1024 * 1024;
+const UPDATE_SYNC_PROFILE_SQL: &str = "UPDATE accounts SET display_name=?,avatar=?,profile_json=?,stats_json=?,profile_fetched_at=? WHERE id=?";
+const UPDATE_UNCHANGED_ARCHIVE_SQL: &str =
+    "UPDATE archives SET fetched_at=?,complete=? WHERE account_id=? AND period=?";
+const UPSERT_SYNC_ARCHIVE_SQL: &str = "INSERT INTO archives(account_id,period,url,etag,last_modified,fetched_at,game_count,complete) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(account_id,period) DO UPDATE SET etag=excluded.etag,last_modified=excluded.last_modified,fetched_at=excluded.fetched_at,game_count=excluded.game_count,complete=excluded.complete";
+const COMPLETE_ACCOUNT_SYNC_SQL: &str = "UPDATE accounts SET last_sync_at=?,sync_status='idle',sync_error=NULL,history_complete=CASE WHEN ? THEN history_complete ELSE 1 END,last_new_game_at=CASE WHEN ? THEN ? ELSE last_new_game_at END WHERE id=?";
 type RetryWait = dyn Fn(Duration, &AtomicBool) -> Result<()> + Send + Sync;
 
 pub(super) struct ChessComClient {
@@ -33,6 +38,54 @@ struct ApiResponse {
     not_modified: bool,
     etag: Option<String>,
     last_modified: Option<String>,
+}
+
+/// A single HTTP response, before redirects have been resolved.
+enum Fetch {
+    NotModified,
+    Body {
+        data: Value,
+        etag: Option<String>,
+        last_modified: Option<String>,
+    },
+    Redirect(reqwest::blocking::Response),
+}
+struct FetchRequest<'a> {
+    initial: &'a Url,
+    etag: Option<&'a str>,
+    last_modified: Option<&'a str>,
+    agent: String,
+}
+enum FetchError {
+    Cancelled,
+    NotFound(String),
+    Permanent(anyhow::Error),
+    Transient {
+        error: anyhow::Error,
+        retry_after: Option<u64>,
+    },
+}
+impl FetchError {
+    fn transient(error: anyhow::Error) -> Self {
+        Self::Transient {
+            error,
+            retry_after: None,
+        }
+    }
+    fn into_error(self) -> anyhow::Error {
+        match self {
+            Self::Cancelled => api_error(503, "Request cancelled"),
+            Self::NotFound(message) => api_error(404, message),
+            Self::Permanent(error) | Self::Transient { error, .. } => error,
+        }
+    }
+}
+fn cancelled(stop: &AtomicBool) -> std::result::Result<(), FetchError> {
+    if stop.load(Ordering::SeqCst) {
+        Err(FetchError::Cancelled)
+    } else {
+        Ok(())
+    }
 }
 
 /// IDs, usernames and timestamps can all repeat after account deletion.
@@ -62,13 +115,10 @@ impl AccountSync {
         )?)
     }
     fn current(&self, service: &Services) -> Result<bool> {
+        let (deadline, cancelled) = service.db_wait();
         service
             .db
-            .read_until(
-                Instant::now() + Duration::from_secs(2),
-                || service.stop.load(Ordering::SeqCst),
-                |connection| self.matches(connection),
-            )?
+            .read_until(deadline, cancelled, |connection| self.matches(connection))?
             .ok_or_else(|| SyncDbBusy.into())
     }
     fn transaction<T>(
@@ -76,19 +126,16 @@ impl AccountSync {
         service: &Services,
         mut f: impl FnMut(&rusqlite::Transaction<'_>) -> Result<T>,
     ) -> Result<Option<T>> {
+        let (deadline, cancelled) = service.db_wait();
         service
             .db
-            .transaction_until(
-                Instant::now() + Duration::from_secs(2),
-                || service.stop.load(Ordering::SeqCst),
-                |tx| {
-                    if self.matches(tx)? {
-                        f(tx).map(Some)
-                    } else {
-                        Ok(None)
-                    }
-                },
-            )?
+            .transaction_until(deadline, cancelled, |tx| {
+                if self.matches(tx)? {
+                    f(tx).map(Some)
+                } else {
+                    Ok(None)
+                }
+            })?
             .ok_or_else(|| SyncDbBusy.into())
     }
     fn event(&self, tx: &rusqlite::Transaction<'_>, level: &str, message: &str) -> Result<()> {
@@ -173,158 +220,56 @@ impl ChessComClient {
                 .build()?;
             let _ = self.client.set(built);
         }
-        let client = self.client.get().unwrap();
-        let agent = user_agent(contact);
-        let mut last_error = "Chess.com unavailable".to_string();
+        let request = FetchRequest {
+            initial: &initial,
+            etag,
+            last_modified,
+            agent: user_agent(contact),
+        };
+        match self.with_retries(self.client.get().unwrap(), &request, stop)? {
+            Fetch::NotModified => Ok(ApiResponse {
+                data: Value::Null,
+                not_modified: true,
+                etag: etag.map(str::to_string),
+                last_modified: last_modified.map(str::to_string),
+            }),
+            Fetch::Body {
+                data,
+                etag,
+                last_modified,
+            } => Ok(ApiResponse {
+                data,
+                not_modified: false,
+                etag,
+                last_modified,
+            }),
+            Fetch::Redirect(_) => unreachable!("follow_redirects resolves every redirect"),
+        }
+    }
+    fn with_retries(
+        &self,
+        client: &Client,
+        request: &FetchRequest<'_>,
+        stop: &AtomicBool,
+    ) -> Result<Fetch> {
+        let mut last_error = String::new();
         for attempt in 0..6 {
-            if stop.load(Ordering::SeqCst) {
-                return Err(api_error(503, "Request cancelled"));
-            }
+            cancelled(stop).map_err(FetchError::into_error)?;
+            let result = self
+                .rate_gate(stop)
+                .and_then(|mut gate| self.follow_redirects(client, request, stop, &mut gate));
             let mut delay = 2u64.saturating_pow(attempt + 1).min(120);
-            let result = (|| -> Result<ApiResponse> {
-                let mut gate = loop {
-                    if stop.load(Ordering::SeqCst) {
-                        return Err(api_error(503, "Request cancelled"));
-                    }
-                    match self.serial.try_lock() {
-                        Ok(gate) => break gate,
-                        Err(std::sync::TryLockError::WouldBlock) => {
-                            wait_cancel(Duration::from_millis(25), stop)?;
-                        }
-                        Err(std::sync::TryLockError::Poisoned(_)) => {
-                            return Err(api_error(503, "Chess.com request lock failed"));
-                        }
-                    }
-                };
-                if stop.load(Ordering::SeqCst) {
-                    return Err(api_error(503, "Request cancelled"));
-                }
-                if let Some(last) = *gate {
-                    wait_cancel(
-                        Duration::from_millis(350).saturating_sub(last.elapsed()),
-                        stop,
-                    )?;
-                }
-                let mut url = initial.clone();
-                for redirects in 0..=5 {
-                    if stop.load(Ordering::SeqCst) {
-                        return Err(api_error(503, "Request cancelled"));
-                    }
-                    self.validate(&url)?;
-                    let mut request = client
-                        .get(url.clone())
-                        .header("User-Agent", &agent)
-                        .header("Accept", "application/json");
-                    if let Some(etag) = etag {
-                        request = request.header("If-None-Match", etag);
-                    }
-                    if let Some(last) = last_modified {
-                        request = request.header("If-Modified-Since", last);
-                    }
-                    let response = request.send();
-                    *gate = Some(Instant::now());
-                    let response =
-                        response.map_err(|_| api_error(502, "Could not reach Chess.com"))?;
-                    if stop.load(Ordering::SeqCst) {
-                        return Err(api_error(503, "Request cancelled"));
-                    }
-                    let status = response.status().as_u16();
-                    if status == 304 {
-                        return Ok(ApiResponse {
-                            data: Value::Null,
-                            not_modified: true,
-                            etag: etag.map(str::to_string),
-                            last_modified: last_modified.map(str::to_string),
-                        });
-                    }
-                    if matches!(status, 301 | 302 | 303 | 307 | 308) {
-                        if redirects == 5 {
-                            return Err(api_error(502, "Too many Chess.com redirects"));
-                        }
-                        let location = response
-                            .headers()
-                            .get("location")
-                            .and_then(|v| v.to_str().ok())
-                            .ok_or_else(|| api_error(502, "Invalid Chess.com redirect"))?;
-                        url = url.join(location)?;
-                        self.validate(&url)?;
-                        continue;
-                    }
-                    if matches!(status, 404 | 410) {
-                        // Only the profile and archive list mean the player is gone; a missing
-                        // monthly archive is just that archive.
-                        return Err(api_error(
-                            404,
-                            if url.path().contains("/games/") && !url.path().ends_with("/archives")
-                            {
-                                format!("Chess.com archive not found: {}", url.path())
-                            } else {
-                                "Chess.com player not found".to_string()
-                            },
-                        ));
-                    }
-                    if status != 200 {
-                        if let Some(wait) = response
-                            .headers()
-                            .get("retry-after")
-                            .and_then(|s| s.to_str().ok())
-                            .and_then(retry_after_seconds)
-                        {
-                            delay = delay.max(wait).min(120);
-                        }
-                        return Err(api_error(
-                            if status == 429 || status >= 500 {
-                                503
-                            } else {
-                                502
-                            },
-                            format!("Chess.com returned HTTP {status}"),
-                        ));
-                    }
-                    if response.content_length().is_some_and(|n| n > MAX_RESPONSE) {
-                        return Err(api_error(502, "Chess.com response is too large"));
-                    }
-                    let etag = response
-                        .headers()
-                        .get("etag")
-                        .and_then(|s| s.to_str().ok())
-                        .map(str::to_string);
-                    let last_modified = response
-                        .headers()
-                        .get("last-modified")
-                        .and_then(|s| s.to_str().ok())
-                        .map(str::to_string);
-                    let mut bytes = Vec::new();
-                    response.take(MAX_RESPONSE + 1).read_to_end(&mut bytes)?;
-                    if stop.load(Ordering::SeqCst) {
-                        return Err(api_error(503, "Request cancelled"));
-                    }
-                    if bytes.len() as u64 > MAX_RESPONSE {
-                        return Err(api_error(502, "Chess.com response is too large"));
-                    }
-                    let data = serde_json::from_slice(&bytes)
-                        .map_err(|_| api_error(502, "Chess.com returned invalid JSON"))?;
-                    return Ok(ApiResponse {
-                        data,
-                        not_modified: false,
-                        etag,
-                        last_modified,
-                    });
-                }
-                unreachable!()
-            })();
             match result {
                 Ok(response) => return Ok(response),
-                Err(error) => {
-                    if let Some(crate::ApiError(status, _)) =
-                        error.downcast_ref::<crate::ApiError>()
-                        && (*status == 404
-                            || (*status == 502 && !error.to_string().contains("Could not reach")))
-                    {
-                        return Err(error);
-                    }
+                Err(error @ (FetchError::NotFound(_) | FetchError::Permanent(_))) => {
+                    return Err(error.into_error());
+                }
+                Err(FetchError::Transient { error, retry_after }) => {
+                    delay = delay.max(retry_after.unwrap_or(0)).min(120);
                     last_error = error.to_string();
                 }
+                // Keep cancellation's existing retry-boundary behavior and final error mapping.
+                Err(FetchError::Cancelled) => last_error = "Request cancelled".into(),
             }
             if attempt < 5 {
                 (self.retry_wait)(Duration::from_secs(delay), stop)?;
@@ -334,6 +279,166 @@ impl ChessComClient {
             502,
             format!("Chess.com unavailable after 6 attempts: {last_error}"),
         ))
+    }
+    fn rate_gate(
+        &self,
+        stop: &AtomicBool,
+    ) -> std::result::Result<std::sync::MutexGuard<'_, Option<Instant>>, FetchError> {
+        let gate = loop {
+            cancelled(stop)?;
+            match self.serial.try_lock() {
+                Ok(gate) => break gate,
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    wait_cancel(Duration::from_millis(25), stop)
+                        .map_err(|_| FetchError::Cancelled)?;
+                }
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    return Err(FetchError::transient(api_error(
+                        503,
+                        "Chess.com request lock failed",
+                    )));
+                }
+            }
+        };
+        cancelled(stop)?;
+        if let Some(last) = *gate {
+            wait_cancel(
+                Duration::from_millis(350).saturating_sub(last.elapsed()),
+                stop,
+            )
+            .map_err(|_| FetchError::Cancelled)?;
+        }
+        Ok(gate)
+    }
+    fn follow_redirects(
+        &self,
+        client: &Client,
+        request: &FetchRequest<'_>,
+        stop: &AtomicBool,
+        last_sent: &mut Option<Instant>,
+    ) -> std::result::Result<Fetch, FetchError> {
+        let mut url = request.initial.clone();
+        for redirects in 0..=5 {
+            match self.send_once(client, &url, request, stop, last_sent)? {
+                Fetch::Redirect(response) => {
+                    if redirects == 5 {
+                        return Err(FetchError::Permanent(api_error(
+                            502,
+                            "Too many Chess.com redirects",
+                        )));
+                    }
+                    let location = response
+                        .headers()
+                        .get("location")
+                        .and_then(|v| v.to_str().ok())
+                        .ok_or_else(|| {
+                            FetchError::Permanent(api_error(502, "Invalid Chess.com redirect"))
+                        })?;
+                    url = url
+                        .join(location)
+                        .map_err(|e| FetchError::transient(e.into()))?;
+                    self.validate(&url).map_err(FetchError::Permanent)?;
+                }
+                response => return Ok(response),
+            }
+        }
+        unreachable!()
+    }
+    fn send_once(
+        &self,
+        client: &Client,
+        url: &Url,
+        request: &FetchRequest<'_>,
+        stop: &AtomicBool,
+        last_sent: &mut Option<Instant>,
+    ) -> std::result::Result<Fetch, FetchError> {
+        cancelled(stop)?;
+        self.validate(url).map_err(FetchError::Permanent)?;
+        let mut outgoing = client
+            .get(url.clone())
+            .header("User-Agent", &request.agent)
+            .header("Accept", "application/json");
+        if let Some(etag) = request.etag {
+            outgoing = outgoing.header("If-None-Match", etag);
+        }
+        if let Some(last) = request.last_modified {
+            outgoing = outgoing.header("If-Modified-Since", last);
+        }
+        let response = outgoing.send();
+        *last_sent = Some(Instant::now());
+        let response = response
+            .map_err(|_| FetchError::transient(api_error(502, "Could not reach Chess.com")))?;
+        cancelled(stop)?;
+        let status = response.status().as_u16();
+        if status == 304 {
+            return Ok(Fetch::NotModified);
+        }
+        if matches!(status, 301 | 302 | 303 | 307 | 308) {
+            return Ok(Fetch::Redirect(response));
+        }
+        if matches!(status, 404 | 410) {
+            // Only the profile and archive list mean the player is gone; a missing
+            // monthly archive is just that archive.
+            return Err(FetchError::NotFound(
+                if url.path().contains("/games/") && !url.path().ends_with("/archives") {
+                    format!("Chess.com archive not found: {}", url.path())
+                } else {
+                    "Chess.com player not found".to_string()
+                },
+            ));
+        }
+        if status != 200 {
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|s| s.to_str().ok())
+                .and_then(retry_after_seconds);
+            let message = format!("Chess.com returned HTTP {status}");
+            return Err(if status == 429 || status >= 500 {
+                FetchError::Transient {
+                    error: api_error(503, message),
+                    retry_after,
+                }
+            } else {
+                FetchError::Permanent(api_error(502, message))
+            });
+        }
+        if response.content_length().is_some_and(|n| n > MAX_RESPONSE) {
+            return Err(FetchError::Permanent(api_error(
+                502,
+                "Chess.com response is too large",
+            )));
+        }
+        let etag = response
+            .headers()
+            .get("etag")
+            .and_then(|s| s.to_str().ok())
+            .map(str::to_string);
+        let last_modified = response
+            .headers()
+            .get("last-modified")
+            .and_then(|s| s.to_str().ok())
+            .map(str::to_string);
+        let mut bytes = Vec::new();
+        response
+            .take(MAX_RESPONSE + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| FetchError::transient(e.into()))?;
+        cancelled(stop)?;
+        if bytes.len() as u64 > MAX_RESPONSE {
+            return Err(FetchError::Permanent(api_error(
+                502,
+                "Chess.com response is too large",
+            )));
+        }
+        let data = serde_json::from_slice(&bytes).map_err(|_| {
+            FetchError::Permanent(api_error(502, "Chess.com returned invalid JSON"))
+        })?;
+        Ok(Fetch::Body {
+            data,
+            etag,
+            last_modified,
+        })
     }
     fn archive_url(&self, username: &str, raw: &str) -> Result<(String, String)> {
         let mut url = Url::parse(raw)?;
@@ -427,19 +532,17 @@ fn month_is_closed_at(period: &str, now: chrono::DateTime<Utc>) -> bool {
 }
 impl Services {
     fn sync_rows(&self, sql: &str, params: &[Value]) -> Result<Vec<Value>> {
+        let (deadline, cancelled) = self.db_wait();
         self.db
-            .read_until(
-                Instant::now() + Duration::from_secs(2),
-                || self.stop.load(Ordering::SeqCst),
-                |connection| crate::db::query_connection(connection, sql, params),
-            )?
+            .read_until(deadline, cancelled, |connection| {
+                crate::db::query_connection(connection, sql, params)
+            })?
             .ok_or_else(|| SyncDbBusy.into())
     }
     fn sync_settings(&self) -> Result<Value> {
-        settings::get_settings_until(&self.db, Instant::now() + Duration::from_secs(2), || {
-            self.stop.load(Ordering::SeqCst)
-        })?
-        .ok_or_else(|| SyncDbBusy.into())
+        let (deadline, cancelled) = self.db_wait();
+        settings::get_settings_until(&self.db, deadline, cancelled)?
+            .ok_or_else(|| SyncDbBusy.into())
     }
     fn sync_error(&self, account: &Value, message: &str) -> Result<()> {
         let claim = AccountSync::from_row(account)?;
@@ -603,9 +706,21 @@ impl Services {
                         &self.stop,
                     )?
                     .data;
-                Ok(claim.transaction(self, |tx| {
-                    Ok(tx.execute("UPDATE accounts SET display_name=?,avatar=?,profile_json=?,stats_json=?,profile_fetched_at=? WHERE id=?", rusqlite::params![profile["username"].as_str().unwrap_or(username),profile["avatar"].as_str(),profile.to_string(),stats.to_string(),now(),id])?)
-                })?.is_some())
+                Ok(claim
+                    .transaction(self, |tx| {
+                        Ok(tx.execute(
+                            UPDATE_SYNC_PROFILE_SQL,
+                            rusqlite::params![
+                                profile["username"].as_str().unwrap_or(username),
+                                profile["avatar"].as_str(),
+                                profile.to_string(),
+                                stats.to_string(),
+                                now(),
+                                id
+                            ],
+                        )?)
+                    })?
+                    .is_some())
             })();
             match refresh {
                 Ok(false) => return Ok(()),
@@ -699,9 +814,17 @@ impl Services {
             )?;
             let complete = month_is_closed(&period);
             if response.not_modified {
-                if claim.transaction(self, |tx| {
-                    Ok(tx.execute("UPDATE archives SET fetched_at=?,complete=? WHERE account_id=? AND period=?", rusqlite::params![now(), complete, id, period])?)
-                })?.is_none() { return Ok(()); }
+                if claim
+                    .transaction(self, |tx| {
+                        Ok(tx.execute(
+                            UPDATE_UNCHANGED_ARCHIVE_SQL,
+                            rusqlite::params![now(), complete, id, period],
+                        )?)
+                    })?
+                    .is_none()
+                {
+                    return Ok(());
+                }
                 continue;
             }
             let games = response.data["games"]
@@ -776,7 +899,7 @@ impl Services {
                         )?;
                     }
                 }
-                tx.execute("INSERT INTO archives(account_id,period,url,etag,last_modified,fetched_at,game_count,complete) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(account_id,period) DO UPDATE SET etag=excluded.etag,last_modified=excluded.last_modified,fetched_at=excluded.fetched_at,game_count=excluded.game_count,complete=excluded.complete",rusqlite::params![id,period,url,response.etag,response.last_modified,now(),rows.len()as i64,complete])?;
+                tx.execute(UPSERT_SYNC_ARCHIVE_SQL,rusqlite::params![id,period,url,response.etag,response.last_modified,now(),rows.len()as i64,complete])?;
                 Ok((history, fresh, analyze_history, auto_analyze))
             })?
             else {
@@ -810,11 +933,21 @@ impl Services {
                 self.enqueue_for_account(id, &claim.generation, &missed, priority)?;
             }
         }
-        if claim.transaction(self, |tx| {
-            tx.execute("UPDATE accounts SET last_sync_at=?,sync_status='idle',sync_error=NULL,history_complete=CASE WHEN ? THEN history_complete ELSE 1 END,last_new_game_at=CASE WHEN ? THEN ? ELSE last_new_game_at END WHERE id=?",rusqlite::params![now(),interrupted,fresh_count>0,now(),id])?;
-            if new_count > 0 { claim.event(tx, "info", &format!("Imported {new_count} game(s)"))?; }
-            Ok(())
-        })?.is_none() { return Ok(()); }
+        if claim
+            .transaction(self, |tx| {
+                tx.execute(
+                    COMPLETE_ACCOUNT_SYNC_SQL,
+                    rusqlite::params![now(), interrupted, fresh_count > 0, now(), id],
+                )?;
+                if new_count > 0 {
+                    claim.event(tx, "info", &format!("Imported {new_count} game(s)"))?;
+                }
+                Ok(())
+            })?
+            .is_none()
+        {
+            return Ok(());
+        }
         Ok(())
     }
 }
@@ -1224,6 +1357,91 @@ mod tests {
     }
 
     #[test]
+    fn terminal_fetch_errors_preserve_status_message_and_do_not_retry() {
+        let server = FixtureServer::start();
+        let (client, waits) = fixture_client(&server);
+        let stop = AtomicBool::new(false);
+        for (path, scripted, status, message, requests) in [
+            (
+                "/player/foo",
+                vec![response(403, "Retry-After: 60\r\n", "")],
+                502,
+                "Chess.com returned HTTP 403",
+                1,
+            ),
+            (
+                "/player/foo/games/2026/10",
+                vec![response(410, "", "")],
+                404,
+                "Chess.com archive not found: /pub/player/foo/games/2026/10",
+                1,
+            ),
+            (
+                "/player/foo",
+                vec![response(302, "", "")],
+                502,
+                "Invalid Chess.com redirect",
+                1,
+            ),
+            (
+                "/player/foo",
+                (0..6)
+                    .map(|_| response(302, "Location: /pub/player/foo\r\n", ""))
+                    .collect(),
+                502,
+                "Too many Chess.com redirects",
+                6,
+            ),
+            (
+                "/player/foo",
+                vec![Some(format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    MAX_RESPONSE + 1
+                ))],
+                502,
+                "Chess.com response is too large",
+                1,
+            ),
+        ] {
+            server.requests.lock().unwrap().clear();
+            server.responses.lock().unwrap().extend(scripted);
+            let error = client
+                .get(&format!("{}{path}", server.base), None, None, "", &stop)
+                .err()
+                .expect("terminal response should fail");
+            assert_eq!(error.downcast_ref::<crate::ApiError>().unwrap().0, status);
+            assert_eq!(error.to_string(), message);
+            assert_eq!(server.requests.lock().unwrap().len(), requests);
+            assert!(waits.lock().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn not_modified_keeps_the_original_validators_and_retry_after_is_capped() {
+        let server = FixtureServer::start();
+        let (client, waits) = fixture_client(&server);
+        server.responses.lock().unwrap().extend([
+            response(503, "Retry-After: 999\r\n", ""),
+            response(304, "ETag: changed\r\nLast-Modified: changed\r\n", ""),
+        ]);
+        let result = client
+            .get(
+                &format!("{}/player/foo", server.base),
+                Some("original"),
+                Some("original-date"),
+                "",
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        assert!(result.not_modified);
+        assert!(result.data.is_null());
+        assert_eq!(result.etag.as_deref(), Some("original"));
+        assert_eq!(result.last_modified.as_deref(), Some("original-date"));
+        assert_eq!(*waits.lock().unwrap(), [Duration::from_secs(120)]);
+        assert_eq!(server.requests.lock().unwrap().len(), 2);
+    }
+
+    #[test]
     fn missing_player_is_404_and_sync_records_error() {
         let server = FixtureServer::start();
         let db = Arc::new(Database::open(":memory:").unwrap());
@@ -1497,7 +1715,8 @@ mod tests {
                 }
                 db.transaction(|tx| {
                     tx.execute("DELETE FROM accounts WHERE id=?", [original["id"].as_i64().unwrap()])?;
-                    tx.execute("INSERT INTO accounts(username,display_name,profile_json,stats_json,added_at,auto_analyze,analyze_history) VALUES(?,'replacement','{\"new\":true}','{\"new\":true}',0,0,0)", [replacement_name])?;
+                    const INSERT_REPLACEMENT_ACCOUNT_SQL: &str = "INSERT INTO accounts(username,display_name,profile_json,stats_json,added_at,auto_analyze,analyze_history) VALUES(?,'replacement','{\"new\":true}','{\"new\":true}',0,0,0)";
+                    tx.execute(INSERT_REPLACEMENT_ACCOUNT_SQL, [replacement_name])?;
                     Ok(())
                 }).unwrap();
                 let replacement = db.one("SELECT * FROM accounts", &[]).unwrap().unwrap();

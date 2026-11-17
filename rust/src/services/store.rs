@@ -10,6 +10,19 @@ use serde_json::{Value, json};
 use sha1::{Digest, Sha1};
 use url::Url;
 
+const CLEAR_FOLLOWUP_SQL: &str = "UPDATE jobs SET followup_priority=NULL,followup_depth=NULL WHERE id=? AND followup_depth IS NOT NULL";
+const UPDATE_CHESSCOM_ACCURACY_SQL: &str =
+    "UPDATE games SET chesscom_accuracy_white=?,chesscom_accuracy_black=? WHERE id=?";
+const OWNS_ANALYSIS_CLAIM_SQL: &str = "SELECT EXISTS(SELECT 1 FROM games g JOIN jobs j ON j.game_id=g.id WHERE g.id=? AND g.uuid=? AND g.pgn=? AND j.id=? AND j.claim_token=? AND j.status='running')";
+const INSERT_MOVE_SQL: &str = "INSERT INTO moves(game_id,ply,color,san,uci,fen_before,epd_before,eval_before,eval_after,win_before,win_after,ep_loss,cp_loss,accuracy,best_uci,best_san,classification,phase,clock,time_spent,is_book,tags,explanation,lines_json,reply_json,endgame_type) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+const UPSERT_ANALYSIS_SQL: &str = "INSERT INTO game_analysis(game_id,depth,multipv,engine,version,analyzed_at,duration_ms,accuracy_white,accuracy_black,acpl_white,acpl_black,opening_eco,opening_name,opening_family,opening_variation,book_plies,counts_json,key_moments_json,evals_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(game_id) DO UPDATE SET depth=excluded.depth,multipv=excluded.multipv,engine=excluded.engine,version=excluded.version,analyzed_at=excluded.analyzed_at,duration_ms=excluded.duration_ms,accuracy_white=excluded.accuracy_white,accuracy_black=excluded.accuracy_black,acpl_white=excluded.acpl_white,acpl_black=excluded.acpl_black,opening_eco=excluded.opening_eco,opening_name=excluded.opening_name,opening_family=excluded.opening_family,opening_variation=excluded.opening_variation,book_plies=excluded.book_plies,counts_json=excluded.counts_json,key_moments_json=excluded.key_moments_json,evals_json=excluded.evals_json,revision=game_analysis.revision+1";
+const UPDATE_OPENING_SQL: &str =
+    "UPDATE games SET opening_eco=?,opening_name=?,opening_family=?,opening_variation=? WHERE id=?";
+const COMPLETE_JOB_SQL: &str = "UPDATE jobs SET status='done',finished_at=?,partial_json=NULL,error=NULL,progress=total WHERE id=? AND claim_token=?";
+const INSERT_FOLLOWUP_JOB_SQL: &str = "INSERT INTO jobs(game_id,status,priority,depth,created_at,sort_key) SELECT j.game_id,'queued',j.followup_priority,j.followup_depth,?,COALESCE(g.end_time,0) FROM jobs j JOIN games g ON g.id=j.game_id WHERE j.id=? AND j.followup_depth>?";
+const ACCOUNT_ANALYSIS_COUNTS_SQL: &str = "SELECT COUNT(*) AS games,COUNT(ga.game_id) AS analyzed FROM account_games ag LEFT JOIN game_analysis ga ON ga.game_id=ag.game_id WHERE ag.account_id=?";
+const ACCOUNT_QUEUE_COUNT_SQL: &str = "SELECT COUNT(*) FROM jobs j JOIN account_games ag ON ag.game_id=j.game_id WHERE ag.account_id=? AND j.status IN ('queued','running')";
+
 fn safe_url(raw: Option<&str>) -> Option<String> {
     let raw = raw.filter(|s| s.len() <= 2048)?;
     let url = Url::parse(raw).ok()?;
@@ -357,7 +370,14 @@ pub fn upsert_games(tx: &Transaction<'_>, rows: &[Value]) -> Result<Vec<(i64, bo
             .optional()?;
         if let Some((id, acc)) = existing {
             if acc.is_none() && !row["chesscom_accuracy_white"].is_null() {
-                tx.execute("UPDATE games SET chesscom_accuracy_white=?,chesscom_accuracy_black=? WHERE id=?",rusqlite::params![row["chesscom_accuracy_white"].as_f64(),row["chesscom_accuracy_black"].as_f64(),id])?;
+                tx.execute(
+                    UPDATE_CHESSCOM_ACCURACY_SQL,
+                    rusqlite::params![
+                        row["chesscom_accuracy_white"].as_f64(),
+                        row["chesscom_accuracy_black"].as_f64(),
+                        id
+                    ],
+                )?;
             }
             out.push((id, false));
             continue;
@@ -432,37 +452,119 @@ pub fn save_analysis(
     let moves = result["moves"]
         .as_array()
         .ok_or_else(|| anyhow::anyhow!("Analysis omitted moves"))?;
-    Ok(db.transaction_until(
-        std::time::Instant::now()+std::time::Duration::from_secs(2),
-        ||claim.cancel.load(std::sync::atomic::Ordering::SeqCst),
-        |tx| {
-        if claim.cancel.load(std::sync::atomic::Ordering::SeqCst)
-            || !tx.query_row("SELECT EXISTS(SELECT 1 FROM games g JOIN jobs j ON j.game_id=g.id WHERE g.id=? AND g.uuid=? AND g.pgn=? AND j.id=? AND j.claim_token=? AND j.status='running')",rusqlite::params![id,claim.uuid,claim.pgn,claim.job_id,claim.token],|r|r.get::<_,bool>(0))?{return Ok(false);}
-        tx.execute("DELETE FROM moves WHERE game_id=?",[id])?;
-        for m in moves {
-            if claim.cancel.load(std::sync::atomic::Ordering::SeqCst){return Ok(false);}
-            let mut vals=vec![json!(id)];
-            for k in ["ply","color","san","uci","fen_before"]{vals.push(m[k].clone());}
-            vals.push(json!(m["fen_before"].as_str().unwrap_or("").split_whitespace().take(4).collect::<Vec<_>>().join(" ")));
-            for k in ["eval_before","eval_after","win_before","win_after","ep_loss","cp_loss","accuracy","best_uci","best_san","classification","phase","clock","time_spent","is_book"]{vals.push(m[k].clone());}
-            vals.push(json!(m.get("tags").cloned().unwrap_or(json!({})).to_string()));vals.push(m["explanation"].clone());
-            vals.push(json!(m.get("lines").cloned().unwrap_or(json!([])).to_string()));vals.push(json!(m["reply"].to_string()));vals.push(m["endgame_type"].clone());
-            tx.execute("INSERT INTO moves(game_id,ply,color,san,uci,fen_before,epd_before,eval_before,eval_after,win_before,win_after,ep_loss,cp_loss,accuracy,best_uci,best_san,classification,phase,clock,time_spent,is_book,tags,explanation,lines_json,reply_json,endgame_type) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",params_from_iter(sql_values(&vals)?))?;
-        }
-        let mut vals=vec![json!(id),json!(depth),json!(multipv),json!(engine),json!(ANALYSIS_VERSION),json!(now()),result["duration_ms"].clone()];
-        for prefix in ["accuracy","acpl"]{for color in ["white","black"]{vals.push(result.get(format!("{prefix}_{color}")).cloned().unwrap_or_else(||result[prefix][color].clone()));}}
-        for key in ["eco","name","family","variation"]{vals.push(result["opening"][key].clone());}
-        vals.push(result["book_plies"].clone());for key in ["counts","key_moments","evals"]{vals.push(json!(result[key].to_string()));}
-        tx.execute("INSERT INTO game_analysis(game_id,depth,multipv,engine,version,analyzed_at,duration_ms,accuracy_white,accuracy_black,acpl_white,acpl_black,opening_eco,opening_name,opening_family,opening_variation,book_plies,counts_json,key_moments_json,evals_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(game_id) DO UPDATE SET depth=excluded.depth,multipv=excluded.multipv,engine=excluded.engine,version=excluded.version,analyzed_at=excluded.analyzed_at,duration_ms=excluded.duration_ms,accuracy_white=excluded.accuracy_white,accuracy_black=excluded.accuracy_black,acpl_white=excluded.acpl_white,acpl_black=excluded.acpl_black,opening_eco=excluded.opening_eco,opening_name=excluded.opening_name,opening_family=excluded.opening_family,opening_variation=excluded.opening_variation,book_plies=excluded.book_plies,counts_json=excluded.counts_json,key_moments_json=excluded.key_moments_json,evals_json=excluded.evals_json,revision=game_analysis.revision+1",params_from_iter(sql_values(&vals)?))?;
-        if !result["opening"].is_null(){tx.execute("UPDATE games SET opening_eco=?,opening_name=?,opening_family=?,opening_variation=? WHERE id=?",params_from_iter(sql_values(&[result["opening"]["eco"].clone(),result["opening"]["name"].clone(),result["opening"]["family"].clone(),result["opening"]["variation"].clone(),json!(id)])?))?;}
-        tx.execute("UPDATE jobs SET status='done',finished_at=?,partial_json=NULL,error=NULL,progress=total WHERE id=? AND claim_token=?",rusqlite::params![now(),claim.job_id,claim.token])?;
-        tx.execute(
-            "INSERT INTO jobs(game_id,status,priority,depth,created_at,sort_key) SELECT j.game_id,'queued',j.followup_priority,j.followup_depth,?,COALESCE(g.end_time,0) FROM jobs j JOIN games g ON g.id=j.game_id WHERE j.id=? AND j.followup_depth>?",
-            rusqlite::params![now(),claim.job_id,depth],
-        )?;
-        tx.execute("UPDATE jobs SET followup_priority=NULL,followup_depth=NULL WHERE id=? AND followup_depth IS NOT NULL",[claim.job_id])?;
-        Ok(true)
-    })?.unwrap_or(false))
+    Ok(db
+        .transaction_until(
+            std::time::Instant::now() + std::time::Duration::from_secs(2),
+            || claim.cancel.load(std::sync::atomic::Ordering::SeqCst),
+            |tx| {
+                if claim.cancel.load(std::sync::atomic::Ordering::SeqCst)
+                    || !tx.query_row(
+                        OWNS_ANALYSIS_CLAIM_SQL,
+                        rusqlite::params![id, claim.uuid, claim.pgn, claim.job_id, claim.token],
+                        |r| r.get::<_, bool>(0),
+                    )?
+                {
+                    return Ok(false);
+                }
+                tx.execute("DELETE FROM moves WHERE game_id=?", [id])?;
+                for m in moves {
+                    if claim.cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                        return Ok(false);
+                    }
+                    let mut vals = vec![json!(id)];
+                    for k in ["ply", "color", "san", "uci", "fen_before"] {
+                        vals.push(m[k].clone());
+                    }
+                    vals.push(json!(
+                        m["fen_before"]
+                            .as_str()
+                            .unwrap_or("")
+                            .split_whitespace()
+                            .take(4)
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    ));
+                    for k in [
+                        "eval_before",
+                        "eval_after",
+                        "win_before",
+                        "win_after",
+                        "ep_loss",
+                        "cp_loss",
+                        "accuracy",
+                        "best_uci",
+                        "best_san",
+                        "classification",
+                        "phase",
+                        "clock",
+                        "time_spent",
+                        "is_book",
+                    ] {
+                        vals.push(m[k].clone());
+                    }
+                    vals.push(json!(
+                        m.get("tags").cloned().unwrap_or(json!({})).to_string()
+                    ));
+                    vals.push(m["explanation"].clone());
+                    vals.push(json!(
+                        m.get("lines").cloned().unwrap_or(json!([])).to_string()
+                    ));
+                    vals.push(json!(m["reply"].to_string()));
+                    vals.push(m["endgame_type"].clone());
+                    tx.execute(INSERT_MOVE_SQL, params_from_iter(sql_values(&vals)?))?;
+                }
+                let mut vals = vec![
+                    json!(id),
+                    json!(depth),
+                    json!(multipv),
+                    json!(engine),
+                    json!(ANALYSIS_VERSION),
+                    json!(now()),
+                    result["duration_ms"].clone(),
+                ];
+                for prefix in ["accuracy", "acpl"] {
+                    for color in ["white", "black"] {
+                        vals.push(
+                            result
+                                .get(format!("{prefix}_{color}"))
+                                .cloned()
+                                .unwrap_or_else(|| result[prefix][color].clone()),
+                        );
+                    }
+                }
+                for key in ["eco", "name", "family", "variation"] {
+                    vals.push(result["opening"][key].clone());
+                }
+                vals.push(result["book_plies"].clone());
+                for key in ["counts", "key_moments", "evals"] {
+                    vals.push(json!(result[key].to_string()));
+                }
+                tx.execute(UPSERT_ANALYSIS_SQL, params_from_iter(sql_values(&vals)?))?;
+                if !result["opening"].is_null() {
+                    tx.execute(
+                        UPDATE_OPENING_SQL,
+                        params_from_iter(sql_values(&[
+                            result["opening"]["eco"].clone(),
+                            result["opening"]["name"].clone(),
+                            result["opening"]["family"].clone(),
+                            result["opening"]["variation"].clone(),
+                            json!(id),
+                        ])?),
+                    )?;
+                }
+                tx.execute(
+                    COMPLETE_JOB_SQL,
+                    rusqlite::params![now(), claim.job_id, claim.token],
+                )?;
+                tx.execute(
+                    INSERT_FOLLOWUP_JOB_SQL,
+                    rusqlite::params![now(), claim.job_id, depth],
+                )?;
+                tx.execute(CLEAR_FOLLOWUP_SQL, [claim.job_id])?;
+                Ok(true)
+            },
+        )?
+        .unwrap_or(false))
 }
 
 pub fn account_public(db: &Database, account: &Value) -> Result<Value> {
@@ -486,8 +588,10 @@ pub fn account_public(db: &Database, account: &Value) -> Result<Value> {
             }
         }
     }
-    let counts=db.one("SELECT COUNT(*) AS games,COUNT(ga.game_id) AS analyzed FROM account_games ag LEFT JOIN game_analysis ga ON ga.game_id=ag.game_id WHERE ag.account_id=?",&[account["id"].clone()])?.unwrap_or(json!({}));
-    let queued=db.scalar("SELECT COUNT(*) FROM jobs j JOIN account_games ag ON ag.game_id=j.game_id WHERE ag.account_id=? AND j.status IN ('queued','running')",&[account["id"].clone()])?;
+    let counts = db
+        .one(ACCOUNT_ANALYSIS_COUNTS_SQL, &[account["id"].clone()])?
+        .unwrap_or(json!({}));
+    let queued = db.scalar(ACCOUNT_QUEUE_COUNT_SQL, &[account["id"].clone()])?;
     Ok(
         json!({"id":account["id"],"username":account["username"],"display_name":account.get("display_name").filter(|v|!v.is_null()).unwrap_or(&account["username"]),"avatar":safe_url(account["avatar"].as_str()),"title":profile["title"].as_str().filter(|s|s.len()<=40),
         "country":profile["country"].as_str().and_then(|s|s.rsplit('/').next()).filter(|s|!s.is_empty()),
@@ -688,7 +792,12 @@ mod tests {
         let profile =
             json!({"url":"javascript:alert(1)","title":{"html":"bad"},"joined":"yesterday"});
         let stats = json!({"chess_":{"last":{"rating":1400}},"chess_blitz":{"last":{"rating":{}},"best":{"rating":1800},"record":{"win":{},"loss":4,"draw":2}}});
-        db.execute("INSERT INTO accounts(username,added_at,profile_json,stats_json) VALUES('fixture',0,?,?)",&[json!(profile.to_string()),json!(stats.to_string())]).unwrap();
+        const INSERT_PROFILE_ACCOUNT_SQL: &str = "INSERT INTO accounts(username,added_at,profile_json,stats_json) VALUES('fixture',0,?,?)";
+        db.execute(
+            INSERT_PROFILE_ACCOUNT_SQL,
+            &[json!(profile.to_string()), json!(stats.to_string())],
+        )
+        .unwrap();
         let account = db.one("SELECT * FROM accounts", &[]).unwrap().unwrap();
         let public = account_public(&db, &account).unwrap();
         assert_eq!(

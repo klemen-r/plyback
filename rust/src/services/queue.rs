@@ -9,6 +9,23 @@ use crate::{
 use rusqlite::OptionalExtension;
 use std::time::Instant;
 
+const RAISE_QUEUED_JOB_SQL: &str =
+    "UPDATE jobs SET priority=MAX(priority,?),depth=MAX(COALESCE(depth,0),?) WHERE id=?";
+const HAS_CURRENT_ANALYSIS_SQL: &str =
+    "SELECT EXISTS(SELECT 1 FROM game_analysis WHERE game_id=? AND depth>=? AND version>=?)";
+const ACTIVE_JOB_SQL: &str = "SELECT id,status,COALESCE(depth,0) FROM jobs WHERE game_id=? AND status IN ('queued','running')";
+const RAISE_FOLLOWUP_SQL: &str = "UPDATE jobs SET followup_priority=MAX(COALESCE(followup_priority,?1),?1),followup_depth=MAX(COALESCE(followup_depth,?2),?2) WHERE id=?3";
+const INSERT_JOB_SQL: &str = "INSERT INTO jobs(game_id,status,priority,depth,created_at,sort_key) VALUES(?,'queued',?,?,?,?)";
+const RECENT_DURATION_SQL: &str = "SELECT AVG(duration_ms) FROM (SELECT duration_ms FROM game_analysis ORDER BY analyzed_at DESC LIMIT 30)";
+const NEXT_JOB_SQL: &str = "SELECT j.*,g.uuid AS game_uuid,g.pgn AS game_pgn FROM jobs j JOIN games g ON g.id=j.game_id WHERE j.status='queued' ORDER BY j.priority DESC,j.sort_key DESC,j.id LIMIT 1";
+const CLAIM_JOB_SQL: &str =
+    "UPDATE jobs SET status='running',started_at=?,attempts=attempts+1,claim_token=? WHERE id=?";
+const RELEASE_FAILED_JOB_SQL: &str = "UPDATE jobs SET status=CASE WHEN attempts>=3 THEN 'failed' ELSE 'queued' END,priority=priority-1,error=?,finished_at=CASE WHEN attempts>=3 THEN ? ELSE NULL END,followup_priority=CASE WHEN attempts<3 THEN followup_priority END,followup_depth=CASE WHEN attempts<3 THEN followup_depth END WHERE id=? AND claim_token=? AND status='running'";
+const RELEASE_CANCELLED_JOB_SQL: &str = "UPDATE jobs SET status='queued',attempts=MAX(0,attempts-1),error=NULL WHERE id=? AND claim_token=? AND status='running'";
+const BACKFILL_GAMES_SQL: &str = "SELECT ag.game_id FROM account_games ag JOIN games g ON g.id=ag.game_id LEFT JOIN game_analysis ga ON ga.game_id=g.id LEFT JOIN jobs j ON j.game_id=g.id WHERE ag.account_id=? AND ga.game_id IS NULL AND j.id IS NULL AND g.rules IN ('chess','chess960')";
+const PRUNE_FAILED_JOBS_SQL: &str = "DELETE FROM jobs WHERE status='failed' AND id NOT IN(SELECT MAX(id) FROM jobs WHERE status='failed' GROUP BY game_id)";
+const RETRY_FAILED_JOBS_SQL: &str = "UPDATE jobs SET status='queued',attempts=0,error=NULL WHERE status='failed' AND game_id NOT IN(SELECT game_id FROM jobs WHERE status IN('queued','running'))";
+
 pub(super) struct PendingRelease {
     id: i64,
     token: String,
@@ -49,11 +66,8 @@ impl Services {
         account: Option<(i64, &str)>,
     ) -> Result<usize> {
         let settings = if account.is_some() {
-            let Some(settings) = settings::get_settings_until(
-                &self.db,
-                Instant::now() + Duration::from_secs(2),
-                || self.stop.load(Ordering::SeqCst),
-            )?
+            let (deadline, cancelled) = self.db_wait();
+            let Some(settings) = settings::get_settings_until(&self.db, deadline, cancelled)?
             else {
                 return Err(super::sync::SyncDbBusy.into());
             };
@@ -72,12 +86,9 @@ impl Services {
             self.enqueue_in(tx, ids, priority, depth, force, account)
         };
         let added = if account.is_some() {
+            let (deadline, cancelled) = self.db_wait();
             self.db
-                .transaction_until(
-                    Instant::now() + Duration::from_secs(2),
-                    || self.stop.load(Ordering::SeqCst),
-                    enqueue,
-                )?
+                .transaction_until(deadline, cancelled, enqueue)?
                 .ok_or(super::sync::SyncDbBusy)?
         } else {
             self.db.transaction(enqueue)?
@@ -161,23 +172,35 @@ impl Services {
                 continue;
             }
             if !force {
-                let done:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM game_analysis WHERE game_id=? AND depth>=? AND version>=?)",rusqlite::params![id,depth,ANALYSIS_VERSION],|r|r.get(0))?;
+                let done: bool = tx.query_row(
+                    HAS_CURRENT_ANALYSIS_SQL,
+                    rusqlite::params![id, depth, ANALYSIS_VERSION],
+                    |r| r.get(0),
+                )?;
                 if done {
                     continue;
                 }
             }
-            let active=tx.query_row("SELECT id,status,COALESCE(depth,0) FROM jobs WHERE game_id=? AND status IN ('queued','running')",[id],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?))).optional()?;
+            let active = tx
+                .query_row(ACTIVE_JOB_SQL, [id], |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
+                })
+                .optional()?;
             if let Some((job, status, running_depth)) = active {
                 if status == "queued" {
-                    tx.execute("UPDATE jobs SET priority=MAX(priority,?),depth=MAX(COALESCE(depth,0),?) WHERE id=?",rusqlite::params![priority,depth,job])?;
+                    tx.execute(
+                        RAISE_QUEUED_JOB_SQL,
+                        rusqlite::params![priority, depth, job],
+                    )?;
                 } else if account.is_none() {
                     // Store the request with the running job. Saving that job's analysis
                     // queues its follow-up in the same transaction.
                     if running_depth < depth {
-                        tx.execute(
-                            "UPDATE jobs SET followup_priority=MAX(COALESCE(followup_priority,?1),?1),followup_depth=MAX(COALESCE(followup_depth,?2),?2) WHERE id=?3",
-                            rusqlite::params![priority, depth, job],
-                        )?;
+                        tx.execute(RAISE_FOLLOWUP_SQL, rusqlite::params![priority, depth, job])?;
                         added += 1;
                     } else if force {
                         // The running job is already a fresh analysis at this depth or deeper.
@@ -187,7 +210,10 @@ impl Services {
                 continue;
             }
             tx.execute("DELETE FROM jobs WHERE game_id=? AND status='failed'", [id])?;
-            tx.execute("INSERT INTO jobs(game_id,status,priority,depth,created_at,sort_key) VALUES(?,'queued',?,?,?,?)",rusqlite::params![id,priority,depth,now(),end_time.unwrap_or(0)])?;
+            tx.execute(
+                INSERT_JOB_SQL,
+                rusqlite::params![id, priority, depth, now(), end_time.unwrap_or(0)],
+            )?;
             added += 1;
         }
         Ok(added)
@@ -217,7 +243,12 @@ impl Services {
             .values()
             .map(|(v, _)| v.clone())
             .collect::<Vec<_>>();
-        let avg=self.db.scalar("SELECT AVG(duration_ms) FROM (SELECT duration_ms FROM game_analysis ORDER BY analyzed_at DESC LIMIT 30)",&[]).ok().and_then(|v|v.as_f64()).filter(|v|*v>0.);
+        let avg = self
+            .db
+            .scalar(RECENT_DURATION_SQL, &[])
+            .ok()
+            .and_then(|v| v.as_f64())
+            .filter(|v| *v > 0.);
         let workers = self.worker_count.load(Ordering::SeqCst);
         let queued = *counts.get("queued").unwrap_or(&0);
         json!({"paused":self.paused.load(Ordering::SeqCst),"workers":workers,"engine":*self.engine_name.lock().unwrap(),"engine_error":*self.engine_error.lock().unwrap(),"queued":queued,"running":counts.get("running").copied().unwrap_or(0),"failed":counts.get("failed").copied().unwrap_or(0),"done":counts.get("done").copied().unwrap_or(0),"active":active,"avg_game_seconds":avg.map(|v|(v/100.).round()/10.),"eta_seconds":avg.filter(|_|!self.paused.load(Ordering::SeqCst)).map(|v|(queued as f64*v/1000./workers.max(1) as f64)as i64)})
@@ -237,11 +268,8 @@ impl Services {
                 for (_, h) in workers.drain(..) {
                     let _ = h.join();
                 }
-                let settings = match settings::get_settings_until(
-                    &self.db,
-                    Instant::now() + Duration::from_secs(2),
-                    || self.stop.load(Ordering::SeqCst),
-                ) {
+                let (deadline, cancelled) = self.db_wait();
+                let settings = match settings::get_settings_until(&self.db, deadline, cancelled) {
                     Ok(Some(settings)) => settings,
                     Ok(None) => continue,
                     Err(error) => {
@@ -288,15 +316,26 @@ impl Services {
         self.worker_count.store(0, Ordering::SeqCst);
     }
     fn claim(&self, cancel: &AtomicBool) -> Result<Option<Value>> {
-        Ok(self.db.transaction_until(Instant::now()+Duration::from_secs(2),||cancel.load(Ordering::SeqCst)||self.stop.load(Ordering::SeqCst),|tx|{
-            let mut job=query_connection(tx,"SELECT j.*,g.uuid AS game_uuid,g.pgn AS game_pgn FROM jobs j JOIN games g ON g.id=j.game_id WHERE j.status='queued' ORDER BY j.priority DESC,j.sort_key DESC,j.id LIMIT 1",&[])?.into_iter().next();
-            if let Some(job)=&mut job {
-                let token=format!("{:032x}",rand::random::<u128>());
-                tx.execute("UPDATE jobs SET status='running',started_at=?,attempts=attempts+1,claim_token=? WHERE id=?",rusqlite::params![now(),token,job["id"].as_i64()])?;
-                job["claim_token"]=json!(token);
-            }
-            Ok(job)
-        })?.flatten())
+        let (deadline, stopped) = self.db_wait();
+        Ok(self
+            .db
+            .transaction_until(
+                deadline,
+                || cancel.load(Ordering::SeqCst) || stopped(),
+                |tx| {
+                    let mut job = query_connection(tx, NEXT_JOB_SQL, &[])?.into_iter().next();
+                    if let Some(job) = &mut job {
+                        let token = format!("{:032x}", rand::random::<u128>());
+                        tx.execute(
+                            CLAIM_JOB_SQL,
+                            rusqlite::params![now(), token, job["id"].as_i64()],
+                        )?;
+                        job["claim_token"] = json!(token);
+                    }
+                    Ok(job)
+                },
+            )?
+            .flatten())
     }
     fn release_job(&self, job: &Value, error: Option<String>) {
         self.pending_releases.lock().unwrap().push(PendingRelease {
@@ -314,17 +353,29 @@ impl Services {
         // Cleanup deliberately remains allowed after cancellation, but only for
         // this short budget. If a writer still holds SQLite, retain the tokens
         // for the supervisor's next pass (or startup recovery after shutdown).
-        let result=self.db.transaction_until(Instant::now()+budget,||false,|tx|{
-            for release in &releases {
-                if let Some(message)=&release.error {
-                    let changed=tx.execute("UPDATE jobs SET status=CASE WHEN attempts>=3 THEN 'failed' ELSE 'queued' END,priority=priority-1,error=?,finished_at=CASE WHEN attempts>=3 THEN ? ELSE NULL END,followup_priority=CASE WHEN attempts<3 THEN followup_priority END,followup_depth=CASE WHEN attempts<3 THEN followup_depth END WHERE id=? AND claim_token=? AND status='running'",rusqlite::params![message,now(),release.id,release.token])?;
-                    if changed>0 {crate::db::insert_event(tx,"error","analysis",message,None)?;}
-                }else{
-                    tx.execute("UPDATE jobs SET status='queued',attempts=MAX(0,attempts-1),error=NULL WHERE id=? AND claim_token=? AND status='running'",rusqlite::params![release.id,release.token])?;
+        let result = self.db.transaction_until(
+            Instant::now() + budget,
+            || false,
+            |tx| {
+                for release in &releases {
+                    if let Some(message) = &release.error {
+                        let changed = tx.execute(
+                            RELEASE_FAILED_JOB_SQL,
+                            rusqlite::params![message, now(), release.id, release.token],
+                        )?;
+                        if changed > 0 {
+                            crate::db::insert_event(tx, "error", "analysis", message, None)?;
+                        }
+                    } else {
+                        tx.execute(
+                            RELEASE_CANCELLED_JOB_SQL,
+                            rusqlite::params![release.id, release.token],
+                        )?;
+                    }
                 }
-            }
-            Ok(())
-        });
+                Ok(())
+            },
+        );
         if !matches!(result, Ok(Some(()))) {
             if let Err(error) = result {
                 tracing::warn!(%error,"Could not persist worker cleanup; retaining claims for retry");
@@ -348,11 +399,12 @@ impl Services {
             }
             if engine.is_none() {
                 // Avoid launching engines on an empty queue.
+                let (deadline, stopped) = self.db_wait();
                 if !self
                     .db
                     .read_until(
-                        Instant::now() + Duration::from_secs(2),
-                        || cancel.load(Ordering::SeqCst) || self.stop.load(Ordering::SeqCst),
+                        deadline,
+                        || cancel.load(Ordering::SeqCst) || stopped(),
                         |c| {
                             Ok(c.query_row(
                                 "SELECT EXISTS(SELECT 1 FROM jobs WHERE status='queued')",
@@ -434,11 +486,12 @@ impl Services {
         let id = job["id"].as_i64().unwrap();
         let game_id = job["game_id"].as_i64().unwrap();
         let token = job["claim_token"].as_str().unwrap();
+        let (deadline, stopped) = self.db_wait();
         let Some(game) = self
             .db
             .read_until(
-                Instant::now() + Duration::from_secs(2),
-                || cancel.load(Ordering::SeqCst) || self.stop.load(Ordering::SeqCst),
+                deadline,
+                || cancel.load(Ordering::SeqCst) || stopped(),
                 |c| {
                     Ok(query_connection(
                         c,
@@ -457,11 +510,10 @@ impl Services {
         else {
             return Ok(false);
         };
-        let Some(settings) = settings::get_settings_until(
-            &self.db,
-            Instant::now() + Duration::from_secs(2),
-            || cancel.load(Ordering::SeqCst) || self.stop.load(Ordering::SeqCst),
-        )?
+        let (deadline, stopped) = self.db_wait();
+        let Some(settings) = settings::get_settings_until(&self.db, deadline, || {
+            cancel.load(Ordering::SeqCst) || stopped()
+        })?
         else {
             return Ok(false);
         };
@@ -547,7 +599,7 @@ impl Services {
         Ok(true)
     }
     pub(super) fn backfill(&self, account: i64) -> Result<usize> {
-        let rows=self.db.query("SELECT ag.game_id FROM account_games ag JOIN games g ON g.id=ag.game_id LEFT JOIN game_analysis ga ON ga.game_id=g.id LEFT JOIN jobs j ON j.game_id=g.id WHERE ag.account_id=? AND ga.game_id IS NULL AND j.id IS NULL AND g.rules IN ('chess','chess960')",&[json!(account)])?;
+        let rows = self.db.query(BACKFILL_GAMES_SQL, &[json!(account)])?;
         self.enqueue(
             &rows
                 .iter()
@@ -559,7 +611,10 @@ impl Services {
         )
     }
     pub(super) fn retry_failed(&self) -> Result<usize> {
-        let count=self.db.transaction(|tx|{tx.execute("DELETE FROM jobs WHERE status='failed' AND id NOT IN(SELECT MAX(id) FROM jobs WHERE status='failed' GROUP BY game_id)",[])?;Ok(tx.execute("UPDATE jobs SET status='queued',attempts=0,error=NULL WHERE status='failed' AND game_id NOT IN(SELECT game_id FROM jobs WHERE status IN('queued','running'))",[])?)})?;
+        let count = self.db.transaction(|tx| {
+            tx.execute(PRUNE_FAILED_JOBS_SQL, [])?;
+            Ok(tx.execute(RETRY_FAILED_JOBS_SQL, [])?)
+        })?;
         self.notify();
         Ok(count)
     }

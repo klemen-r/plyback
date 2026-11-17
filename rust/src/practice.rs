@@ -12,7 +12,13 @@
 //! it was answered); a wrong answer sends it back to the first box and brings it back after
 //! `RETRY_SECONDS`.
 use crate::{
-    ApiResult, Query, analysis::expected_points, api_error, db::Database, now, pgn, tactics,
+    ApiResult, Query,
+    analysis::expected_points,
+    api_error,
+    db::Database,
+    now,
+    params::{filter, named_id as id, object},
+    pgn, tactics,
 };
 use anyhow::Result;
 use chrono::{DateTime, Days, NaiveTime, TimeZone};
@@ -181,14 +187,6 @@ fn candidates(
         out.push(candidate);
     }
     Ok(out)
-}
-
-fn filter<'a>(q: &'a Query, key: &str, allowed: &[&str]) -> Result<Option<&'a str>> {
-    match q.get(key).map(String::as_str) {
-        None | Some("") | Some("all") => Ok(None),
-        Some(value) if allowed.contains(&value) => Ok(Some(value)),
-        Some(_) => Err(api_error(422, format!("Invalid {key}"))),
-    }
 }
 
 fn stats(all: &[Candidate], at: i64) -> Value {
@@ -479,13 +477,6 @@ fn account_exists(db: &Database, account: i64) -> Result<()> {
     found.ok_or_else(|| api_error(404, "Account not found"))
 }
 
-fn id(raw: &str, name: &str) -> Result<i64> {
-    raw.parse::<i64>()
-        .ok()
-        .filter(|v| *v > 0)
-        .ok_or_else(|| api_error(422, format!("{name} must be a positive integer")))
-}
-
 pub fn handle(
     db: &Database,
     method: &str,
@@ -503,9 +494,7 @@ pub fn handle(
         ("POST", ["api", "accounts", account, "practice", game, ply]) => Some((|| {
             let account = id(account, "account_id")?;
             account_exists(db, account)?;
-            if !body.is_object() {
-                return Err(api_error(422, "Expected a JSON object"));
-            }
+            object(body)?;
             answer(db, account, id(game, "game_id")?, id(ply, "ply")?, body)
         })()),
         (_, ["api", "accounts", _, "practice", ..]) => {

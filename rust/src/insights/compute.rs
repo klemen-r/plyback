@@ -9,6 +9,11 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::OnceLock;
 
+const SCOPE_GAMES_SQL: &str =
+    "SELECT g.id FROM account_games ag JOIN games g ON g.id=ag.game_id WHERE ";
+const INSIGHT_GAMES_SQL: &str = "SELECT g.id,g.url,g.time_control,g.time_class,g.rated,g.start_time,g.end_time,g.white_username,g.white_rating,g.white_result,g.black_username,g.black_rating,g.black_result,g.result,g.plies,g.chesscom_accuracy_white,g.chesscom_accuracy_black,g.first_moves,g.opening_eco,g.opening_name,g.opening_family,g.opening_variation,g.rules,ag.color,ga.game_id AS analyzed,ga.revision,ga.accuracy_white,ga.accuracy_black,ga.acpl_white,ga.acpl_black FROM account_games ag JOIN games g ON g.id=ag.game_id LEFT JOIN game_analysis ga ON ga.game_id=g.id WHERE ";
+const INSIGHT_MOVES_SQL: &str = "SELECT game_id,ply,color,san,classification,phase,ep_loss,cp_loss,accuracy,win_before,win_after,clock,time_spent,is_book,tags,epd_before,best_san,endgame_type FROM moves WHERE game_id IN (";
+
 const ERRORS: &[&str] = &["mistake", "blunder", "miss"];
 const CLASSES: &[&str] = &[
     "brilliant",
@@ -280,7 +285,17 @@ pub fn scope_game_ids(db: &Database, account: i64, filters: &Value) -> Result<Ve
     let f = normalize_filters(filters)?;
     let (mut clauses, params) = where_clause(account, &f);
     clauses.push("g.rules IN ('chess','chess960')".into());
-    Ok(db.query(&format!("SELECT g.id FROM account_games ag JOIN games g ON g.id=ag.game_id WHERE {} ORDER BY g.end_time,g.id",clauses.join(" AND ")),&params)?.iter().map(|r|integer(&r["id"])).collect())
+    Ok(db
+        .query(
+            &format!(
+                "{SCOPE_GAMES_SQL}{} ORDER BY g.end_time,g.id",
+                clauses.join(" AND ")
+            ),
+            &params,
+        )?
+        .iter()
+        .map(|r| integer(&r["id"]))
+        .collect())
 }
 
 // Insights only needs tag presence and the hanging-piece name. Skip the nested
@@ -521,7 +536,13 @@ fn load(db: &Database, account: i64, filters: &Value, report_id: Option<i64>) ->
         clauses.push("EXISTS (SELECT 1 FROM report_games rg WHERE rg.report_id=? AND rg.game_id=g.id AND rg.game_uuid=g.uuid)".into());
         params.push(json!(rid));
     }
-    let rows=db.query(&format!("SELECT g.id,g.url,g.time_control,g.time_class,g.rated,g.start_time,g.end_time,g.white_username,g.white_rating,g.white_result,g.black_username,g.black_rating,g.black_result,g.result,g.plies,g.chesscom_accuracy_white,g.chesscom_accuracy_black,g.first_moves,g.opening_eco,g.opening_name,g.opening_family,g.opening_variation,g.rules,ag.color,ga.game_id AS analyzed,ga.revision,ga.accuracy_white,ga.accuracy_black,ga.acpl_white,ga.acpl_black FROM account_games ag JOIN games g ON g.id=ag.game_id LEFT JOIN game_analysis ga ON ga.game_id=g.id WHERE {} ORDER BY g.end_time,g.id",clauses.join(" AND ")),&params)?;
+    let rows = db.query(
+        &format!(
+            "{INSIGHT_GAMES_SQL}{} ORDER BY g.end_time,g.id",
+            clauses.join(" AND ")
+        ),
+        &params,
+    )?;
     let mut games = Vec::with_capacity(rows.len());
     for row in rows {
         let white = row["color"] == "white";
@@ -569,7 +590,7 @@ fn load(db: &Database, account: i64, filters: &Value, report_id: Option<i64>) ->
         .collect::<Vec<_>>();
     for chunk in ids.chunks(500) {
         let sql = format!(
-            "SELECT game_id,ply,color,san,classification,phase,ep_loss,cp_loss,accuracy,win_before,win_after,clock,time_spent,is_book,tags,epd_before,best_san,endgame_type FROM moves WHERE game_id IN ({}) ORDER BY game_id,ply",
+            "{INSIGHT_MOVES_SQL}{}) ORDER BY game_id,ply",
             vec!["?"; chunk.len()].join(",")
         );
         // Profiling identified temporary JSON row maps as the dominant load cost.
