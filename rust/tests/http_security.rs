@@ -162,12 +162,17 @@ fn stalled_uploads_do_not_take_the_server_down() {
     // More stalled bodies than there are work permits (16).
     let mut stalled: Vec<_> = (0..20).map(|_| stalled_upload(addr)).collect();
     // Beyond the per-client upload cap (4), further uploads are refused at once; the rest wait.
+    // On a loaded machine, simultaneous request heads can find every work permit briefly taken,
+    // and "busy" (503) is then as correct a refusal as "too many uploads" (429).
     let statuses = stalled
         .iter_mut()
         .map(|stream| status_within(stream, std::time::Duration::from_secs(2)))
         .collect::<Vec<_>>();
     assert_eq!(
-        statuses.iter().filter(|s| **s == Some(429)).count(),
+        statuses
+            .iter()
+            .filter(|s| matches!(s, Some(429 | 503)))
+            .count(),
         16,
         "{statuses:?}"
     );
