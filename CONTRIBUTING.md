@@ -10,7 +10,7 @@ On macOS and Linux, `just setup-dev` also installs Chromium for the browser test
 Run all of these before submitting a change. On macOS and Linux, `just check` runs them in order.
 
 ```sh
-node --test scripts/install_stockfish.test.mjs
+node --test scripts/*.test.mjs
 
 cargo fmt --manifest-path rust/Cargo.toml --check
 cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets -- -D warnings
@@ -30,6 +30,8 @@ Stockfish (`node scripts/install_stockfish.mjs`); CI sets `PLYBACK_REQUIRE_STOCK
 skip. CI runs on Linux and Windows and builds the container.
 
 `just dev` serves the interface with live reload at localhost:5173; run `just run` alongside it.
+Development-only settings, such as local API fixtures, are listed in
+[docs/development.md](docs/development.md).
 
 ## Migrations and analysis versions
 

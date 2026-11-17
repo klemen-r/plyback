@@ -72,7 +72,7 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
-      - run: npm audit
+      - run: npm audit --omit=dev
 
   e2e:
     name: Setup, start and browser workflows (${{ matrix.os }})

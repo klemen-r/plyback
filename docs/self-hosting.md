@@ -24,7 +24,7 @@ On macOS and Linux, [just](https://just.systems/) wraps the common commands; run
 
 ## Network access
 
-Set a password before allowing access from other machines:
+Any bind address other than loopback requires a password. Set one first:
 
 ```powershell
 # Windows, from the repository root
@@ -39,6 +39,10 @@ Host checks apply with and without a password. Loopback names and the bind addre
 With a password and a wildcard bind (`0.0.0.0` or `::`), the machine's interface addresses and hostname
 are accepted too; they are read at startup, so restart after network changes. List any other name, such
 as a reverse-proxy or tailnet name, in `PLYBACK_ALLOWED_HOSTS` (names only, no scheme or port).
+
+Without a password, requests that came through a proxy (they carry `Forwarded` or `X-Forwarded-*`
+headers) are refused unless their Host is listed in `PLYBACK_ALLOWED_HOSTS`. This keeps a local proxy
+that rewrites Host to `127.0.0.1` from opening the server to everyone who can reach the proxy.
 
 Behind a proxy, rate limits use the connecting IP unless that IP is listed in `PLYBACK_TRUSTED_PROXIES`
 (for example `127.0.0.1,::1` for a local proxy). The proxy must overwrite or safely append
@@ -115,6 +119,5 @@ PGN import accepts files with up to 10,000 games.
 | `PLYBACK_LICHESS_API` | official API | Lichess API base, for fixtures and development |
 | `PLYBACK_FRONTEND` | `frontend/dist` | Built interface |
 
-`PLYBACK_ALLOW_UNAUTHENTICATED_REMOTE=1` allows remote access without a password; never use it on a
-network you don't control. Engine depth, workers, threads, hash size and sync intervals are set in
-the app under Settings.
+Engine depth, workers, threads, hash size and sync intervals are set in the app under Settings.
+Settings meant for development and tests are described in [development.md](development.md).
