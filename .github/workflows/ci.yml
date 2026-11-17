@@ -52,8 +52,11 @@ jobs:
           tool: cargo-audit@0.22.2
       - name: Audit Rust dependency lock
         if: matrix.os == 'ubuntu-latest'
+        # chrono and chrono-tz are flagged as unmaintained (no known vulnerability). Plyback uses
+        # them for dates and time zones; replace them when a maintained successor is chosen.
         run: |
-          cargo audit --file rust/Cargo.lock --deny warnings
+          cargo audit --file rust/Cargo.lock --deny warnings \
+            --ignore RUSTSEC-2026-0543 --ignore RUSTSEC-2026-0555
 
   frontend:
     name: Interface
