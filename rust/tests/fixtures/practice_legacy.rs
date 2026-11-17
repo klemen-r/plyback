@@ -1,7 +1,6 @@
-// Frozen candidate, queue and answer implementations from the pre-cache revision.
-// Only names, fixed-time/RNG injection and the new internal gap field differ.
-// Keeping the original SQL and response assembly independent detects ordering,
-// state-join, filtering and response changes introduced by the optimized path.
+// Independent uncached reference for candidate selection, queues and answers.
+// Fixed time and RNG keep comparisons deterministic. Separate SQL and response
+// assembly detect ordering, state-join, filtering and response differences.
 /// Practice positions for an account, optionally only the one at `(game, ply)`.
 fn legacy_candidates(
     connection: &Connection,
@@ -10,8 +9,7 @@ fn legacy_candidates(
     phase: Option<&str>,
     only: Option<(i64, i64)>,
 ) -> Result<Vec<Candidate>> {
-    // The original query left games with equal end times in query-plan order; the reference
-    // adds the same tiebreak the cache uses, so the comparison stays deterministic.
+    // Equal end times use the same deterministic tiebreak as the cached query.
     let mut statement = connection.prepare_cached(
         "SELECT m.game_id, m.ply, m.color, m.fen_before, m.san, m.uci, m.best_uci, m.best_san,
                 m.classification, m.phase, m.ep_loss, m.explanation, m.lines_json,

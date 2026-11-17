@@ -11,9 +11,9 @@ function markSvg(accent: string, tile = '#171717', fg = '#ffffff'): string {
 
 
 export type Mode = 'system' | 'light' | 'dark'
-export type BoardTheme = 'slate' | 'walnut' | 'green' | 'mono'
+type BoardTheme = 'slate' | 'walnut' | 'green' | 'mono'
 
-export interface Appearance {
+interface Appearance {
   mode: Mode
   accent: string
   board: BoardTheme

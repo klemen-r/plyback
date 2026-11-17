@@ -44,13 +44,3 @@ export default function PositionCard({ ex }: { ex: Example }) {
     </div>
   )
 }
-
-export function Examples({ items, limit = 4 }: { items: Example[]; limit?: number }) {
-  const shown = items.filter(e => e.fen).slice(0, limit)
-  if (!shown.length) return <p className="text-[13px] text-fg-3">No examples in this selection.</p>
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-      {shown.map(e => <PositionCard key={`${e.game_id}-${e.ply}`} ex={e} />)}
-    </div>
-  )
-}

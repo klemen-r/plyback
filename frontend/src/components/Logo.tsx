@@ -11,11 +11,3 @@ export function Mark({ size = 20, className }: { size?: number; className?: stri
     </svg>
   )
 }
-
-export default function Logo({ className }: { className?: string }) {
-  return (
-    <span className={clsx('inline-flex items-center gap-2 text-[15px] font-semibold tracking-[-0.02em] text-fg', className)}>
-      <Mark size={20} /> Plyback
-    </span>
-  )
-}

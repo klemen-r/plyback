@@ -19,7 +19,6 @@ async function serverAnswers() {
  * The shell stays up meanwhile and the header shows that the server cannot be reached.
  * A chunk that is still missing straight after a reload is a real error and is rethrown.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches React.lazy's own bound
 export function lazyPage<T extends ComponentType<any>>(load: () => Promise<{ default: T }>) {
   return lazy(async () => {
     try {

@@ -10,7 +10,7 @@ import { useChessground } from '../lib/useChessground'
 import PromotionPicker, { type Promotion } from './PromotionPicker'
 
 export interface BoardMove { from: string; to: string; promotion?: Promotion }
-export interface BoardProps {
+interface BoardProps {
   fen: string
   orientation: 'white' | 'black'
   lastMove?: [string, string] | null

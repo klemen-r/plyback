@@ -1,7 +1,7 @@
 import type { Key } from '@lichess-org/chessground/types'
 import { Chess } from 'chess.js'
 
-export interface VarStep { fen: string; san: string; from: Key; to: Key }
+interface VarStep { fen: string; san: string; from: Key; to: Key }
 export interface Variation { baseFen: string; basePly: number; steps: VarStep[]; idx: number; source: 'user' | 'engine' }
 
 export function buildSteps(fen: string, sans: string[]): VarStep[] {
@@ -30,7 +30,7 @@ export function playEngineLine(variation: Variation | null, fen: string, basePly
   return { ...variation, steps: [...kept, ...steps], idx: kept.length + at }
 }
 
-export type VariationAction =
+type VariationAction =
   | { type: 'start'; fen: string; basePly: number; sans: string[]; source: Variation['source'] }
   | { type: 'append'; san: string }
   | { type: 'continueWithLine'; from: Variation | null; fen: string; basePly: number; sans: string[]; idx: number }

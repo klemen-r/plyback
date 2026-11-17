@@ -259,8 +259,7 @@ fn concurrent_different_keys_and_databases_search_independently() {
     );
 }
 
-/// Observe this worker selecting a shared flight, rather than guessing that a
-/// sleep was long enough for it to get scheduled and reach the follower path.
+/// Signal when a worker selects a shared flight so follower checks wait for it.
 struct SharedWaitSignal(mpsc::Sender<()>);
 
 impl<S: Subscriber> Layer<S> for SharedWaitSignal {

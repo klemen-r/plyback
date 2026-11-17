@@ -4,7 +4,7 @@ import type React from 'react'
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { clampView, isFullView, minSpan, niceTicks, panView, zoomView, type View } from '../lib/charts'
 
-export interface Series {
+interface Series {
   key: string
   name: string
   color: string

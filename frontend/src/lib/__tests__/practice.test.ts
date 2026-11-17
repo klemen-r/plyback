@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Chess } from 'chess.js'
-import { alternativeLine, initialPuzzleState, practiceReducer, practiceSince, puzzlePgn, returnsIn } from '../practice'
+import { alternativeLine, initialPuzzleState, practiceReducer, practiceSince, puzzlePgn } from '../practice'
+import { dueIn } from '../format'
 import type { InteractiveResult, PracticeItem, PracticeResult } from '../types'
 
 const START = new Chess().fen()
@@ -29,9 +30,9 @@ describe('practice scheduling and export', () => {
 
   it('labels the next review relative to an explicit clock', () => {
     const now = new Date(2026, 10, 13, 10).getTime() / 1000
-    expect(returnsIn(now + 600, now)).toBe('later in this session')
-    expect(returnsIn(now + 86400, now)).toBe('tomorrow')
-    expect(returnsIn(now + 3 * 86400, now)).toBe('in 3 days')
+    expect(dueIn(now + 600, now)).toBe('later in this session')
+    expect(dueIn(now + 86400, now)).toBe('tomorrow')
+    expect(dueIn(now + 3 * 86400, now)).toBe('in 3 days')
   })
 
   it('exports the position, names, comment and legal prefix of the solution', () => {

@@ -29,7 +29,7 @@ export interface Account {
   queued: number
 }
 
-export interface PlayerSide {
+interface PlayerSide {
   username: string | null
   rating: number | null
   result: string | null
@@ -37,9 +37,9 @@ export interface PlayerSide {
   chesscom_accuracy: number | null
 }
 
-export interface Counts { white: Partial<Record<Classification, number>>; black: Partial<Record<Classification, number>> }
+interface Counts { white: Partial<Record<Classification, number>>; black: Partial<Record<Classification, number>> }
 
-export interface JobInfo { status: 'queued' | 'running' | 'failed'; error?: string; progress?: number; total?: number }
+interface JobInfo { status: 'queued' | 'running' | 'failed'; error?: string; progress?: number; total?: number }
 
 export interface GameSummary {
   id: number
@@ -68,7 +68,7 @@ export interface GameSummary {
   pgn_error?: string
 }
 
-export interface EngineLine { uci: string | null; cp: number; eval: string; san: string[]; depth: number }
+interface EngineLine { uci: string | null; cp: number; eval: string; san: string[]; depth: number }
 
 export interface MoveRow {
   ply: number
@@ -96,7 +96,7 @@ export interface MoveRow {
   reply?: { uci: string | null; san: string[]; cp: number } | null
 }
 
-export interface GameAnalysis {
+interface GameAnalysis {
   depth: number
   multipv: number
   engine: string
@@ -172,7 +172,7 @@ export interface InsightFilters {
   opponent?: string
 }
 
-export interface WDL {
+interface WDL {
   games: number; wins: number; draws: number; losses: number
   score: number | null; score_ci: [number, number]; confidence: Confidence
 }
@@ -186,7 +186,7 @@ export interface Example {
 
 export interface Resource { title: string; url: string; kind: string }
 
-export interface Rates {
+interface Rates {
   moves: number; accuracy: number | null; acpl: number | null
   inaccuracies_per_100: number | null; mistakes_per_100: number | null; blunders_per_100: number | null
 }

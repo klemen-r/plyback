@@ -1,6 +1,6 @@
 import type { Classification } from './types'
 
-export interface ClassMeta {
+interface ClassMeta {
   label: string
   color: string
   symbol: string

@@ -1,6 +1,6 @@
 import type { Key } from '@lichess-org/chessground/types'
 import { Chess } from 'chess.js'
-import { DAY, dueIn } from './format'
+import { DAY } from './format'
 import type { InteractiveResult, PracticeItem, PracticeResult, PracticeTheme } from './types'
 
 export const PRACTICE_THEMES: [PracticeTheme, string][] = [
@@ -12,8 +12,8 @@ export const PRACTICE_THEMES: [PracticeTheme, string][] = [
 export const PRACTICE_THEME_LABEL = Object.fromEntries(PRACTICE_THEMES) as Record<PracticeTheme, string>
 
 export type PracticeRange = 'all' | 'today' | '7' | '30'
-export type PuzzleStatus = 'solving' | 'checking' | 'solved' | 'revealed'
-export interface PuzzleState {
+type PuzzleStatus = 'solving' | 'checking' | 'solved' | 'revealed'
+interface PuzzleState {
   status: PuzzleStatus
   solution: PracticeResult | null
   played: string[]
@@ -31,7 +31,7 @@ export interface PuzzleState {
   lineFor: boolean
 }
 
-export type PuzzleAction =
+type PuzzleAction =
   | { type: 'setting'; fullLine: boolean }
   | { type: 'answer'; result: PracticeResult }
   | { type: 'play'; moves: string[] }
@@ -84,8 +84,6 @@ export function practiceSince(range: PracticeRange, now: number): number | undef
   }
   return now - Number(range) * DAY
 }
-
-export function returnsIn(due: number, now: number) { return dueIn(due, now) }
 
 /** A different continuation is accepted within this many winning-chance percentage points. */
 const ALT_MARGIN = 5

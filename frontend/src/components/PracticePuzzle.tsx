@@ -12,8 +12,8 @@ import { Button, Card, ErrorNote, Input } from './ui'
 import { api } from '../lib/api'
 import { CLASS_META, PHASE_LABEL } from '../lib/classification'
 import { uciSquares as squares } from '../lib/chess'
-import { cap, fmtDate, nowTs } from '../lib/format'
-import { alternativeLine, initialPuzzleState, practiceReducer, puzzlePgn, returnsIn, PRACTICE_THEME_LABEL as THEME_LABEL } from '../lib/practice'
+import { cap, dueIn, fmtDate, nowTs } from '../lib/format'
+import { alternativeLine, initialPuzzleState, practiceReducer, puzzlePgn, PRACTICE_THEME_LABEL as THEME_LABEL } from '../lib/practice'
 import type { Account, InteractiveResult, PracticeItem, PracticeResult } from '../lib/types'
 import { buildSteps as walk } from '../lib/variation'
 
@@ -341,7 +341,7 @@ export default function PracticePuzzle({ account, item, index, total, fullLine, 
                       : `The move was ${solution.best_san}`}
                   </div>
                   <p className="mt-2 text-[13.5px] text-fg-2">
-                    {note ? `${note} ` : ''}In the game you played {solution.game_san}. {firstTry ? 'It comes back' : 'Only the first try counts, so it comes back'} {returnsIn(solution.due_at, nowTs())}.
+                    {note ? `${note} ` : ''}In the game you played {solution.game_san}. {firstTry ? 'It comes back' : 'Only the first try counts, so it comes back'} {dueIn(solution.due_at, nowTs())}.
                   </p>
                   {(solution.themes ?? item.themes ?? []).length > 0 && (
                     <p className="mt-3 border-t border-line pt-3 text-[13px] text-fg-2" aria-label="Puzzle themes">

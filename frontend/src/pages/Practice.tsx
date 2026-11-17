@@ -6,8 +6,8 @@ import PracticePuzzle from '../components/PracticePuzzle'
 import { Button, Card, Empty, ErrorNote, Loading, PageHeader, Select, Switch, Tabs } from '../components/ui'
 import { useAccount } from '../lib/account-context'
 import { api } from '../lib/api'
-import { nowTs } from '../lib/format'
-import { practiceSince as since, returnsIn, PRACTICE_THEMES as THEMES, type PracticeRange as Range } from '../lib/practice'
+import { dueIn, nowTs } from '../lib/format'
+import { practiceSince as since, PRACTICE_THEMES as THEMES, type PracticeRange as Range } from '../lib/practice'
 import { storedChoice as stored, writeStorage } from '../lib/storage'
 import type { PracticeItem, PracticeKind, PracticePhase, PracticeResult, PracticeStats, PracticeTheme } from '../lib/types'
 
@@ -136,7 +136,7 @@ function PracticeSession() {
       </dl>
       <div className="border-t border-line px-3 py-2 text-[12.5px] text-fg-2">
         {score.done > 0 ? `This session: ${score.right} of ${score.done} on the first try` : `${shownStats.total} ${shownStats.total === 1 ? 'position' : 'positions'}${range === 'all' ? '' : ' from these games'} with one clear answer`}
-        {range === 'all' && shownStats.next_due_at && !shownStats.due ? ` · next review ${returnsIn(shownStats.next_due_at, nowTs())}` : ''}
+        {range === 'all' && shownStats.next_due_at && !shownStats.due ? ` · next review ${dueIn(shownStats.next_due_at, nowTs())}` : ''}
       </div>
     </Card>
   ) : null
@@ -156,7 +156,7 @@ function PracticeSession() {
                   action={<Button variant="primary" onClick={restart}><RotateCcw className="h-3.5 w-3.5" />{range !== 'all' || shownStats?.due || shownStats?.new ? 'Keep going' : 'Check again'}</Button>}>
                   {range !== 'all' ? 'Go round again with the same games in a new order.'
                     : shownStats?.due || shownStats?.new ? 'More positions are ready.'
-                    : shownStats?.next_due_at ? `The next review is due ${returnsIn(shownStats.next_due_at, nowTs())}.` : 'You have answered every position.'}
+                    : shownStats?.next_due_at ? `The next review is due ${dueIn(shownStats.next_due_at, nowTs())}.` : 'You have answered every position.'}
                 </Empty>}
           </Card></div>
         ) : (

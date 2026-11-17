@@ -19,7 +19,7 @@ const STATUS: Record<string, string> = {
 }
 const said = (termination: string) => STATUS[termination] ?? termination
 
-export interface Ending {
+interface Ending {
   /** One or two words for tables: "Checkmate", "Time", "Repetition". */
   short: string
   /** A sentence fragment from the account's side when known: "Won by checkmate", "Lost on time". */
