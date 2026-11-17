@@ -2215,6 +2215,7 @@ mod tests {
                 base: server.base.join("pub").unwrap(),
                 client: OnceLock::new(),
                 serial: Mutex::new(None),
+                retry_wait: Arc::new(wait_cancel),
             };
             let watchdog_service = service.clone();
             let (done_tx, done_rx) = std::sync::mpsc::channel();

@@ -2535,8 +2535,8 @@ mod tests {
             );
             let loaded = loaded_games(&db, 1).unwrap();
             for game in loaded.iter() {
-                assert_eq!(game.row["white_clock_base"], 150);
-                assert_eq!(game.row["black_clock_base"], 300);
+                assert_eq!(game.row["white_clock_base"].as_f64(), Some(150.0));
+                assert_eq!(game.row["black_clock_base"].as_f64(), Some(300.0));
                 assert!(game.row.get("clock_pgn").is_none());
             }
             assert_eq!(
