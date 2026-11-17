@@ -27,6 +27,10 @@ use rand::seq::SliceRandom;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 use shakmaty::uci::UciMove;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 /// Smallest expected-points margin between the best and second-best engine
 /// line for a position to have one fair answer.
@@ -52,6 +56,7 @@ struct Candidate {
     classification: String,
     phase: Option<String>,
     ep_loss: f64,
+    gap: f64,
     explanation: Option<String>,
     line_san: Vec<String>,
     themes: Vec<&'static str>,
@@ -98,95 +103,228 @@ fn answer_line(lines_json: &str, white: bool, best_uci: &str) -> Option<(f64, Ve
     Some((gap, san))
 }
 
-/// Practice positions for an account, optionally only the one at `(game, ply)`.
-fn candidates(
-    connection: &Connection,
-    account: i64,
-    kind: Option<&str>,
-    phase: Option<&str>,
-    only: Option<(i64, i64)>,
-) -> Result<Vec<Candidate>> {
-    let mut statement = connection.prepare_cached(
-        "SELECT m.game_id, m.ply, m.color, m.fen_before, m.san, m.uci, m.best_uci, m.best_san,
-                m.classification, m.phase, m.ep_loss, m.explanation, m.lines_json,
+/// Static candidates belong to the database, not a process-global path cache.
+/// Keep at most eight accounts and 16 MiB of candidate allocations.
+#[derive(Default)]
+pub(crate) struct CandidateCache(Mutex<Cache>);
+#[derive(Default)]
+struct Cache {
+    entries: HashMap<i64, CandidateEntry>,
+    clock: u64,
+}
+struct CandidateEntry {
+    revision: i64,
+    candidates: Arc<Vec<Candidate>>,
+    bytes: usize,
+    used: u64,
+}
+
+const CANDIDATE_SELECT: &str = "SELECT m.game_id, m.ply, m.color, m.fen_before, m.san, m.best_uci,
+                m.best_san, m.classification, m.phase, m.ep_loss, m.explanation, m.lines_json,
                 prev.uci, prev.san, g.end_time, g.time_class, g.rules,
                 CASE WHEN m.color='w' THEN g.black_username ELSE g.white_username END,
-                CASE WHEN m.color='w' THEN g.black_rating ELSE g.white_rating END,
-                p.box, p.due_at, p.attempts, p.correct
+                CASE WHEN m.color='w' THEN g.black_rating ELSE g.white_rating END
          FROM account_games ag
          JOIN games g ON g.id = ag.game_id
          JOIN moves m ON m.game_id = ag.game_id AND m.color = substr(ag.color, 1, 1)
          LEFT JOIN moves prev ON prev.game_id = m.game_id AND prev.ply = m.ply - 1
-         LEFT JOIN practice_items p
-           ON p.account_id = ag.account_id AND p.game_id = m.game_id AND p.ply = m.ply
          WHERE ag.account_id = ?1
            AND m.classification IN ('blunder', 'mistake', 'miss')
-           AND (?2 IS NULL OR m.classification = ?2)
-           AND (?3 IS NULL OR m.phase = ?3)
-           AND (?4 IS NULL OR (m.game_id = ?4 AND m.ply = ?5))
            AND m.best_uci IS NOT NULL AND m.best_uci <> m.uci
-           AND m.lines_json IS NOT NULL
-           AND g.rules = 'chess'
-         ORDER BY g.end_time DESC, m.ply",
-    )?;
-    let rows = statement.query_map(
-        params![account, kind, phase, only.map(|o| o.0), only.map(|o| o.1)],
-        |row| {
-            let color: String = row.get(2)?;
-            let best_uci: String = row.get(6)?;
-            let lines: String = row.get(12)?;
-            let box_: Option<i64> = row.get(20)?;
-            Ok((
-                Candidate {
-                    game_id: row.get(0)?,
-                    ply: row.get(1)?,
-                    fen: row.get(3)?,
-                    san: row.get(4)?,
-                    best_san: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
-                    classification: row.get(8)?,
-                    phase: row.get(9)?,
-                    ep_loss: row.get::<_, Option<f64>>(10)?.unwrap_or(0.0),
-                    explanation: row.get(11)?,
-                    line_san: Vec::new(),
-                    themes: Vec::new(),
-                    last_uci: row.get(13)?,
-                    last_san: row.get(14)?,
-                    end_time: row.get(15)?,
-                    time_class: row.get(16)?,
-                    rules: row.get(17)?,
-                    opponent: row.get(18)?,
-                    opponent_rating: row.get(19)?,
-                    state: match box_ {
-                        Some(box_) => Some(State {
-                            box_,
-                            due_at: row.get(21)?,
-                            attempts: row.get(22)?,
-                            correct: row.get(23)?,
-                        }),
-                        None => None,
-                    },
-                    color: color.clone(),
-                    best_uci: best_uci.clone(),
-                },
-                lines,
-            ))
-        },
-    )?;
+           AND m.lines_json IS NOT NULL AND g.rules = 'chess'";
+
+/// The single-position statement has direct PK predicates rather than optional ORs.
+fn candidates(
+    connection: &Connection,
+    account: i64,
+    only: Option<(i64, i64)>,
+) -> Result<Vec<Candidate>> {
+    let sql = if only.is_some() {
+        format!("{CANDIDATE_SELECT} AND m.game_id = ?2 AND m.ply = ?3")
+    } else {
+        format!("{CANDIDATE_SELECT} ORDER BY g.end_time DESC, m.game_id DESC, m.ply")
+    };
+    let mut statement = connection.prepare_cached(&sql)?;
+    let mut rows = match only {
+        Some((game, ply)) => statement.query(params![account, game, ply])?,
+        None => statement.query([account])?,
+    };
     let mut out = Vec::new();
-    for row in rows {
-        let (mut candidate, lines) = row?;
-        let Some((gap, line_san)) =
-            answer_line(&lines, candidate.color == "w", &candidate.best_uci)
-        else {
+    while let Some(row) = rows.next()? {
+        let color: String = row.get(2)?;
+        let best_uci: String = row.get(5)?;
+        let lines: String = row.get(11)?;
+        let Some((gap, line_san)) = answer_line(&lines, color == "w", &best_uci) else {
             continue;
         };
         if gap < MIN_GAP {
             continue;
         }
-        candidate.line_san = line_san;
-        out.push(candidate);
+        out.push(Candidate {
+            game_id: row.get(0)?,
+            ply: row.get(1)?,
+            color,
+            fen: row.get(3)?,
+            san: row.get(4)?,
+            best_uci,
+            best_san: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+            classification: row.get(7)?,
+            phase: row.get(8)?,
+            ep_loss: row.get::<_, Option<f64>>(9)?.unwrap_or(0.0),
+            gap,
+            explanation: row.get(10)?,
+            line_san,
+            themes: Vec::new(),
+            last_uci: row.get(12)?,
+            last_san: row.get(13)?,
+            end_time: row.get(14)?,
+            time_class: row.get(15)?,
+            rules: row.get(16)?,
+            opponent: row.get(17)?,
+            opponent_rating: row.get(18)?,
+            state: None,
+        });
     }
     Ok(out)
+}
+
+type States = HashMap<(i64, i64), State>;
+fn states(connection: &Connection, account: i64) -> Result<States> {
+    let mut statement = connection.prepare_cached(
+        "SELECT game_id, ply, box, due_at, attempts, correct FROM practice_items WHERE account_id=?1"
+    )?;
+    Ok(statement
+        .query_map([account], |row| {
+            Ok((
+                (row.get(0)?, row.get(1)?),
+                State {
+                    box_: row.get(2)?,
+                    due_at: row.get(3)?,
+                    attempts: row.get(4)?,
+                    correct: row.get(5)?,
+                },
+            ))
+        })?
+        .collect::<rusqlite::Result<States>>()?)
+}
+
+fn candidate_bytes(all: &[Candidate]) -> usize {
+    all.iter()
+        .map(|c| {
+            std::mem::size_of::<Candidate>()
+                + [
+                    &c.color,
+                    &c.fen,
+                    &c.san,
+                    &c.best_uci,
+                    &c.best_san,
+                    &c.classification,
+                    &c.rules,
+                ]
+                .iter()
+                .map(|s| s.capacity())
+                .sum::<usize>()
+                + [
+                    &c.phase,
+                    &c.explanation,
+                    &c.last_uci,
+                    &c.last_san,
+                    &c.time_class,
+                    &c.opponent,
+                ]
+                .iter()
+                .filter_map(|s| s.as_ref())
+                .map(|s| s.capacity())
+                .sum::<usize>()
+                + c.line_san.capacity() * std::mem::size_of::<String>()
+                + c.line_san.iter().map(String::capacity).sum::<usize>()
+                + c.themes.capacity() * std::mem::size_of::<&str>()
+        })
+        .sum::<usize>()
+}
+
+fn detect_themes(all: &mut [Candidate]) {
+    for c in all {
+        debug_assert!(c.gap >= MIN_GAP);
+        c.themes = tactics::detect(&c.fen, &c.best_uci, &c.line_san);
+    }
+}
+
+fn with_states(all: &[Candidate], states: &States) -> Vec<Candidate> {
+    all.iter()
+        .map(|c| {
+            let mut c = c.clone();
+            c.state = states.get(&(c.game_id, c.ply)).copied();
+            c
+        })
+        .collect()
+}
+
+fn cached_candidates(db: &Database, account: i64) -> Result<Vec<Candidate>> {
+    // Serialize fills so concurrent queue requests only parse/detect once. The
+    // cache lock is never acquired from inside a database read or transaction.
+    let mut cache = db
+        .practice_candidates
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let (revision, state) = db.read(|connection| {
+        Ok((
+            connection.query_row("SELECT revision FROM data_revision WHERE id=1", [], |r| {
+                r.get::<_, i64>(0)
+            })?,
+            states(connection, account)?,
+        ))
+    })?;
+    cache.clock += 1;
+    let used = cache.clock;
+    if let Some(entry) = cache
+        .entries
+        .get_mut(&account)
+        .filter(|e| e.revision == revision)
+    {
+        entry.used = used;
+        return Ok(with_states(&entry.candidates, &state));
+    }
+    let (revision, mut all, state) = db.read(|connection| {
+        Ok((
+            connection.query_row("SELECT revision FROM data_revision WHERE id=1", [], |r| {
+                r.get::<_, i64>(0)
+            })?,
+            candidates(connection, account, None)?,
+            states(connection, account)?,
+        ))
+    })?;
+    detect_themes(&mut all);
+    let bytes =
+        candidate_bytes(&all) + (all.capacity() - all.len()) * std::mem::size_of::<Candidate>();
+    tracing::debug!(
+        account,
+        revision,
+        candidates = all.len(),
+        bytes,
+        "Practice candidates loaded"
+    );
+    let all = Arc::new(all);
+    cache.entries.remove(&account);
+    if bytes <= 16 * 1024 * 1024 {
+        cache.entries.insert(
+            account,
+            CandidateEntry {
+                revision,
+                candidates: all.clone(),
+                bytes,
+                used,
+            },
+        );
+        while cache.entries.len() > 8
+            || cache.entries.values().map(|e| e.bytes).sum::<usize>() > 16 * 1024 * 1024
+        {
+            let victim = *cache.entries.iter().min_by_key(|(_, e)| e.used).unwrap().0;
+            cache.entries.remove(&victim);
+        }
+    }
+    Ok(with_states(&all, &state))
 }
 
 fn stats(all: &[Candidate], at: i64) -> Value {
@@ -255,6 +393,17 @@ fn public(c: &Candidate, at: i64) -> Value {
 /// games can be gone through. The answer is not included; it is returned after
 /// an attempt.
 fn queue(db: &Database, account: i64, q: &Query) -> ApiResult {
+    queue_with(db, account, q, cached_candidates, &mut rand::rng(), now)
+}
+
+fn queue_with(
+    db: &Database,
+    account: i64,
+    q: &Query,
+    load: fn(&Database, i64) -> Result<Vec<Candidate>>,
+    rng: &mut impl rand::Rng,
+    clock: fn() -> i64,
+) -> ApiResult {
     let kind = filter(q, "kind", &KINDS)?;
     let phase = filter(q, "phase", &PHASES)?;
     let theme = filter(q, "theme", tactics::THEMES)?;
@@ -273,19 +422,21 @@ fn queue(db: &Database, account: i64, q: &Query) -> ApiResult {
                 .map_err(|_| api_error(422, "since must be a Unix timestamp"))?,
         ),
     };
-    let mut all = db.read(|c| candidates(c, account, kind, phase, None))?;
+    let mut all = load(db, account)?;
+    all.retain(|c| {
+        kind.is_none_or(|k| c.classification == k)
+            && phase.is_none_or(|p| c.phase.as_deref() == Some(p))
+    });
     if let Some(since) = since {
         all.retain(|c| c.end_time.is_some_and(|t| t >= since));
     }
-    // Pure detection runs after the read lock is released. Counts include scheduled
-    // positions and remain scoped to every filter except the selected theme.
+    // Cached themes include scheduled positions. Counts remain scoped to every
+    // filter except the selected theme.
     let mut theme_counts = serde_json::Map::new();
     for &name in tactics::THEMES {
         theme_counts.insert(name.to_owned(), json!(0));
     }
-    for candidate in &mut all {
-        candidate.themes =
-            tactics::detect(&candidate.fen, &candidate.best_uci, &candidate.line_san);
+    for candidate in &all {
         for &name in &candidate.themes {
             if let Some(count) = theme_counts.get_mut(name) {
                 *count = json!(count.as_u64().unwrap_or(0) + 1);
@@ -295,10 +446,10 @@ fn queue(db: &Database, account: i64, q: &Query) -> ApiResult {
     if let Some(theme) = theme {
         all.retain(|c| c.themes.contains(&theme));
     }
-    let at = now();
+    let at = clock();
     let items = if since.is_some() {
         let mut picked: Vec<&Candidate> = all.iter().collect();
-        picked.shuffle(&mut rand::rng());
+        picked.shuffle(rng);
         picked
             .into_iter()
             .take(limit)
@@ -360,6 +511,17 @@ pub fn schedule(box_: i64, correct: bool, at: i64, time_zone: Tz) -> (i64, i64) 
 }
 
 fn answer(db: &Database, account: i64, game: i64, ply: i64, body: &Value) -> ApiResult {
+    answer_with_clock(db, account, game, ply, body, now)
+}
+
+fn answer_with_clock(
+    db: &Database,
+    account: i64,
+    game: i64,
+    ply: i64,
+    body: &Value,
+    clock: fn() -> i64,
+) -> ApiResult {
     // `{"reveal": true}` shows the answer without a move and counts as a miss.
     let reveal = match body.get("reveal") {
         None | Some(Value::Bool(false)) => false,
@@ -385,7 +547,18 @@ fn answer(db: &Database, account: i64, game: i64, ply: i64, body: &Value) -> Api
         )
     };
     let mut candidate = db
-        .read(|c| candidates(c, account, None, None, Some((game, ply))))?
+        .read(|c| {
+            let mut all = candidates(c, account, Some((game, ply)))?;
+            if let Some(candidate) = all.first_mut() {
+                candidate.state = c.query_row(
+                    "SELECT box, due_at, attempts, correct FROM practice_items WHERE account_id=?1 AND game_id=?2 AND ply=?3",
+                    params![account, game, ply], |r| Ok(State {
+                        box_: r.get(0)?, due_at: r.get(1)?, attempts: r.get(2)?, correct: r.get(3)?,
+                    }),
+                ).optional()?;
+            }
+            Ok(all)
+        })?
         .into_iter()
         .next()
         .ok_or_else(|| api_error(404, "Practice position not found"))?;
@@ -393,7 +566,7 @@ fn answer(db: &Database, account: i64, game: i64, ply: i64, body: &Value) -> Api
     debug_assert_eq!(candidate.rules, "chess");
     let played = raw.map(|raw| normalize(&candidate.fen, raw)).transpose()?;
     let correct = played.as_deref() == Some(candidate.best_uci.as_str());
-    let at = now();
+    let at = clock();
     let before = candidate.state;
     let (box_, due_at) = match before {
         // A correct answer before the position is due (the Today / recent ranges list positions
@@ -438,7 +611,7 @@ fn answer(db: &Database, account: i64, game: i64, ply: i64, body: &Value) -> Api
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?)
     })?;
-    let all = db.read(|c| candidates(c, account, None, None, None))?;
+    let all = cached_candidates(db, account)?;
     let san = played.as_ref().map(|played| {
         pgn::board(&candidate.fen, false)
             .ok()
@@ -507,6 +680,209 @@ pub fn handle(
 #[cfg(test)]
 mod tests {
     use super::*;
+    include!("../tests/fixtures/practice_legacy.rs");
+
+    fn fixed_time() -> i64 {
+        2_000_000_000
+    }
+
+    fn cache_fixture() -> Database {
+        let db = Database::open(":memory:").unwrap();
+        db.transaction(|tx| {
+            tx.execute_batch("INSERT INTO accounts(id, username, added_at) VALUES(1,'me',0),(2,'other',0)")?;
+            let fen = "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4";
+            let lines = json!([{"cp":99999,"uci":"h5f7","san":["Qxf7#"]},{"cp":0,"uci":"d2d3","san":["d3"]}]).to_string();
+            for game in [8, 1, 6, 3, 9, 2, 5, 4, 7] {
+                tx.execute("INSERT INTO games(id,uuid,pgn,rules,end_time,time_class,white_username,black_username,imported_at)
+                    VALUES(?1,?2,'','chess',CASE WHEN ?1=5 THEN 11 ELSE 10 END,'blitz','me','rival',0)", params![game, format!("g{game}")])?;
+                tx.execute("INSERT INTO account_games(account_id,game_id,color) VALUES(1,?1,'white')", [game])?;
+                tx.execute("INSERT INTO moves(game_id,ply,color,san,uci,fen_before,epd_before,classification,phase,best_uci,best_san,lines_json,ep_loss)
+                    VALUES(?1,7,'w','Nc3','b1c3',?2,'',?3,?4,'h5f7','Qxf7#',?5,0.4)",
+                    params![game, fen, match game % 3 { 0 => "mistake", 1 => "blunder", _ => "miss" }, match game % 3 { 0 => "endgame", 1 => "opening", _ => "middlegame" }, lines])?;
+            }
+            // New, overdue learning, future learning, overdue mastered and future mastered.
+            for (game, box_, due_at) in [(2,0,0),(3,1,i64::MAX-1),(4,4,0),(5,5,i64::MAX-2)] {
+                tx.execute("INSERT INTO practice_items(account_id,game_id,ply,box,due_at,attempts,correct,lapses,first_seen_at,last_seen_at,last_correct)
+                    VALUES(1,?1,7,?2,?3,7,4,1,0,0,1)", params![game, box_, due_at])?;
+            }
+            Ok(())
+        }).unwrap();
+        db
+    }
+
+    fn assert_queue_bytes(db: &Database, filters: &[(&str, &str)]) {
+        use rand::SeedableRng;
+        let q = filters
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let cached = queue_with(
+            db,
+            1,
+            &q,
+            cached_candidates,
+            &mut rand::rngs::StdRng::seed_from_u64(42),
+            fixed_time,
+        )
+        .unwrap();
+        let uncached = legacy_queue(
+            db,
+            1,
+            &q,
+            &mut rand::rngs::StdRng::seed_from_u64(42),
+            fixed_time(),
+        )
+        .unwrap();
+        assert_eq!(cached.0, uncached.0);
+        assert_eq!(
+            serde_json::to_vec(&cached.1).unwrap(),
+            serde_json::to_vec(&uncached.1).unwrap(),
+            "{filters:?}"
+        );
+    }
+
+    #[test]
+    fn cached_and_uncached_queue_bytes_match_across_states_filters_and_revisions() {
+        let db = cache_fixture();
+        for filters in [
+            vec![],
+            vec![("kind", "miss")],
+            vec![("phase", "opening")],
+            vec![("theme", "mate-in-1")],
+            vec![("theme", "fork")],
+            vec![("limit", "1")],
+            // Seed the same random shuffle to compare recent ranges including scheduled items.
+            vec![("since", "0")],
+            vec![("since", "5")],
+        ] {
+            assert_queue_bytes(&db, &filters);
+            assert_queue_bytes(&db, &filters);
+        }
+        let all = cached_candidates(&db, 1).unwrap();
+        let counts = stats(&all, now());
+        assert_eq!(counts["new"], 5);
+        assert_eq!(counts["due"], 2);
+        assert_eq!(counts["mastered"], 2);
+        let shared = db.practice_candidates.0.lock().unwrap().entries[&1]
+            .candidates
+            .clone();
+        // State updates do not bump data_revision or rebuild static candidates.
+        db.execute(
+            "UPDATE practice_items SET due_at=0,box=2 WHERE game_id=5",
+            &[],
+        )
+        .unwrap();
+        assert_queue_bytes(&db, &[]);
+        assert!(Arc::ptr_eq(
+            &shared,
+            &db.practice_candidates.0.lock().unwrap().entries[&1].candidates
+        ));
+        db.transaction(|tx| {
+            tx.execute("UPDATE moves SET classification='good' WHERE game_id=1", [])?;
+            tx.execute(
+                "UPDATE data_revision SET revision=revision+1 WHERE id=1",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        assert_queue_bytes(&db, &[]);
+        assert_eq!(cached_candidates(&db, 1).unwrap().len(), 8);
+        assert!(!Arc::ptr_eq(
+            &shared,
+            &db.practice_candidates.0.lock().unwrap().entries[&1].candidates
+        ));
+        assert!(cached_candidates(&db, 2).unwrap().is_empty());
+        assert_eq!(cached_candidates(&cache_fixture(), 1).unwrap().len(), 9);
+    }
+
+    #[test]
+    fn original_queue_sql_matches_cached_bytes_with_ties_and_combined_filters() {
+        let db = cache_fixture();
+        for kind in ["all", "blunder", "mistake", "miss"] {
+            for phase in ["all", "opening", "middlegame", "endgame"] {
+                for theme in ["all", "mate-in-1", "fork"] {
+                    for since in ["", "0", "11"] {
+                        assert_queue_bytes(
+                            &db,
+                            &[
+                                ("kind", kind),
+                                ("phase", phase),
+                                ("theme", theme),
+                                ("since", since),
+                                ("limit", "3"),
+                            ],
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn original_and_cached_answer_bytes_match_for_every_scheduling_state() {
+        for warm in [false, true] {
+            for game in 1..=5 {
+                for body in [
+                    json!({"reveal":true}),
+                    json!({"uci":"h5f7","time_zone":"Europe/Ljubljana"}),
+                    json!({"uci":"d2d3"}),
+                ] {
+                    let db = cache_fixture();
+                    let baseline = cache_fixture();
+                    if warm {
+                        cached_candidates(&db, 1).unwrap();
+                    }
+                    let actual = answer_with_clock(&db, 1, game, 7, &body, fixed_time).unwrap();
+                    let expected =
+                        legacy_answer(&baseline, 1, game, 7, &body, fixed_time()).unwrap();
+                    assert_eq!(actual.0, expected.0);
+                    assert_eq!(
+                        serde_json::to_vec(&actual.1).unwrap(),
+                        serde_json::to_vec(&expected.1).unwrap(),
+                        "warm={warm} game={game} body={body}"
+                    );
+                    // Compare the second answer too: it exercises the duplicate-answer guard.
+                    let actual = answer_with_clock(&db, 1, game, 7, &body, fixed_time).unwrap();
+                    let expected =
+                        legacy_answer(&baseline, 1, game, 7, &body, fixed_time()).unwrap();
+                    assert_eq!(
+                        serde_json::to_vec(&actual.1).unwrap(),
+                        serde_json::to_vec(&expected.1).unwrap()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn single_candidate_uses_the_move_primary_key_and_matches_bulk() {
+        let db = cache_fixture();
+        db.read(|c| {
+            let sql =
+                format!("EXPLAIN QUERY PLAN {CANDIDATE_SELECT} AND m.game_id = ?2 AND m.ply = ?3");
+            let mut statement = c.prepare(&sql)?;
+            let plan = statement
+                .query_map(params![1, 3, 7], |r| r.get::<_, String>(3))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            assert!(
+                plan.iter().any(
+                    |s| s.contains("SEARCH m USING INDEX") && s.contains("game_id=? AND ply=?")
+                ),
+                "{plan:?}"
+            );
+            let bulk = candidates(c, 1, None)?;
+            let one = candidates(c, 1, Some((3, 7)))?;
+            assert_eq!(one.len(), 1);
+            assert_eq!(
+                format!("{:?}", bulk.iter().find(|c| c.game_id == 3).unwrap()),
+                format!("{:?}", &one[0])
+            );
+            assert!(candidates(c, 2, Some((3, 7)))?.is_empty());
+            Ok(())
+        })
+        .unwrap();
+    }
 
     #[test]
     fn schedule_climbs_boxes_and_resets_on_a_miss() {

@@ -30,6 +30,7 @@ pub struct Database {
     pub path: PathBuf,
     connection: Mutex<Connection>,
     pub(crate) position_searches: crate::engine::SearchFlights,
+    pub(crate) practice_candidates: crate::practice::CandidateCache,
 }
 
 struct ShortConnection<'a> {
@@ -89,12 +90,14 @@ impl Database {
         }
         connection.busy_timeout(Duration::from_secs(60))?;
         connection.execute_batch(
-            "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;",
+            "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;
+             PRAGMA cache_size=-65536;",
         )?;
         let db = Self {
             path,
             connection: Mutex::new(connection),
             position_searches: crate::engine::SearchFlights::default(),
+            practice_candidates: crate::practice::CandidateCache::default(),
         };
         db.migrate()?;
         Ok(db)

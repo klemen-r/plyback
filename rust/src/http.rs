@@ -34,6 +34,7 @@ pub struct App {
     pub db: Arc<Database>,
     pub services: Arc<Services>,
     pub insights: Arc<Insights>,
+    repertoire: crate::repertoire::Repertoire,
     interactive: Mutex<Option<Engine>>,
     limiter: security::RateLimiter,
     permits: Arc<Semaphore>,
@@ -50,6 +51,7 @@ impl App {
         let insights = Insights::new(db.clone(), services.clone());
         Ok(Arc::new(Self {
             config,
+            repertoire: crate::repertoire::Repertoire::new(db.clone()),
             db,
             services,
             insights,
@@ -83,10 +85,12 @@ impl App {
         self.cancel_requests();
         self.services.request_stop();
         self.insights.request_stop();
+        self.repertoire.request_stop();
     }
     pub fn stop(&self) {
         self.request_stop();
         self.insights.stop();
+        self.repertoire.stop();
         self.services.stop();
         self.interactive
             .lock()
@@ -154,12 +158,12 @@ impl App {
         Ok(())
     }
 
-    fn dispatch(
+    fn dispatch_body(
         &self,
         meta: &Meta,
         body: &Value,
         cancel: &AtomicBool,
-    ) -> anyhow::Result<(u16, Value, Option<String>)> {
+    ) -> anyhow::Result<(u16, ResponseData, Option<String>)> {
         if self.shutting_down.load(Ordering::Acquire) {
             return Err(api_error(503, "Server is shutting down."));
         }
@@ -181,7 +185,7 @@ impl App {
             return Err(api_error(401, "Sign in to continue."));
         }
         let secure = self.config.secure_cookies || meta.scheme == "https";
-        let ok = |value| Ok((200, value, None));
+        let ok = |value| Ok((200, ResponseData::Json(value), None));
         match (method, meta.path.as_str()) {
             ("GET", "/api/health") => return ok(json!({"ok":true,"version":APP_VERSION})),
             ("GET", "/api/openapi.json") => {
@@ -198,7 +202,9 @@ impl App {
                         security::create_session_checked(&self.db, &meta.user_agent, &stored)?;
                     return Ok((
                         200,
-                        json!({"authenticated":true,"password_set":true,"auth_required":true}),
+                        ResponseData::Json(
+                            json!({"authenticated":true,"password_set":true,"auth_required":true}),
+                        ),
                         Some(security::session_cookie(&token, secure)),
                     ));
                 }
@@ -208,7 +214,7 @@ impl App {
                 security::end_session(&self.db, token)?;
                 return Ok((
                     200,
-                    json!({"ok":true}),
+                    ResponseData::Json(json!({"ok":true})),
                     Some(security::clear_cookie(secure)),
                 ));
             }
@@ -232,7 +238,9 @@ impl App {
                     .expect("setting a password creates a session");
                     return Ok((
                         200,
-                        json!({"authenticated":true,"password_set":true,"auth_required":true}),
+                        ResponseData::Json(
+                            json!({"authenticated":true,"password_set":true,"auth_required":true}),
+                        ),
                         Some(security::session_cookie(&token, secure)),
                     ));
                 }
@@ -245,7 +253,9 @@ impl App {
                 security::rotate_password(&self.db, stored.as_deref(), None, &meta.user_agent)?;
                 return Ok((
                     200,
-                    json!({"authenticated":true,"password_set":false,"auth_required":false}),
+                    ResponseData::Json(
+                        json!({"authenticated":true,"password_set":false,"auth_required":false}),
+                    ),
                     Some(security::clear_cookie(secure)),
                 ));
             }
@@ -342,14 +352,47 @@ impl App {
             }
             _ => {}
         }
+        if let Some(result) = self.repertoire.handle(method, &meta.path, &meta.query) {
+            return Ok((200, ResponseData::Serialized(result?), None));
+        }
         let result: Option<ApiResult> = self
             .insights
             .handle(method, &meta.path, &meta.query, body)
             .or_else(|| crate::practice::handle(&self.db, method, &meta.path, &meta.query, body))
-            .or_else(|| crate::repertoire::handle(&self.db, method, &meta.path, &meta.query))
             .or_else(|| self.services.handle(method, &meta.path, &meta.query, body));
         let (status, value) = result.unwrap_or_else(|| Err(api_error(404, "Not found")))?;
-        Ok((status, value, None))
+        Ok((status, ResponseData::Json(value), None))
+    }
+    #[cfg(test)]
+    fn dispatch(
+        &self,
+        meta: &Meta,
+        body: &Value,
+        cancel: &AtomicBool,
+    ) -> anyhow::Result<(u16, Value, Option<String>)> {
+        let (status, data, cookie) = self.dispatch_body(meta, body, cancel)?;
+        let value = match data {
+            ResponseData::Json(value) => value,
+            ResponseData::Serialized(bytes) => serde_json::from_slice(&bytes)?,
+        };
+        Ok((status, value, cookie))
+    }
+}
+
+enum ResponseData {
+    Json(Value),
+    Serialized(Arc<[u8]>),
+}
+impl IntoResponse for ResponseData {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Json(value) => axum::Json(value).into_response(),
+            Self::Serialized(bytes) => (
+                [("content-type", "application/json")],
+                axum::body::Bytes::from_owner(bytes),
+            )
+                .into_response(),
+        }
     }
 }
 
@@ -657,14 +700,14 @@ async fn handle_inner(app: Arc<App>, request: Request<Body>) -> Response {
     }
     match tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        app.dispatch(&meta, &body, &cancel)
+        app.dispatch_body(&meta, &body, &cancel)
     })
     .await
     {
         Ok(Ok((status, value, cookie))) => {
             let mut response = (
                 StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                axum::Json(value),
+                value,
             )
                 .into_response();
             if let Some(cookie) = cookie.and_then(|c| HeaderValue::from_str(&c).ok()) {

@@ -437,6 +437,7 @@ fn themes_follow_the_current_stored_position_and_line_without_changing_review_da
             plyback::pgn::STARTING_FEN,
             json!([{"cp":500,"uci":"e2e4","san":["e4"]},{"cp":-500,"uci":"g1f3","san":["Nf3"]}]).to_string()
         ])?;
+        tx.execute("UPDATE data_revision SET revision=revision+1 WHERE id=1", [])?;
         Ok(())
     }).unwrap();
     let (_, changed) = get(&db, path, &[]);
