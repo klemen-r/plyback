@@ -3,20 +3,21 @@ import type { ReactNode } from 'react'
 import ClassIcon from '../components/ClassIcon'
 import { Card } from '../components/ui'
 import { CLASS_META, CLASS_ORDER } from '../lib/classification'
+import { points, THRESHOLDS as T } from '../lib/methodology'
 import type { Classification } from '../lib/types'
 
 const RULES: Record<Classification, string> = {
-  brilliant: 'The engine’s best move offers a piece or exchange worth at least 2 points, without winning the material back immediately or within the engine’s next four moves, and keeps your estimated score at 50% or more. Best and second-best lines must reach the same depth of at least 10. The second-best score stays below 80%, unless the best line forces mate and the second-best does not.',
-  great: 'The engine’s best move scores at least 15 percentage points above the second-best, keeps your estimated score at 35% or more, and the second-best stays below 90%. Both lines must reach the same depth of at least 10. Plain recaptures, grabbing free material, checkmates, queen promotions and check evasions with only one or two legal moves are excluded.',
+  brilliant: `The engine’s best move offers a piece or exchange worth at least ${T.sacrificeMaterial} points, without winning the material back immediately or within the engine’s next four moves, and keeps your estimated score at ${points(T.brilliantMinScore)}% or more. Best and second-best lines must reach the same depth of at least ${T.minDepth}. The second-best score stays below ${points(T.brilliantMaxSecond)}%, unless the best line forces mate and the second-best does not.`,
+  great: `The engine’s best move scores at least ${points(T.greatGap)} percentage points above the second-best, keeps your estimated score at ${points(T.greatMinScore)}% or more, and the second-best stays below ${points(T.greatMaxSecond)}%. Both lines must reach the same depth of at least ${T.minDepth}. Plain recaptures, grabbing free material, checkmates, queen promotions and check evasions with only one or two legal moves are excluded.`,
   best: 'The engine’s first choice.',
-  excellent: 'Loses at most 2 percentage points of estimated score.',
-  good: 'Loses more than 2 and at most 5 points.',
+  excellent: `Loses at most ${points(T.excellent)} percentage points of estimated score.`,
+  good: `Loses more than ${points(T.excellent)} and at most ${points(T.good)} points.`,
   book: 'The position after the move appears in the opening database (Lichess chess-openings, CC0), continuously from the standard starting position. Custom starting positions and Chess960 are excluded.',
   forced: 'The only legal move.',
-  inaccuracy: 'Loses more than 5 and at most 10 points.',
-  mistake: 'Loses more than 10 and at most 20 points.',
-  miss: 'A mistake or blunder immediately after your opponent lost at least 10 points and improved your best available score by at least 10 points. Your move throws the gift back while retaining your earlier score within 5 points.',
-  blunder: 'Loses more than 20 points.',
+  inaccuracy: `Loses more than ${points(T.good)} and at most ${points(T.inaccuracy)} points.`,
+  mistake: `Loses more than ${points(T.inaccuracy)} and at most ${points(T.mistake)} points.`,
+  miss: `A mistake or blunder immediately after your opponent lost at least ${points(T.missOpponentLoss)} points and improved your best available score by at least ${points(T.missGain)} points. Your move throws the gift back while retaining your earlier score within ${points(T.missKeep)} points.`,
+  blunder: `Loses more than ${points(T.mistake)} points.`,
 }
 
 function Block({ title, children }: { title: string; children: ReactNode }) {

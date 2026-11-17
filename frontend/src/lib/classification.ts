@@ -11,14 +11,14 @@ export const CLASS_META: Record<Classification, ClassMeta> = {
   brilliant: { label: 'Brilliant', color: '#1bada6', symbol: '!!', description: 'A sound sacrifice that is also the best move.' },
   great: { label: 'Great', color: '#5c8bb0', symbol: '!', description: 'The only good move: every alternative is clearly worse.' },
   best: { label: 'Best', color: '#81b64c', symbol: '★', description: "The engine's top choice." },
-  excellent: { label: 'Excellent', color: '#98bc4b', symbol: '✓', description: 'Loses less than 2% winning chances.' },
+  excellent: { label: 'Excellent', color: '#98bc4b', symbol: '✓', description: 'Loses 2% winning chances or less.' },
   good: { label: 'Good', color: '#97af8b', symbol: '✓', description: 'Loses 2–5% winning chances.' },
   book: { label: 'Book', color: '#a88865', symbol: '≡', description: 'Known opening theory.' },
   forced: { label: 'Forced', color: '#8f969e', symbol: '□', description: 'The only legal move.' },
   inaccuracy: { label: 'Inaccuracy', color: '#f7c045', symbol: '?!', description: 'Loses 5–10% winning chances.' },
   mistake: { label: 'Mistake', color: '#ffa459', symbol: '?', description: 'Loses 10–20% winning chances.' },
   miss: { label: 'Miss', color: '#ff7769', symbol: '✗', description: "Failed to punish your opponent's error." },
-  blunder: { label: 'Blunder', color: '#fa412d', symbol: '??', description: 'Loses 20% or more winning chances.' },
+  blunder: { label: 'Blunder', color: '#fa412d', symbol: '??', description: 'Loses more than 20% winning chances.' },
 }
 
 export const CLASS_ORDER: Classification[] = [

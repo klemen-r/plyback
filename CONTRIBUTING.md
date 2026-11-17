@@ -1,27 +1,38 @@
 # Contributing
 
-Plyback supports a source checkout or its Docker image. Rust 1.97.1+ and Node.js 22.12+ build the app;
-the native production server requires neither Python nor Node. `setup.ps1` / `bash setup.sh` prepare it.
-Python 3.11+ and the locked `backend/requirements-dev.txt` are only needed for the preserved development
-oracle, its regression suite and comparative benchmarks.
+## Setup
 
-Before submitting a change, run Cargo format, Clippy and release tests, the Node installer tests,
-baseline Ruff and `pytest -m "not live"`, then frontend lint, unit tests, build and Playwright tests.
-The README contains commands. Real Stockfish tests need the official engine;
-`node scripts/install_stockfish.mjs` installs it. CI sets `PLYBACK_REQUIRE_STOCKFISH=1` so native
-engine tests cannot silently skip. Python network tests are opt-in with `-m live`.
-CI runs Linux/Windows checks, browser workflows against Rust and a Docker authentication smoke test.
+Install Rust 1.97.1+ and Node.js 22.12+, then run `setup.ps1` (Windows) or `bash setup.sh`. For the
+Python baseline tests and benchmarks, also install Python 3.11+ with the locked
+`backend/requirements-dev.txt`. On macOS/Linux, `just setup-dev` does all of this.
 
-Keep fixes focused, preserve existing game data and public API behavior, and add regressions for
-meaningful bugs. Schema changes append migrations; never modify a released migration. Keep each schema
-change, backfill and version update atomic. Bump `ANALYSIS_VERSION` when stored analysis behavior changes.
-Use SQLite's backup API for active databases and keep personal exports and database files out of commits.
+## Checks
 
-Profile before optimizing. Report the workload, engine options, repeated measurements and output checks;
-do not obtain speed claims by silently reducing engine depth or removing tactical analysis.
+Run these before submitting a change; the exact commands are in the README under
+"Development and verification" (`just check` runs them on macOS/Linux):
+
+- Cargo format, Clippy and release tests
+- `node --test scripts/install_stockfish.test.mjs`
+- Ruff and `pytest -m "not live"` in `backend/`
+- frontend lint, unit tests, build and Playwright
+
+Real-engine tests need Stockfish (`node scripts/install_stockfish.mjs`). CI sets
+`PLYBACK_REQUIRE_STOCKFISH=1` so they cannot skip silently.
+
+## Migrations
+
+Schema changes go in a new file in `rust/migrations/`; never edit a released one. Keep the schema change,
+its backfill and the version update in one migration. Bump `ANALYSIS_VERSION` when stored analysis
+results change.
+
+## Licenses
+
+Keep copyright, dependency licenses and required notices. After a Cargo dependency update, regenerate
+`docs/licenses/rust.txt` with `node scripts/rust_notices.mjs`.
+
+## Interface
 
 The frontend follows study A, Vercel tabs (chosen 2026-11-03); the other studies remain as history under
 `docs/design-explorations`. Build pages from the shared primitives in `frontend/src/components/ui.tsx`.
-Retain copyright, dependency licenses and required notices; regenerate `docs/licenses/rust.txt` with
-`node scripts/rust_notices.mjs` after a Cargo dependency update. Report vulnerabilities privately as described
-in SECURITY.md rather than opening public issues.
+
+Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).

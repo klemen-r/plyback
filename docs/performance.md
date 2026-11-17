@@ -1,7 +1,7 @@
 # Performance verification
 
 These are historical measurements of the preserved Python baseline. The production server is now
-native Rust; see [native migration and current comparisons](native-migration.md).
+native Rust; see [architecture](architecture.md#benchmarks) for the current benchmarks.
 
 The [app performance follow-up](app-performance.md) records page API timings, first-load transfer
 sizes and exact concurrent warm replay on generated data for the November 4 improvements.

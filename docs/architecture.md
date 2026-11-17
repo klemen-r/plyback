@@ -1,9 +1,9 @@
 # Architecture
 
-Plyback runs as one native Rust process. Axum serves the existing JSON API and React bundle;
-managed background threads synchronise public games, analyse jobs and build reports. Stockfish
-remains a separate UCI process. SQLite owns durable state. Python is retained only as a development
-oracle and benchmark reference; production launchers and the container never import it.
+Plyback runs as one native Rust process. Axum serves the JSON API and the built React interface;
+managed background threads sync public games, analyse queued jobs and build reports. Stockfish runs
+as a separate UCI process. SQLite holds all durable state. The Python tree in `backend/` is a
+development reference and benchmark baseline; the launchers and the container never run it.
 
 | Layer | Owning code |
 |---|---|
@@ -11,110 +11,158 @@ oracle and benchmark reference; production launchers and the container never imp
 | CLI, startup, backup, shutdown | `rust/src/main.rs`, `config.rs` |
 | Account sync, game API, queue, worker lifecycle | `rust/src/services/` |
 | Persistent UCI transport and position cache | `rust/src/engine.rs` |
-| PGN, legal moves, classification, tactics, explanations | `rust/src/pgn.rs`, `analysis.rs` |
+| PGN, legal moves, classification, explanations | `rust/src/pgn.rs`, `analysis.rs`, `tactics.rs`, `board.rs` |
+| Practice positions and schedule | `rust/src/practice.rs` |
+| Opening tree | `rust/src/repertoire.rs` |
 | Insight computation, cache, report snapshots | `rust/src/insights/` |
-| SQLite ownership and transactional upgrades | `rust/src/db.rs`, `rust/migrations/` |
+| SQLite access and transactional migrations | `rust/src/db.rs`, `rust/migrations/` |
 
-## Data model and upgrades
+## Data model
 
 | Table | Purpose |
 |---|---|
-| `accounts`, `archives` | Connected users with immutable row generations, and fetched archives with ETags. |
+| `accounts`, `archives` | Connected users, each row with a fixed sync generation, and fetched monthly archives with ETags. |
 | `games`, `account_games` | De-duplicated games and account/colour links. |
 | `game_analysis`, `moves` | Versioned summaries, evaluations, labels, explanations and lines. |
-| `jobs` | Persistent priority queue, attempts and a unique ownership token for each claim. |
-| `position_cache` | Bounded durable results keyed by position history, engine and search options. |
-| `reports`, `report_games` | Saved snapshots and fixed membership guarded by game UUID. |
+| `jobs` | Persistent priority queue, attempts, a unique token for each claim and pending deeper-review requests. |
+| `sync_pending` | Games a sync stored for an account that still have to be queued for review. |
+| `position_cache` | Durable engine results keyed by position history, engine and search options. |
+| `reports`, `report_games` | Saved snapshots and their fixed game membership, checked by game UUID. |
+| `practice_items` | Per-account practice schedule for positions that have been answered. |
 | `sessions`, `settings`, `events` | Hashed auth tokens, configuration and activity. |
+| `data_revision` | A counter that triggers bump on every change to accounts, games and analyses. |
 
-Migrations 1–5 retain the earlier schema and backfills. Migration 6 adds the report membership schema;
-migration 7 fences job ownership; migration 8 fences account sync against deletion and ID reuse.
-Schema changes, backfills and their version update commit together.
-New reports freeze membership at creation; legacy unfinished reports freeze on their first tick or
-finalization. Ready legacy reports retain their stored JSON. Analysis version 7 identifies the revised scoring model;
-old analyses remain readable while refresh jobs are queued. Back up before upgrading, and restore that
-backup when returning to an older release.
+## Migrations
+
+`rust/migrations/` holds numbered SQL files, applied in order on start. Each migration, its backfill
+and the new `schema_version` commit in one transaction. A database with a newer schema than the
+running server is refused. Add a new file for every change; never edit a released migration.
+
+| Migration | Adds |
+|---|---|
+| 001 | Base schema: settings, accounts, archives, games, account links, analyses, moves, position cache, jobs, reports and events. |
+| 002 | `accounts.history_complete`, set for accounts that have synced before. |
+| 003 | `sessions`, covering indexes for insights, and `moves.endgame_type` with a backfill from the stored positions. |
+| 004 | `game_analysis.revision`, incremented each time a game is re-analysed. |
+| 005 | `data_revision` and its triggers. |
+| 006 | `report_games` and `reports.scope_frozen` for fixed report membership. |
+| 007 | `jobs.claim_token`, so a completion only applies to the claim that started it. |
+| 008 | `accounts.sync_generation`, a random value that cannot change, so a late sync response cannot write to a deleted and re-created account. |
+| 009 | `practice_items`. |
+| 010 | `sync_pending`, and `jobs.followup_priority` / `followup_depth` for deeper reviews requested while a job runs. |
+
+When stored analysis results change, bump `ANALYSIS_VERSION` in `rust/src/lib.rs` (currently 7).
+On start, games analysed with an older version are queued for refresh; their old analysis stays
+readable until the new one is stored.
+
+Reports created now freeze their game IDs and UUIDs at creation. Reports from before migration 006
+freeze on their first update or on finalization if unfinished; ready ones keep their stored JSON.
 
 ## Analysis pipeline
 
-1. Sync validates public API metadata and archive URLs, uses conditional requests and bounded retries,
-   then inserts de-duplicated games and identifies openings without running an engine. Every response
-   mutation checks the original account generation inside its transaction, including error cleanup.
-2. Workers claim queued games by priority. Each claim captures a random token, game UUID and PGN;
-   progress, retries and completion require that claim to still match. Deleting a game and reusing
-   its integer ID cannot make an old worker overwrite its replacement.
+1. Sync validates public API metadata and archive URLs, sends conditional requests, makes up to
+   six attempts with exponential back-off, then stores de-duplicated games and names their openings
+   without running an engine. Each write checks the account's sync generation in the same transaction.
+   New games go to `sync_pending` in the archive's transaction and leave it in the transaction that
+   queues them, so an interrupted sync resumes with an exact list.
+2. Workers claim queued games by priority. Each claim records a random token, the game UUID and PGN;
+   progress, retries and completion only apply while that claim still matches.
 3. Each worker reuses one Stockfish process. Best and played moves are compared from the mover's
-   perspective at a common root and completed depth. If the played move is absent from MultiPV,
-   a paired root search evaluates both. This additional search is a disclosed correctness cost.
-4. Typed SQL rows feed insight computations. A bounded, per-database response cache uses committed
-   data revisions and coalesces stale refreshes. Computation occurs outside database locks.
-5. New reports freeze game IDs and UUIDs at creation. Publication checks the data revision in the
-   same transaction as the saved result; completed results remain immutable. Pending reports use current
-   data for surviving members; deletion removes a member, while corrected filter fields do not. Failed
-   jobs or explicit early finalization can produce a ready report with partial analysis coverage.
+   side at the same root and completed depth. If the played move is not among the MultiPV lines,
+   one extra paired search evaluates both (see [methodology](../METHODOLOGY.md#1-engine-evaluation)).
+4. Insights read typed SQL rows. A per-database response cache is keyed on `data_revision`, serves
+   recent stale results while it refreshes, and computes outside the database lock.
+5. Report publication checks the data revision in the same transaction as the saved result; a ready
+   report never changes. Pending reports use current data for surviving members. Deleting a game
+   removes it from a report; corrected filter fields do not. Failed jobs or early finalization can
+   produce a ready report with partial analysis coverage.
 
 ## Concurrency and cancellation
 
-One mutex owns each database connection. Queries return owned rows; no network or engine search
-holds the connection. Short, immediate write transactions serialize changes. Engine position-cache
-reads and writes retry short lock attempts (25 ms SQLite budget each) for up to 2 seconds and check
-cancellation every 10 ms. Brief contention between workers therefore no longer drops completed
-searches. Workers sharing a database also share in-flight searches by the complete cache key
-(including history, engine identity, threads, hash size and all search limits). A follower receives
-the leader's exact result without running another engine search. Cancelling a follower leaves the
-leader running; a cancelled or failed leader releases its followers to retry with their own engines.
-This prevents different worker hash histories from overwriting a simultaneously searched key.
-Warm replay still depends on successful persistence and retained cache entries: a connection held
-longer than the retry budget is treated as a cache miss, and cancellation never waits behind it.
-Coordination is scoped to one `Database` instance, not separate application processes.
-The response cache has 64 entries and a 32 MiB serialized-payload
-limit, two concurrent refresh computations and a 120-second maximum age for stale responses.
+- One mutex guards each database connection. Queries return owned rows, so no network call or
+  engine search holds the connection. Writes use short immediate transactions.
+- Position-cache reads and writes are optional. They retry 25 ms lock attempts for up to 2 seconds,
+  checking cancellation every 10 ms; after that the cache is treated as a miss.
+- Workers that share a database share in-flight searches with the same full cache key (history,
+  engine, threads, hash and all search limits). A follower gets the leader's result without
+  searching. A cancelled follower leaves the leader running; a cancelled or failed leader releases
+  its followers to search with their own engines. This is scoped to one `Database` instance.
+- The position cache is trimmed to 20,000 entries. The insight response cache holds 64 entries and
+  32 MiB, runs at most two refreshes at once and serves stale results for up to 120 seconds.
+- Changing worker settings cancels and joins the old workers before starting new ones. Workers,
+  threads and hash memory have aggregate limits.
+- Interactive analysis has its own engine and is cancelled when the HTTP request ends. UCI reads,
+  search deadlines and retries are bounded; unresponsive engine processes are killed and reaped.
+- The server binds its port before opening the database, so a second launch on the same port cannot
+  reset the running instance's job claims.
+- Shutdown signals cancellation, drains HTTP, rejects new uploads, then joins workers. Compose allows
+  90 seconds. An interrupted job is claimable again at the next start and reuses saved position results.
 
-Worker database waits poll cancellation with short lock attempts; cancelled writes roll back. If a
-busy database prevents bounded shutdown cleanup, the durable claim is recovered at the next start.
-The server reserves its listening port before touching data, so a duplicate launch cannot reset jobs.
+## HTTP and security
 
-HTTP permits cap concurrent blocking work. Body uploads have byte and time limits. Password hashing
-runs off the async reactor and transactionally checks the verified password before issuing a session.
-An API request checks session validity again after reading its body.
-Host validation applies regardless of password state. Protected wildcard listeners additionally
-accept interface IPs and the OS hostname captured at startup; aliases use `PLYBACK_ALLOWED_HOSTS`.
-Rate limits normally use the TCP peer. `PLYBACK_TRUSTED_PROXIES` opts exact proxy IPs into
-right-to-left XFF/Forwarded chain validation; malformed chains retain the peer bucket. See
-[proxy configuration](../SECURITY.md#running-behind-a-reverse-proxy) for trust and header precedence.
+- A semaphore caps concurrent blocking work. Request bodies are limited to 25 MiB and 15 seconds.
+- Password hashing runs off the async runtime. Login checks the verified password hash
+  again in the transaction that issues the session. An API request checks its session again after reading the body.
+- Host validation applies with or without a password. Protected wildcard listeners also accept the
+  interface IPs and OS hostname seen at startup; other names go in `PLYBACK_ALLOWED_HOSTS`.
+- Rate limits use the TCP peer. `PLYBACK_TRUSTED_PROXIES` lists proxy IPs whose `X-Forwarded-For` or
+  `Forwarded` chain is read right to left; a malformed chain falls back to the peer. See
+  [proxy configuration](../SECURITY.md#running-behind-a-reverse-proxy).
+- Built assets have pre-compressed Brotli and gzip variants, chosen by `Accept-Encoding` with
+  `Vary: Accept-Encoding`. Errors are never cached as immutable assets. API responses are uncompressed
+  and `no-store`.
 
-Live resource changes cancel and join retired workers before starting replacements, using one immutable
-settings snapshot per worker generation. Workers, threads and hash memory have aggregate bounds.
-Interactive analysis has a dedicated engine and a cancellation flag tied to the HTTP request lifetime.
-UCI reads, output, search deadlines and retries are bounded; stubborn children are killed and reaped.
-Shutdown broadcasts cancellation before draining HTTP, rejects late uploads, then joins managed workers.
-Compose grants 90 seconds for a bounded network/database operation to finish. Interrupted jobs remain recoverable; durable
-position results provide reuse when a game restarts, rather than resuming a Python checkpoint object.
-
-## Extending and distribution
-
-Add API routes to the owning native service; keep `rust/openapi.json` compatible with the frontend.
-Extend `insights/compute.rs` with owned typed data, and test against the preserved oracle where behavior
-should match. Append migrations and bump `ANALYSIS_VERSION` when stored results change. Update dependency
-notices whenever the Cargo lock changes.
-
-Supported installations are a source checkout and the Docker image. The binary embeds opening data,
-insight resources and the API schema; launchers supply the data and built-interface locations. Network
-access requires a password by default. One instance serves one person or household, not isolated tenants.
-Backups use SQLite's backup API, verify integrity and publish without overwriting an existing file.
+## Interface
 
 The interface follows design study A, Vercel tabs, chosen on 2026-11-03. Appearance (light/dark/system,
 cover colour, board colours) is stored per browser in `frontend/src/lib/theme.ts`.
 
-The shell polls status once per 5 seconds while reviews/sync are active and once per 15 seconds
-while idle. The existing committed `data_revision` invalidates active account, game, insight and
-opening queries, including re-reviews that finish between polls without changing game counts.
-Insights poll only while stale or recovering from an error. Practice marks its queue stale without
-replacing an active puzzle; an empty queue refreshes when newly reviewed positions become available.
-Delayed answers and engine checks cannot update a skipped puzzle or a different account.
+The shell polls status every 5 seconds while reviews or a sync are running and every 15 seconds when
+idle. A change in `data_revision` refreshes account, game, insight and opening queries, including
+re-reviews that finish between polls. Insights poll only while stale or after an error. Practice marks
+its queue stale without replacing the current puzzle, and late answers or engine checks cannot update a
+skipped puzzle or another account.
 
-Public build assets have pre-generated Brotli/gzip variants. Encoding negotiation retains MIME,
-containment checks and CSP; stale or escaped variants are ignored. `Vary: Accept-Encoding` applies
-to static responses, and errors are never cached as immutable assets. API responses stay uncompressed
-and `no-store`. CI sends its read-only token only to the official release metadata API; container
-builds receive it as an ephemeral BuildKit secret. Download checksums remain mandatory.
+## Extending and distribution
+
+Add API routes to the owning service and keep `rust/openapi.json` in step with the frontend. Extend
+`insights/compute.rs` with owned typed data. Append migrations and bump `ANALYSIS_VERSION` when stored
+results change. Regenerate dependency notices whenever `rust/Cargo.lock` changes.
+
+Supported installations are a source checkout and the Docker image. The binary embeds opening data,
+insight resources and the API schema; launchers supply the data and built-interface locations. Network
+access requires a password by default. One instance serves one person or household, not isolated users.
+Backups use SQLite's backup API, verify integrity and never overwrite an existing file.
+
+CI passes its read-only token only to the official Stockfish release metadata API; container builds get
+it as a BuildKit secret. Download checksums are always checked.
+
+## Benchmarks
+
+Two ignored Rust tests measure the app. `benchmark_insights` (in `rust/tests/insights.rs`) times
+uncached insight computation on a seeded database. `benchmark_reference_fixture_cold_and_warm`
+(in `rust/tests/engine_review.rs`) reviews two fixture games with the default budget and reports
+cold searches, an exact replay of the recorded searches, and repeats against a seeded position
+cache; the warm repeats must match the stored output and start no engine process or search. The
+engine benchmark replays evaluations recorded by the Python baseline, so it needs the development
+dependencies from the README.
+
+Use a new empty directory for every run. The seeder refuses to overwrite a file, and the insight
+benchmark backs up its source read-only before migrating. No command below opens the live database.
+
+```sh
+mkdir benchmark-output
+python scripts/seed_benchmark.py benchmark-output/fixture.db
+python scripts/seed_benchmark.py benchmark-output/scale100.db --scale 100
+python backend/bench/run.py --source benchmark-output/fixture.db --scale 100 --repeat 5 --out benchmark-output/python-insights.json
+PLYBACK_INSIGHT_BENCH_SOURCE="$PWD/benchmark-output/scale100.db" PLYBACK_INSIGHT_BENCH_OUTPUT="$PWD/benchmark-output/rust-insights.json" cargo test --release --locked --manifest-path rust/Cargo.toml --test insights benchmark_insights -- --ignored --nocapture
+
+node scripts/install_stockfish.mjs
+export PLYBACK_STOCKFISH="$(cat data/engine/stockfish.path)"
+PLYBACK_DATA="$PWD/benchmark-output/engine-data" python backend/bench/analysis.py --out benchmark-output/python-engine.json --record benchmark-output/evaluations.json
+PLYBACK_BENCH_INPUT="$PWD/benchmark-output/evaluations.json" PLYBACK_BENCH_OUTPUT="$PWD/benchmark-output/rust-engine.json" cargo test --release --locked --manifest-path rust/Cargo.toml --test engine_review benchmark_reference_fixture_cold_and_warm -- --ignored --nocapture
+```
+
+Run them on an idle machine or in CI. The `Native backend (ubuntu-latest)` job runs the same sequence
+on pushes to `main` and on manual runs, and uploads the results as `native-performance`. Compare timings
+only within one run: hardware, OS, engine hash state and shared-runner load all affect them.

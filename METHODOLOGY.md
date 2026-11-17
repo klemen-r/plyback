@@ -22,8 +22,14 @@ None of this replicates Chess.com's proprietary Game Review; labels and accuracy
 - Completed searches are saved in the current database's durable position cache, which is periodically trimmed to
   20,000 entries. Keys include engine identity, analysis version, threads/hash, full history, variant, limits and candidate
   restrictions; results retain their achieved depth. On restart, a job revisits the game and reuses available matching
-  entries. Busy databases can skip optional cache reads/writes. This is not a Python checkpoint file or a guarantee that
-  every interrupted search is retained.
+  entries. Busy databases can skip optional cache reads/writes, and a search interrupted before it completes is not saved.
+- Default budget per search: one thread and 64 MiB hash per worker, depth 16, MultiPV 2, a 5 s cap and no node cap.
+  Threat checks (section 5) search one line to depth 10. Budgets are not lowered to make reviews faster.
+- Cost of the paired comparison: the extra two-candidate searches and threat checks add engine work, so a cold review
+  takes longer than one search per position. In one measured run of the two benchmark games (88 and 45 plies), a review
+  made 222 engine calls: 135 positions, 71 paired searches and 16 threat checks. A repeat review of the same games with
+  a warm position cache started no engine process. The benchmarks are described in
+  [architecture](docs/architecture.md#benchmarks).
 
 ## 2. Winning chances
 
@@ -176,7 +182,7 @@ default. Choose *First 15 moves* to explore up to 30 plies; the depth and curren
 
 - Moderate-depth engine analysis can misjudge very deep tactics; re-analyse a game deeper from the review page.
 - The time cap may return a shallower completed iteration. Paired candidate searches and threat tests add engine work;
-  the native implementation does not imply that a new game's engine analysis is faster than the previous pipeline.
+  saved results speed up repeated reviews, but a new game still needs a full engine search.
 - Brilliant/Great are heuristics; they will not always match human judgement or Chess.com's labels.
 - Expected points are a transparent logistic heuristic. Material, fork and threat tags inspect bounded lines and cannot
   prove every continuation; absence of a tag is not proof that no tactic exists.

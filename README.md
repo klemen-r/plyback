@@ -105,8 +105,11 @@ It is still the same server, so the phone needs a connection to it.
 
 ## What it does
 
-- Incremental Chess.com imports with conditional requests, bounded retries and adaptive polling.
-- Persistent analysis queue with priorities, reusable position results, retries and independent worker engines.
+- New Chess.com games are imported automatically. Unchanged monthly archives are not downloaded again,
+  and a sync that hits an error or a rate limit waits and tries again on its own.
+- Games are reviewed in the background: games you ask for first, then new games, then older history.
+  Several games can be reviewed at once. A review interrupted by a restart continues afterwards, and
+  re-reviewing a game reuses positions that were already searched.
 - Move evaluation, classifications, tactical explanations, opening transpositions and key moments.
 - Keyboard board navigation, evaluation graphs, engine lines and interactive exploration.
 - Filters by period, time control, colour, result, rated status, opening and move classification.
@@ -115,7 +118,7 @@ It is still the same server, so the phone needs a connection to it.
 - Practice: positions from your own mistakes with one clear answer, on a spaced-repetition schedule.
 - Openings: your games as a move tree, with results, where you leave book and the moves that keep going wrong.
 - Side-by-side comparisons and immutable saved report snapshots.
-- Password sessions, CSRF checks, body limits, outbound URL validation and browser security headers.
+- A password protects network access; see [SECURITY.md](SECURITY.md) for what else is checked.
 
 Accuracy and classifications use documented heuristics, not Chess.com's proprietary algorithms.
 They can differ from Chess.com and depend on engine depth/budget. Insights describe the selected
@@ -123,12 +126,14 @@ sample; they are not proof of causation or coaching outcomes. See [METHODOLOGY.m
 
 ## Data, upgrades and backups
 
-Default storage is `data/plyback.db`, with SQLite WAL enabled. On first start, an existing
-`data/chess-insight.db` is copied using SQLite's backup API, including committed WAL content.
-The original is retained. Schema migrations and their data backfills are transactional.
-Version 3 adopts the existing database, password and sessions in place; appended migrations support
-fixed report membership and fence analysis job ownership. Existing analyses remain available while version 7
-analyses are queued for refresh. Back up before upgrading; use that backup if returning to an older server.
+Everything is stored in `plyback.db` (SQLite with WAL) in the data directory: `data/` in a source
+checkout, `/data` in the container, or the `PLYBACK_DATA` directory when set. If only an older
+`chess-insight.db` exists there, it is copied to the new name on first start and the original is kept.
+
+Upgrades update the database automatically on start, each step in one transaction. When the
+analysis method changes, games are re-reviewed in the background and their previous review stays
+visible until then. Back up before upgrading; an older server cannot open a newer database, so keep
+that backup if you may want to go back.
 
 Save a consistent backup while the service is running (destination must not already exist):
 
@@ -210,8 +215,8 @@ CI installs it. `pytest -m live` opts into public Chess.com network checks. Test
 not the user's database. CI verifies Rust on Linux/Windows, the preserved Python oracle, browser
 workflows against Rust, dependency audits and the container. The Python tree is retained as a
 compatibility reference; setup scripts and Docker never run it.
-[Native migration and performance](docs/native-migration.md) documents measurements, methodology
-changes and operational limits; [earlier measurements](docs/performance.md) remain available.
+[Architecture](docs/architecture.md#benchmarks) describes how to run the benchmarks;
+[earlier measurements](docs/performance.md) remain available.
 
 Rust uses `rust/Cargo.lock`; regenerate its bundled licenses with `node scripts/rust_notices.mjs`
 after updating it. Python development dependencies are resolved across platforms with hashes in `backend/requirements*.txt`;
