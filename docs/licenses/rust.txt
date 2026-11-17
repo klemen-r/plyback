@@ -17183,7 +17183,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ================================================================================
-libsqlite3-sys 0.39.1
+libsqlite3-sys 0.40.0
 License: MIT
 Source: https://github.com/rusqlite/rusqlite
 
@@ -25217,7 +25217,7 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 
 ================================================================================
-rpassword 7.5.4
+rpassword 7.5.5
 License: Apache-2.0
 Source: https://github.com/conradkleinespel/rpassword
 
@@ -25617,7 +25617,7 @@ Source: https://github.com/conradkleinespel/rtoolbox
 
 
 ================================================================================
-rusqlite 0.41.1
+rusqlite 0.42.0
 License: MIT
 Source: https://github.com/rusqlite/rusqlite
 
@@ -31500,7 +31500,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ================================================================================
-sqlite-wasm-rs 0.6.2
+sqlite-wasm-rs 0.6.3
 License: MIT
 Source: https://github.com/Spxg/sqlite-wasm-rs
 

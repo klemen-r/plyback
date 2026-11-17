@@ -192,7 +192,7 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 
 
-===== @tanstack/query-core 5.105.2 — LICENSE =====
+===== @tanstack/query-core 5.107.1 — LICENSE =====
 
 MIT License
 
@@ -217,7 +217,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== @tanstack/react-query 5.105.2 — LICENSE =====
+===== @tanstack/react-query 5.107.1 — LICENSE =====
 
 MIT License
 
@@ -1036,7 +1036,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-===== lucide-react 1.66.0 — LICENSE =====
+===== lucide-react 1.72.0 — LICENSE =====
 
 ISC License
 
