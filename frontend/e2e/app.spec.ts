@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
+import { playMove } from './support'
 
 const LEGAL = `[Event "E2E"]
 [White "klemen_r"]
@@ -13,17 +14,6 @@ async function waitForAnalysis(page: Page, total: number) {
     const accs = await r.json()
     return accs[0]?.analyzed ?? 0
   }, { timeout: 150_000, intervals: [1000] }).toBe(total)
-}
-
-async function playOnBoard(page: Page, from: string, to: string) {
-  // Clicks go to raw coordinates, so the whole board must be clear of the sticky header.
-  await page.locator('cg-board').evaluate(el => el.scrollIntoView({ block: 'center' }))
-  const board = await page.locator('cg-board').boundingBox()
-  if (!board) throw new Error('Chessboard is not visible')
-  for (const square of [from, to]) {
-    await page.mouse.click(board.x + (square.charCodeAt(0) - 97 + 0.5) * board.width / 8,
-      board.y + (8 - Number(square[1]) + 0.5) * board.height / 8)
-  }
 }
 
 async function importPosition(page: Page, fen: string, move: string, variant = 'Standard') {
@@ -173,7 +163,7 @@ test.describe.serial('Plyback end to end', () => {
     await page.getByRole('button', { name: 'Back to the start' }).click()
     await expect(page.getByLabel('Current line')).toHaveText('Starting position')
     // Moves on the board follow the tree; a move no game played bounces back with a note.
-    await playOnBoard(page, 'h2', 'h4')
+    await playMove(page, 'h2', 'h4')
     await expect(page.getByText('No game continued with h4 here.')).toBeVisible()
     await expect(page.getByLabel('Current line')).toHaveText('Starting position')
     // Switching colour never shows the other colour's tree, and a filter with no games says so.
@@ -323,7 +313,7 @@ test.describe.serial('Plyback end to end', () => {
     await expect(page.getByText('+0.73', { exact: true })).toBeVisible()
     for (const [label, piece] of [['Queen', 'Q'], ['Rook', 'R'], ['Bishop', 'B'], ['Knight', 'N']]) {
       await page.getByRole('button', { name: 'First move' }).click()
-      await playOnBoard(page, 'a7', 'a8')
+      await playMove(page, 'a7', 'a8')
       await page.getByRole('group', { name: 'Promote pawn' }).getByRole('button', { name: label, exact: true }).click()
       await expect(page.getByRole('link', { name: 'Lichess', exact: true })).toHaveAttribute('href', `https://lichess.org/analysis/${piece}6k/8/8/8/8/8/8/7K_b_-_-_0_1`)
     }
@@ -332,10 +322,10 @@ test.describe.serial('Plyback end to end', () => {
 
     await importPosition(page, 'r3k2r/8/8/3pP3/8/8/8/R3K2R w KQkq d6 0 1', 'O-O')
     await page.getByRole('button', { name: 'Stop engine' }).click()
-    await playOnBoard(page, 'e1', 'g1')
+    await playMove(page, 'e1', 'g1')
     await expect(page.getByRole('link', { name: 'Lichess', exact: true })).toHaveAttribute('href', 'https://lichess.org/analysis/r3k2r/8/8/3pP3/8/8/8/R4RK1_b_kq_-_1_1')
     await page.getByRole('button', { name: 'First move' }).click()
-    await playOnBoard(page, 'e5', 'd6')
+    await playMove(page, 'e5', 'd6')
     await expect(page.getByRole('link', { name: 'Lichess', exact: true })).toHaveAttribute('href', 'https://lichess.org/analysis/r3k2r/8/3P4/8/8/8/8/R3K2R_b_KQkq_-_0_1')
     await page.getByRole('button', { name: 'First move' }).click()
     await expect(page.getByText('+0.73', { exact: true })).toHaveCount(0)
