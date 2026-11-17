@@ -1,6 +1,11 @@
 import { Chess } from 'chess.js'
 import type { Key } from '@lichess-org/chessground/types'
 
+/** The origin and destination of a UCI move, including promotion moves. */
+export function uciSquares(uci?: string | null): [Key, Key] | null {
+  return uci && uci.length >= 4 ? [uci.slice(0, 2) as Key, uci.slice(2, 4) as Key] : null
+}
+
 export function legalDests(fen: string): Map<Key, Key[]> {
   const dests = new Map<Key, Key[]>()
   try {

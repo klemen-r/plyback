@@ -1,3 +1,4 @@
+import { useSingleFlight } from '../lib/useSingleFlight'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowUpRight, RefreshCw } from 'lucide-react'
 import { useRef, useState } from 'react'
@@ -25,8 +26,9 @@ export function AddAccountForm({ onAdded }: { onAdded?: (a: Account) => void }) 
     mutationFn: () => api.addAccount({ username: username.trim(), import_since: range === 'all' ? null : monthsAgo(Number(range)), analyze_history: history }),
     onSuccess: a => { qc.invalidateQueries({ queryKey: ['accounts'] }); setUsername(''); onAdded?.(a) },
   })
+  const submitAccount = useSingleFlight(add.mutateAsync)
   return (
-    <form onSubmit={e => { e.preventDefault(); if (username.trim()) add.mutate() }}>
+    <form onSubmit={e => { e.preventDefault(); if (username.trim()) submitAccount() }}>
       <label htmlFor="username" className="text-[14px] font-medium">Chess.com username</label>
       <div className="mt-2 flex flex-col gap-2 sm:flex-row">
         <Input id="username" value={username} onChange={e => setUsername(e.target.value)} placeholder="e.g. hikaru" autoComplete="off" autoFocus className="h-10 sm:h-9 sm:flex-1" />
@@ -57,7 +59,9 @@ function AccountCard({ a }: { a: Account }) {
   const refresh = () => qc.invalidateQueries({ queryKey: ['accounts'] })
   const patch = useMutation({ mutationFn: (b: Parameters<typeof api.patchAccount>[1]) => api.patchAccount(a.id, b), onSuccess: refresh })
   const sync = useMutation({ mutationFn: () => api.syncAccount(a.id), onSuccess: refresh })
+  const syncAccount = useSingleFlight(sync.mutateAsync)
   const del = useMutation({ mutationFn: () => api.deleteAccount(a.id), onSuccess: refresh })
+  const deleteAccount = useSingleFlight(del.mutateAsync)
   const [confirm, setConfirm] = useState(false)
   const removeButton = useRef<HTMLButtonElement>(null)
   const cancelRemove = () => { setConfirm(false); requestAnimationFrame(() => removeButton.current?.focus()) }
@@ -88,10 +92,10 @@ function AccountCard({ a }: { a: Account }) {
           </div>
         </div>
         <div className="flex flex-wrap gap-2" onKeyDown={e => { if (e.key === 'Escape' && confirm) cancelRemove() }}>
-          <Button size="sm" onClick={() => sync.mutate()} loading={sync.isPending || a.sync_status === 'syncing'}><RefreshCw className="h-3.5 w-3.5" />Sync</Button>
+          <Button size="sm" onClick={() => syncAccount()} loading={sync.isPending || a.sync_status === 'syncing'}><RefreshCw className="h-3.5 w-3.5" />Sync</Button>
           {/* Keyboard focus moves into the confirmation and back, instead of falling to the page. */}
           {confirm
-            ? <><Button size="sm" variant="danger" loading={del.isPending} onClick={() => del.mutate()}>Remove</Button><Button size="sm" variant="ghost" autoFocus onClick={cancelRemove}>Cancel</Button></>
+            ? <><Button size="sm" variant="danger" loading={del.isPending} onClick={() => deleteAccount()}>Remove</Button><Button size="sm" variant="ghost" autoFocus onClick={cancelRemove}>Cancel</Button></>
             : <Button size="sm" variant="ghost" ref={removeButton} onClick={() => setConfirm(true)}>Remove…</Button>}
         </div>
       </div>

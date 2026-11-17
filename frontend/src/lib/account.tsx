@@ -1,17 +1,14 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api } from './api'
+import { readStorage, writeStorage } from './storage'
 import { AccountCtx } from './account-context'
 
 const KEY = 'ci.account'
 
 function readStored(): number | null {
-  try {
-    const v = localStorage.getItem(KEY)
-    return v ? Number(v) : null
-  } catch {
-    return null
-  }
+  const value = readStorage(KEY)
+  return value ? Number(value) : null
 }
 
 export function AccountProvider({ children }: { children: ReactNode }) {
@@ -49,7 +46,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
 
   const select = (id: number) => {
     setSelected(id)
-    try { localStorage.setItem(KEY, String(id)) } catch { /* storage unavailable */ }
+    writeStorage(KEY, String(id))
   }
   return (
     // Until the first successful answer the accounts are unknown, not absent: a failed first

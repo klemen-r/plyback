@@ -1,7 +1,6 @@
 import clsx from 'clsx'
 import { AlertCircle, Loader2 } from 'lucide-react'
 import type React from 'react'
-import { useEffect, useRef } from 'react'
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react'
 import type { Confidence as Conf } from '../lib/types'
 
@@ -9,25 +8,12 @@ type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
 
 export function Button({ variant = 'secondary', size = 'md', loading, className, children, onClick, ref, ...rest }:
   ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: 'sm' | 'md' | 'icon'; loading?: boolean; ref?: React.Ref<HTMLButtonElement> }) {
-  // Buttons that start work (they pass `loading`) are disabled only after the next render, so
-  // the second click of a double-click would submit twice. Hold a short lock from the click
-  // until the work shows as loading (then `disabled` takes over) or has finished.
-  const lockedUntil = useRef(0)
-  useEffect(() => { if (!loading) lockedUntil.current = 0 }, [loading])
-  const click = (e: React.MouseEvent<HTMLButtonElement>) => {
-    if (loading !== undefined) {
-      // preventDefault also stops a second form submission from a submit button.
-      if (e.timeStamp < lockedUntil.current) { e.preventDefault(); return }
-      lockedUntil.current = e.timeStamp + 500
-    }
-    onClick?.(e)
-  }
   return (
     <button
       type="button"
       {...rest}
       ref={ref}
-      onClick={click}
+      onClick={onClick}
       disabled={rest.disabled || loading}
       className={clsx(
         'inline-flex shrink-0 select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-md font-medium transition-colors disabled:pointer-events-none disabled:opacity-50',
@@ -57,12 +43,12 @@ export function Card({ children, className, padded = true, title, subtitle, acti
   </div>
 }
 
-export function PageHeader({ title, description, subtitle, actions }: { title: ReactNode; description?: ReactNode; subtitle?: ReactNode; actions?: ReactNode }) {
+export function PageHeader({ title, description, actions }: { title: ReactNode; description?: ReactNode; actions?: ReactNode }) {
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
       <div className="min-w-0">
         <h1 className="text-[28px] font-semibold leading-tight tracking-[-0.035em] text-fg sm:text-[30px]">{title}</h1>
-        {(description ?? subtitle) && <div className="mt-1.5 text-[14px] text-fg-2">{description ?? subtitle}</div>}
+        {description && <div className="mt-1.5 text-[14px] text-fg-2">{description}</div>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
@@ -183,8 +169,17 @@ export function Meter({ value, max = 100, tone = 'fg' }: { value: number; max?: 
   )
 }
 
-export function Switch({ checked, onChange, label, description, disabled }:
-  { checked: boolean; onChange: (v: boolean) => void; label: string; description?: ReactNode; disabled?: boolean }) {
+export function Switch({ checked, onChange, label, description, disabled, compact = false }:
+  { checked: boolean; onChange: (v: boolean) => void; label: string; description?: ReactNode; disabled?: boolean; compact?: boolean }) {
+  if (compact) return (
+    <button type="button" role="switch" aria-checked={checked} aria-label={label} disabled={disabled} onClick={() => onChange(!checked)}
+      className="inline-flex h-10 items-center gap-2 rounded-md border border-line bg-surface px-2.5 text-[13px] font-medium text-fg-2 transition-colors hover:text-fg sm:h-8">
+      <span className={clsx('relative h-4 w-7 rounded-full transition-colors', checked ? 'bg-accent' : 'bg-line-strong')}>
+        <span className={clsx('absolute top-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-[left]', checked ? 'left-[14px]' : 'left-0.5')} />
+      </span>
+      {label}
+    </button>
+  )
   return (
     <div className={clsx('flex items-start justify-between gap-8 py-3.5', disabled && 'opacity-50')}>
       <div>

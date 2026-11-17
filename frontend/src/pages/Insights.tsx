@@ -1,3 +1,5 @@
+import { useSingleFlight } from '../lib/useSingleFlight'
+import { readStorage, writeStorage } from '../lib/storage'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { BarChart3, FileText, Sparkles } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -13,7 +15,7 @@ import { insightPollInterval } from '../lib/insight-query'
 
 const KEY = 'ci.insightFilters'
 function loadFilters(): FilterState {
-  try { return restoreFilters(JSON.parse(localStorage.getItem(KEY) ?? '{}')) } catch { return DEFAULT_FILTERS }
+  try { return restoreFilters(JSON.parse(readStorage(KEY) ?? '{}')) } catch { return DEFAULT_FILTERS }
 }
 
 export default function InsightsPage() {
@@ -22,7 +24,7 @@ export default function InsightsPage() {
   const filters = toInsightFilters(fs)
   const qc = useQueryClient()
   const nav = useNavigate()
-  const update = (v: FilterState) => { setFs(v); try { localStorage.setItem(KEY, JSON.stringify(v)) } catch { /* ignore */ } }
+  const update = (v: FilterState) => { setFs(v); writeStorage(KEY, JSON.stringify(v)) }
 
   const openings = useQuery({ queryKey: ['openings', account?.id], queryFn: () => api.openings(account!.id), enabled: !!account })
   const q = useQuery({
@@ -36,6 +38,7 @@ export default function InsightsPage() {
     mutationFn: () => api.analyzeScope(account!.id, filters),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['status'] }); qc.invalidateQueries({ queryKey: ['accounts'] }); qc.invalidateQueries({ queryKey: ['insights'] }) },
   })
+  const analyzeScope = useSingleFlight(analyze.mutateAsync)
   // "Queued N" and errors belong to the account and filters they were made for.
   const scopeKey = JSON.stringify([account?.id, filters])
   const resetAnalyze = analyze.reset
@@ -44,6 +47,7 @@ export default function InsightsPage() {
     mutationFn: () => api.createReport(account!.id, filters),
     onSuccess: r => nav(`/reports/${r.id}`),
   })
+  const createReport = useSingleFlight(report.mutateAsync)
 
   if (loading) return <Loading />
   if (!account) return <Empty icon={<BarChart3 className="h-10 w-10" />} title="Connect a Chess.com account first" action={<Link to="/accounts"><Button variant="primary">Connect account</Button></Link>} />
@@ -54,8 +58,8 @@ export default function InsightsPage() {
   const variants = dq && dq.unanalyzed_ids && dq.unanalyzed_ids.length < 2000 ? dq.games - dq.analyzed - missing : 0
   return (
     <div className="appear">
-      <PageHeader title="Account insights" subtitle={`Patterns across ${account.display_name}'s games, backed by engine analysis of every move.`}
-        actions={<Button onClick={() => report.mutate()} loading={report.isPending}><FileText className="h-4 w-4" />Run full analysis & save report</Button>} />
+      <PageHeader title="Account insights" description={`Patterns across ${account.display_name}'s games, backed by engine analysis of every move.`}
+        actions={<Button onClick={() => createReport()} loading={report.isPending}><FileText className="h-4 w-4" />Run full analysis & save report</Button>} />
       <FilterBar value={fs} onChange={update} openings={openings.data} />
       {(analyze.error || report.error) && <div className="mt-4"><ErrorNote error={analyze.error ?? report.error} /></div>}
       {dq && (
@@ -69,7 +73,7 @@ export default function InsightsPage() {
             {variants > 0 && <p className="mt-2 text-xs text-fg-3">{variants === 1 ? '1 game is' : `${variants} games are`} a chess variant, which Plyback doesn’t review.</p>}
           </div>
           {missing > 0 && (
-            <Button variant="primary" size="sm" onClick={() => analyze.mutate()} loading={analyze.isPending}>
+            <Button variant="primary" size="sm" onClick={() => analyzeScope()} loading={analyze.isPending}>
               <Sparkles className="h-4 w-4" />{analyze.data ? `Queued ${analyze.data.queued}` : (dq?.unanalyzed_ids?.length ?? 0) >= 2000 ? 'Analyse all remaining' : `Analyse ${missing} remaining`}
             </Button>
           )}

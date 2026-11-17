@@ -1,108 +1,104 @@
-import { Chessground } from '@lichess-org/chessground'
-import type { Api } from '@lichess-org/chessground/api'
 import type { Config } from '@lichess-org/chessground/config'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
-import { Chess } from 'chess.js'
+import { Chess, type Square } from 'chess.js'
 import clsx from 'clsx'
-import { useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { legalDests } from '../lib/chess'
 import { useAppearance } from '../lib/theme'
+import { useChessground } from '../lib/useChessground'
+import PromotionPicker, { type Promotion } from './PromotionPicker'
 
+export interface BoardMove { from: string; to: string; promotion?: Promotion }
 export interface BoardProps {
   fen: string
   orientation: 'white' | 'black'
   lastMove?: [string, string] | null
   shapes?: DrawShape[]
   interactive?: boolean
-  onMove?: (orig: string, dest: string) => void
+  onMove?: (move: BoardMove) => boolean | Promise<boolean>
   coordinates?: boolean
   className?: string
   mini?: boolean
-  /** Change to put the board back to `fen`, e.g. to undo a rejected move. */
-  nonce?: number
+  /** Compose nearby controls with Board's interaction state without duplicating promotion state. */
+  children?: (board: ReactNode, promoting: boolean) => ReactNode
 }
 
-function turnColor(fen: string): 'white' | 'black' {
-  return fen.split(' ')[1] === 'b' ? 'black' : 'white'
-}
-
-function inCheck(fen: string): boolean {
-  try { return new Chess(fen).inCheck() } catch { return false }
-}
-
-export default function Board({ fen, orientation, lastMove, shapes, interactive, onMove, coordinates = true, className, mini, nonce }: BoardProps) {
+export default function Board({ fen, orientation, lastMove, shapes, interactive, onMove, coordinates = true, className, mini, children }: BoardProps) {
   const { board } = useAppearance()
-  const el = useRef<HTMLDivElement>(null)
-  const api = useRef<Api | null>(null)
-  const onMoveRef = useRef(onMove)
-  onMoveRef.current = onMove
+  const [promotion, setPromotion] = useState<{ from: string; to: string; fen: string } | null>(null)
+  const identity = `${fen}:${orientation}:${!!interactive}`
+  const [previousPosition, setPreviousPosition] = useState(identity)
+  if (previousPosition !== identity) { setPreviousPosition(identity); setPromotion(null) }
+  const pending = promotion?.fen === fen ? promotion : null
+  const playable = !!interactive && !pending
+  const latest = useRef({ fen, onMove, interactive })
+  useLayoutEffect(() => { latest.current = { fen, onMove, interactive } }, [fen, onMove, interactive])
+  const reset = useRef<() => void>(() => {})
+  const busy = useRef(false)
   // Legal move generation is substantially more expensive than updating an arrow.
-  // Keep it tied to the position, including when a rejected move is reset by nonce.
-  const check = useMemo(() => inCheck(fen), [fen])
-  const dests = useMemo(() => interactive ? legalDests(fen) : new Map<Key, Key[]>(), [fen, interactive])
-
-  const config = (): Config => ({
-    fen,
-    orientation,
-    turnColor: turnColor(fen),
-    lastMove: lastMove ? (lastMove as Key[]) : undefined,
-    check,
+  // Keep it tied to the position, including when a rejected move is restored.
+  const position = useMemo(() => { try { return new Chess(fen) } catch { return null } }, [fen])
+  const dests = useMemo(() => playable ? legalDests(fen) : new Map<Key, Key[]>(), [fen, playable])
+  const submit = useCallback(async (move: BoardMove) => {
+    if (busy.current || !latest.current.interactive || !latest.current.onMove) { reset.current(); return }
+    busy.current = true
+    try { if (!await latest.current.onMove(move)) reset.current() }
+    catch { reset.current() }
+    finally { busy.current = false }
+  }, [])
+  const after = useCallback((from: Key, to: Key) => {
+    const current = latest.current
+    let pawn = false
+    try { pawn = new Chess(current.fen).get(from as Square)?.type === 'p' } catch { /* invalid position */ }
+    if (pawn && (to[1] === '8' || to[1] === '1')) setPromotion({ from, to, fen: current.fen })
+    else void submit({ from, to })
+  }, [submit])
+  const first = lastMove?.[0], second = lastMove?.[1]
+  const config = useMemo((): Config => ({
+    fen, orientation,
+    turnColor: fen.split(' ')[1] === 'b' ? 'black' : 'white',
+    lastMove: first && second ? [first as Key, second as Key] : undefined,
+    check: position?.inCheck() ?? false,
     coordinates: coordinates && !mini,
-    viewOnly: !interactive,
+    viewOnly: !playable,
     animation: { enabled: !mini, duration: 160 },
     highlight: { lastMove: true, check: true },
-    movable: interactive
-      ? { free: false, color: turnColor(fen), dests: new Map(dests), showDests: true,
-          events: { after: (o, d) => onMoveRef.current?.(o, d) } }
+    movable: playable
+      ? { free: false, color: fen.split(' ')[1] === 'b' ? 'black' : 'white', dests: new Map(dests), showDests: true, events: { after } }
       : { free: false, color: undefined, dests: new Map() },
     premovable: { enabled: false },
-    draggable: { enabled: !!interactive, showGhost: true },
-    selectable: { enabled: !!interactive },
-    drawable: { enabled: !mini, visible: true, autoShapes: shapes ?? [], defaultSnapToValidMove: true },
-  })
-
-  // Chessground binds its mouse and touch handlers only when it builds a board that is not view-only,
-  // and it rebuilds the board on a flip or a resize. Turning `viewOnly` off later does not bind them,
-  // so a board rebuilt while locked (a flip to the next position, a resize between moves) would
-  // ignore every move. Build a new board whenever it switches between locked and playable.
+    draggable: { enabled: playable, showGhost: true },
+    selectable: { enabled: playable },
+    drawable: { enabled: !mini, visible: true, defaultSnapToValidMove: true },
+  }), [fen, orientation, first, second, position, coordinates, mini, playable, dests, after])
+  const { el, restore, measure } = useChessground(config, shapes)
+  useLayoutEffect(() => { reset.current = restore }, [restore])
+  const cancel = useCallback(() => { setPromotion(null); restore() }, [restore])
   useEffect(() => {
-    if (!el.current) return
-    api.current = Chessground(el.current, config())
-    // A board being removed or hidden reports 0×0. Redrawing then divides by zero and writes
-    // NaN arrow coordinates, so wait until it has a size again.
-    const ro = new ResizeObserver(([entry]) => {
-      if (entry && (entry.contentRect.width === 0 || entry.contentRect.height === 0)) return
-      api.current?.redrawAll()
-    })
-    ro.observe(el.current)
-    return () => {
-      ro.disconnect()
-      api.current?.destroy()
-      api.current = null
+    if (!pending) return
+    const onKey = (event: KeyboardEvent) => {
+      // A promotion choice owns the page's move shortcuts until it is picked or cancelled, but not
+      // browser shortcuts or typing in a field elsewhere (the command palette, a search box).
+      if (event.key !== 'Escape' && (event.metaKey || event.ctrlKey || event.altKey
+        || (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"]')))) return
+      if (['Escape', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Backspace', 'f', 'n'].includes(event.key)) {
+        event.preventDefault(); event.stopImmediatePropagation()
+        if (event.key === 'Escape') cancel()
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [interactive])
-
-  useEffect(() => {
-    if (!api.current) return
-    api.current.set(config())
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fen, orientation, lastMove?.[0], lastMove?.[1], interactive, coordinates, mini, nonce])
-
-  useEffect(() => {
-    api.current?.setAutoShapes(shapes ?? [])
-    // Compare shape content: callers may create an equivalent array on each render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(shapes ?? [])])
-
-  return (
-    <div data-board={board} className={clsx('board', `orientation-${orientation}`, mini && 'mini', className)}
-      // Chessground caches the board's screen position and only refreshes it on scroll or resize.
-      // Content above the board can move it without either (a status line, a wrapping header row),
-      // and then every click lands on the wrong square. Measure again on each press.
-      onPointerDownCapture={() => api.current?.state.dom.bounds.clear()}>
-      <div ref={el} />
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [pending, cancel])
+  const content = (
+    <div className="relative">
+      <div data-board={board} className={clsx('board', `orientation-${orientation}`, mini && 'mini', className)} onPointerDownCapture={measure}>
+        <div ref={el} />
+      </div>
+      {pending && <>{!children && <span className="sr-only" role="status">Choose a piece to promote to.</span>}
+        <PromotionPicker onCancel={cancel} onPick={piece => { setPromotion(null); void submit({ from: pending.from, to: pending.to, promotion: piece }) }} />
+      </>}
     </div>
   )
+  return children ? children(content, !!pending) : content
 }

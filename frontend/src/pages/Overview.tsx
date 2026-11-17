@@ -1,3 +1,4 @@
+import { useSingleFlight } from '../lib/useSingleFlight'
 import { SERIES } from '../lib/charts'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowRight, RefreshCw } from 'lucide-react'
@@ -49,6 +50,7 @@ export default function Overview() {
   const all = useQuery({ queryKey: ['insights', account?.id, {}], queryFn: () => api.insights(account!.id, {}), enabled: !!account, refetchInterval: insightPollInterval })
   const status = useQuery({ queryKey: ['status'], queryFn: api.status })
   const sync = useMutation({ mutationFn: () => api.syncAccount(account!.id), onSuccess: () => qc.invalidateQueries({ queryKey: ['accounts'] }) })
+  const syncAccount = useSingleFlight(sync.mutateAsync)
 
   if (loading) return <Loading />
   if (!account) return <Welcome />
@@ -65,7 +67,7 @@ export default function Overview() {
     <div className="appear space-y-7">
       <PageHeader title="Overview"
         description={<>{ratingLine || 'No ratings yet'} <span className="text-fg-3">· synced {timeAgo(account.last_sync_at)}</span></>}
-        actions={<Button onClick={() => sync.mutate()} loading={sync.isPending || account.sync_status === 'syncing'}><RefreshCw className="h-3.5 w-3.5" />Sync now</Button>} />
+        actions={<Button onClick={() => syncAccount()} loading={sync.isPending || account.sync_status === 'syncing'}><RefreshCw className="h-3.5 w-3.5" />Sync now</Button>} />
 
       {sync.error && <ErrorNote error={sync.error} />}
       {account.sync_status === 'error' && <Banner tone="warn">Last sync failed: {account.sync_error} It will retry automatically.</Banner>}

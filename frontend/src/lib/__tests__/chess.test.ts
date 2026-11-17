@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { legalDests, sanToSquares } from '../chess'
+import { legalDests, sanToSquares, uciSquares } from '../chess'
+
+describe('UCI squares', () => {
+  it('reads normal moves and promotions without including the promoted piece', () => {
+    expect(uciSquares('e2e4')).toEqual(['e2', 'e4'])
+    expect(uciSquares('a7a8n')).toEqual(['a7', 'a8'])
+    expect(uciSquares(undefined)).toBeNull()
+    expect(uciSquares(null)).toBeNull()
+    expect(uciSquares('')).toBeNull()
+    expect(uciSquares('e2')).toBeNull()
+  })
+})
 
 describe('board legality', () => {
   it('includes castling and en passant destinations', () => {

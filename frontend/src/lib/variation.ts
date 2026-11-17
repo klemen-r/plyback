@@ -29,3 +29,34 @@ export function playEngineLine(variation: Variation | null, fen: string, basePly
   const kept = variation.steps.slice(0, variation.idx + 1)
   return { ...variation, steps: [...kept, ...steps], idx: kept.length + at }
 }
+
+export type VariationAction =
+  | { type: 'start'; fen: string; basePly: number; sans: string[]; source: Variation['source'] }
+  | { type: 'append'; san: string }
+  | { type: 'continueWithLine'; from: Variation | null; fen: string; basePly: number; sans: string[]; idx: number }
+  | { type: 'seek'; idx: number }
+  | { type: 'exit' }
+
+/** Keep the variation's origin and discard only moves after the cursor when branching. */
+export function variationReducer(state: Variation | null, action: VariationAction): Variation | null {
+  switch (action.type) {
+    case 'start': {
+      const steps = buildSteps(action.fen, action.sans)
+      return steps.length ? { baseFen: action.fen, basePly: action.basePly, steps, idx: steps.length - 1, source: action.source } : state
+    }
+    case 'append': {
+      if (!state) return state
+      const fen = state.idx >= 0 ? state.steps[state.idx].fen : state.baseFen
+      const added = buildSteps(fen, [action.san])
+      if (!added.length) return state
+      const steps = [...state.steps.slice(0, state.idx + 1), ...added]
+      return { ...state, steps, idx: steps.length - 1, source: 'user' }
+    }
+    case 'continueWithLine':
+      return playEngineLine(action.from, action.fen, action.basePly, action.sans, action.idx) ?? state
+    case 'seek':
+      return state && action.idx >= -1 && action.idx < state.steps.length ? { ...state, idx: action.idx } : state
+    case 'exit':
+      return null
+  }
+}

@@ -1,3 +1,4 @@
+import { readStorage, writeStorage } from './storage'
 import { useEffect, useSyncExternalStore } from 'react'
 function markSvg(accent: string, tile = '#171717', fg = '#ffffff'): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="${tile}"/>`
@@ -43,7 +44,7 @@ const DEFAULTS: Appearance = { mode: 'system', accent: DEFAULT_ACCENT, board: 's
 
 function load(): Appearance {
   try {
-    const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}')
+    const raw = JSON.parse(readStorage(KEY) ?? '{}')
     const accent = typeof raw.accent === 'string' && isHexColour(raw.accent) ? raw.accent.toLowerCase() : DEFAULTS.accent
     return {
       mode: ['system', 'light', 'dark'].includes(raw.mode) ? raw.mode : DEFAULTS.mode,
@@ -90,7 +91,7 @@ export function applyAppearance(a: Appearance = state) {
 
 export function setAppearance(patch: Partial<Appearance>) {
   state = { ...state, ...patch }
-  try { localStorage.setItem(KEY, JSON.stringify(state)) } catch { /* storage unavailable */ }
+  writeStorage(KEY, JSON.stringify(state))
   applyAppearance()
   listeners.forEach(l => l())
 }

@@ -1,14 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
-import { Chess, type Square } from 'chess.js'
+import { Chess } from 'chess.js'
 import clsx from 'clsx'
 import {
   ArrowLeft, ChevronFirst, ChevronLast, ChevronLeft, ChevronRight, Cpu, ExternalLink, FlipVertical2, Lightbulb, RefreshCw, Sparkles, X,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import Board from '../components/Board'
+import Board, { type BoardMove } from '../components/Board'
 import ClassIcon, { ClassLabel } from '../components/ClassIcon'
 import EvalBar from '../components/EvalBar'
 import EvalGraph from '../components/EvalGraph'
@@ -17,18 +17,13 @@ import { Button, Card, ErrorNote, Loading, Badge, Progress, Tabs, Spinner } from
 import { useAccount } from '../lib/account-context'
 import { api } from '../lib/api'
 import { CLASS_META, CLASS_ORDER, classBadgeSvg, PHASE_LABEL } from '../lib/classification'
-import { gameOverText, isGameOverAnswer } from '../lib/chess'
+import { gameOverText, isGameOverAnswer, uciSquares } from '../lib/chess'
 import { endingOf, endShapes } from '../lib/ending'
-import { clockBeforeFirstMove, fmtClock, fmtDate, fmtTimeControl, formatEval } from '../lib/format'
+import { clockBeforeFirstMove, fmtClock, fmtDate, fmtTimeControl, formatEval, moveLabel, moveNumber } from '../lib/format'
 import type { Classification, GameDetail, MoveRow } from '../lib/types'
-import { playEngineLine, type VarStep, type Variation } from '../lib/variation'
-
-type Promotion = 'q' | 'r' | 'b' | 'n'
-
-function uciSquares(uci?: string | null): [Key, Key] | null {
-  if (!uci || uci.length < 4) return null
-  return [uci.slice(0, 2) as Key, uci.slice(2, 4) as Key]
-}
+import { variationReducer, type Variation } from '../lib/variation'
+import { useLiveEngine } from '../lib/useLiveEngine'
+import { useSingleFlight } from '../lib/useSingleFlight'
 
 function PlayerBar({ name, rating, accuracy, clock, active, isUser }: { name: string | null; rating: number | null; accuracy?: number | null; clock?: number | null; active: boolean; isUser: boolean }) {
   return (
@@ -111,7 +106,7 @@ function GameReviewContent() {
     return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0
   })
   const [flip, setFlip] = useState(false)
-  const [variation, setVariation] = useState<Variation | null>(null)
+  const [variation, dispatchVariation] = useReducer(variationReducer, null)
   const [showArrows, setShowArrows] = useState(true)
   const [hint, setHint] = useState(false)
   // Live analysis starts at the depth chosen in Settings; the tabs change it for this game.
@@ -119,9 +114,7 @@ function GameReviewContent() {
   const [chosenDepth, setDepth] = useState<number | null>(null)
   const depth = chosenDepth ?? settings.data?.interactive_depth ?? 20
   const depthOptions = [...new Set([16, 20, 24, depth])].sort((a, b) => a - b).map(d => ({ value: String(d), label: `d${d}` }))
-  const [promotion, setPromotion] = useState<{ orig: string; dest: string } | null>(null)
   const [enginePaused, setEnginePaused] = useState(false)
-  const [engineFen, setEngineFen] = useState('')
 
   const q = useQuery({
     queryKey: ['game', gameId, account?.id],
@@ -139,6 +132,7 @@ function GameReviewContent() {
     mutationFn: (opts: { depth?: number; force?: boolean }) => api.analyzeGame(gameId, opts.depth, opts.force),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['game', gameId] }),
   })
+  const submitAnalysis = useSingleFlight(analyze.mutateAsync)
 
   const mainFen = useCallback((p: number) => {
     if (!data) return ''
@@ -146,13 +140,10 @@ function GameReviewContent() {
     return p < n ? moves[p].fen_before : data.game.final_fen ?? ''
   }, [data, moves, n])
 
-  const go = useCallback((p: number) => { setPromotion(null); setVariation(null); setPly(Math.max(0, Math.min(n, p))) }, [n])
+  const go = useCallback((p: number) => { dispatchVariation({ type: 'exit' }); setPly(Math.max(0, Math.min(n, p))) }, [n])
   const step = useCallback((d: number) => {
     if (variation) {
-      const idx = variation.idx + d
-      if (idx < -1) return
-      if (idx >= variation.steps.length) return
-      setVariation({ ...variation, idx })
+      dispatchVariation({ type: 'seek', idx: variation.idx + d })
       return
     }
     go(ply + d)
@@ -160,7 +151,6 @@ function GameReviewContent() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (promotion) { if (e.key === 'Escape') setPromotion(null); return }
       if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey ||
         (e.target as HTMLElement)?.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return
       if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1) }
@@ -168,11 +158,11 @@ function GameReviewContent() {
       else if (e.key === 'ArrowUp' || e.key === 'Home') { e.preventDefault(); go(0) }
       else if (e.key === 'ArrowDown' || e.key === 'End') { e.preventDefault(); go(n) }
       else if (e.key === 'f') setFlip(f => !f)
-      else if (e.key === 'Escape') setVariation(null)
+      else if (e.key === 'Escape') dispatchVariation({ type: 'exit' })
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [step, go, n, promotion])
+  }, [step, go, n])
 
   const orientation: 'white' | 'black' = useMemo(() => {
     const base = data?.game.user_color ?? 'white'
@@ -187,19 +177,7 @@ function GameReviewContent() {
     : uciSquares(current?.uci)
 
   const liveEnabled = canExplore && !!fen && !enginePaused && (inVar || hint || !analysis)
-  useEffect(() => {
-    const timer = setTimeout(() => setEngineFen(fen), 150)
-    return () => clearTimeout(timer)
-  }, [fen])
-  const live = useQuery({
-    queryKey: ['engine', fen, depth],
-    queryFn: ({ signal }) => api.engine(fen, depth, 3, signal),
-    enabled: liveEnabled && engineFen === fen && !settings.isPending,
-    staleTime: Infinity,
-  })
-  useEffect(() => {
-    if (!liveEnabled) void qc.cancelQueries({ queryKey: ['engine', fen, depth], exact: true })
-  }, [qc, fen, depth, liveEnabled])
+  const live = useLiveEngine(fen, depth, liveEnabled && !settings.isPending)
 
   const shapes: DrawShape[] = useMemo(() => {
     // The final position shows how the game ended on both kings.
@@ -222,34 +200,22 @@ function GameReviewContent() {
     return s
   }, [inVar, current, showArrows, hint, live.data, analysis, ply, n, moves, data, mainFen])
 
-  const applyBoardMove = (orig: string, dest: string, piece?: Promotion) => {
+  const onBoardMove = ({ from, to, promotion }: BoardMove) => {
     const chess = new Chess(fen)
     let mv
-    try { mv = chess.move({ from: orig, to: dest, promotion: piece }) } catch { return }
-    if (!mv) return
+    try { mv = chess.move({ from, to, promotion }) } catch { return false }
+    if (!mv) return false
     const uci = `${mv.from}${mv.to}${mv.promotion ?? ''}`
-    if (!inVar && ply < n && moves[ply].uci === uci) { setPly(ply + 1); return }
-    const stepNew: VarStep = { fen: chess.fen(), san: mv.san, from: mv.from as Key, to: mv.to as Key }
-    if (inVar) {
-      const steps = [...variation.steps.slice(0, variation.idx + 1), stepNew]
-      setVariation({ ...variation, steps, idx: steps.length - 1, source: 'user' })
-    } else {
-      setVariation({ baseFen: fen, basePly: ply, steps: [stepNew], idx: 0, source: 'user' })
-    }
-  }
-
-  const onBoardMove = (orig: string, dest: string) => {
-    const chess = new Chess(fen)
-    if (chess.get(orig as Square)?.type === 'p' && (dest[1] === '8' || dest[1] === '1')) {
-      setPromotion({ orig, dest })
-    } else applyBoardMove(orig, dest)
+    if (!inVar && ply < n && moves[ply].uci === uci) { setPly(ply + 1); return true }
+    dispatchVariation(inVar ? { type: 'append', san: mv.san }
+      : { type: 'start', fen, basePly: ply, sans: [mv.san], source: 'user' })
+    return true
   }
 
   /** Inside a variation (`from`), the line continues it; otherwise it starts one from the game. */
   const playLine = (baseFen: string, basePly: number, sans: string[], idx: number, from: Variation | null = null) => {
     if (!canExplore) return
-    const next = playEngineLine(from, baseFen, basePly, sans, idx)
-    if (next) setVariation(next)
+    dispatchVariation({ type: 'continueWithLine', from, fen: baseFen, basePly, sans, idx })
   }
 
   if (q.isLoading) return <Loading label="Loading game…" />
@@ -304,7 +270,7 @@ function GameReviewContent() {
           </div>
           {job?.status === 'running' && job.total ? <Progress value={job.progress ?? 0} max={job.total} className="max-w-xs" /> : null}
           {(!job || job.status === 'failed') && !g.pgn_error && (g.rules === 'chess' || g.rules === 'chess960') && (
-            <Button variant="primary" size="sm" loading={analyze.isPending} onClick={() => analyze.mutate({})}><Sparkles className="h-4 w-4" />Analyse now</Button>
+            <Button variant="primary" size="sm" loading={analyze.isPending} onClick={() => submitAnalysis({})}><Sparkles className="h-4 w-4" />Analyse now</Button>
           )}
           {analyze.error && <ErrorNote error={analyze.error} />}
         </div>
@@ -321,14 +287,9 @@ function GameReviewContent() {
           <div className="flex gap-2">
             <EvalBar cp={evalNow} orientation={orientation} />
             <div className="min-w-0 flex-1">
-              <Board fen={fen} orientation={orientation} lastMove={lastMove} shapes={shapes} interactive={canExplore && !promotion} onMove={onBoardMove} />
+              <Board fen={fen} orientation={orientation} lastMove={lastMove} shapes={shapes} interactive={canExplore} onMove={onBoardMove} />
             </div>
           </div>
-          {promotion && <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface p-3" role="group" aria-label="Promote pawn">
-            <span className="mr-1 text-sm">Promote to</span>
-            {([{ piece: 'q', label: 'Queen' }, { piece: 'r', label: 'Rook' }, { piece: 'b', label: 'Bishop' }, { piece: 'n', label: 'Knight' }] as const).map(p => <Button key={p.piece} onClick={() => { applyBoardMove(promotion.orig, promotion.dest, p.piece); setPromotion(null) }}>{p.label}</Button>)}
-            <Button variant="ghost" onClick={() => setPromotion(null)}>Cancel promotion</Button>
-          </div>}
           <PlayerBar name={g[bottomSide].username} rating={g[bottomSide].rating} accuracy={analysis?.accuracy[bottomSide]} clock={clockFor(bottomSide) ?? startClock(bottomSide)}
             active={!inVar && ply < n && moves[ply]?.color === bottomSide[0]} isUser={g.user_color === bottomSide} />
 
@@ -359,12 +320,12 @@ function GameReviewContent() {
           {inVar && (
             <div className="rounded-lg border border-accent-ink/50 bg-surface p-4">
               <div className="mb-2 flex items-center justify-between">
-                <div className="text-sm font-semibold text-accent-ink">{variation.source === 'engine' ? 'Engine line' : 'Your variation'} <span className="font-normal text-fg-2">from move {Number(variation.baseFen.split(' ')[5])}{variation.baseFen.split(' ')[1] === 'b' ? '…' : ''}</span></div>
-                <Button size="sm" variant="ghost" onClick={() => setVariation(null)}><X className="h-4 w-4" />Back to game</Button>
+                <div className="text-sm font-semibold text-accent-ink">{variation.source === 'engine' ? 'Engine line' : 'Your variation'} <span className="font-normal text-fg-2">from move {moveNumber(variation.baseFen, Math.ceil((variation.basePly + 1) / 2))}{variation.baseFen.split(' ')[1] === 'b' ? '…' : ''}</span></div>
+                <Button size="sm" variant="ghost" onClick={() => dispatchVariation({ type: 'exit' })}><X className="h-4 w-4" />Back to game</Button>
               </div>
               <div className="flex flex-wrap gap-1 font-mono text-sm">
                 {variation.steps.map((s, i) => (
-                  <button key={i} onClick={() => setVariation({ ...variation, idx: i })}
+                  <button key={i} onClick={() => dispatchVariation({ type: 'seek', idx: i })}
                     className={clsx('rounded px-1.5 py-0.5', i === variation.idx ? 'bg-accent-ink/30 text-fg' : 'text-fg-2 hover:bg-subtle')}>{s.san}</button>
                 ))}
               </div>
@@ -390,7 +351,7 @@ function GameReviewContent() {
                     return (
                       <button key={p} onClick={() => go(p)} className={clsx('flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors max-sm:py-1.5', p === ply ? 'border-accent-ink bg-hover' : 'border-line bg-subtle hover:bg-hover')}>
                         <ClassIcon c={m.classification} size={14} />
-                        <span className="font-mono">{Number(m.fen_before.split(' ')[5])}{m.fen_before.split(' ')[1] === 'b' ? '…' : '.'} {m.san}</span>
+                        <span className="font-mono">{moveLabel(m.ply, m.san, m.fen_before)}</span>
                       </button>
                     )
                   })}
@@ -428,7 +389,7 @@ function GameReviewContent() {
               <span className="flex items-center gap-2">
                 {analysis.outdated && <span className="text-warn">older algorithm</span>}
                 <Button size="sm" variant="ghost" loading={analyze.isPending || (!!job && job.status !== 'failed')}
-                  onClick={() => analyze.mutate({ depth: Math.min(30, analysis.depth + 4), force: true })}>
+                  onClick={() => submitAnalysis({ depth: Math.min(30, analysis.depth + 4), force: true })}>
                   <RefreshCw className="h-3.5 w-3.5" />Deeper (d{Math.min(30, analysis.depth + 4)})
                 </Button>
               </span>
@@ -474,13 +435,12 @@ function MoveInsight({ current, onPlayLine, allowExploration }: { current: MoveR
     )
   }
   const c = current.classification as Classification | undefined
-  const moveNo = `${Number(current.fen_before.split(' ')[5])}${current.fen_before.split(' ')[1] === 'b' ? '…' : '.'}`
   return (
     <div className="border-b border-line p-4" style={c ? { boxShadow: `inset 3px 0 0 ${CLASS_META[c].color}` } : undefined}>
       <div className="flex items-center justify-between gap-2" aria-live="polite">
         <div className="flex min-w-0 items-center gap-2">
           {c && <ClassLabel c={c} />}
-          <span className="truncate font-mono text-sm text-fg-2">{moveNo} {current.san}</span>
+          <span className="truncate font-mono text-sm text-fg-2">{moveLabel(current.ply, current.san, current.fen_before)}</span>
         </div>
         <span className="shrink-0 font-mono text-sm font-semibold">{formatEval(current.eval_after)}</span>
       </div>

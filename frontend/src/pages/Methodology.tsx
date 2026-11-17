@@ -26,7 +26,7 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
 export default function Methodology() {
   return (
     <div className="appear max-w-4xl space-y-6">
-      <PageHeader title="How the analysis works" subtitle="Plyback’s review scores follow documented rules. Nothing here replicates Chess.com’s proprietary algorithms." />
+      <PageHeader title="How the analysis works" description="Plyback’s review scores follow documented rules. Nothing here replicates Chess.com’s proprietary algorithms." />
       <Block title="Engine">
         <p>Stockfish runs locally, aiming for your chosen depth (default 16) with two candidate lines by default. Each search has a time limit (default 5 seconds), so it may finish at a lower depth. We use the deepest completed set of candidate scores at a common depth.</p>
         <p>The best move and the played move are compared from the same position and move history, under the same search limits. If the played move is missing from the initial lines, Stockfish searches the two candidates together. The evaluation graph and opponent’s reply are searched separately; those scores do not determine the move’s loss.</p>

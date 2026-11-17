@@ -1,3 +1,4 @@
+import { useSingleFlight } from '../lib/useSingleFlight'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { FileUp, Upload } from 'lucide-react'
 import { useRef, useState } from 'react'
@@ -22,6 +23,7 @@ export default function ImportPgn() {
   const imp = useMutation({ mutationFn: () => api.importPgn(text, analyze), onSuccess: () => {
     for (const key of ['games', 'accounts', 'insights', 'status', 'openings']) qc.invalidateQueries({ queryKey: [key] })
   } })
+  const importPgn = useSingleFlight(imp.mutateAsync)
   const onFile = async (f: File | undefined) => {
     if (!f) return
     const read = ++fileRead.current
@@ -52,7 +54,7 @@ export default function ImportPgn() {
   }
   return (
     <div className="appear space-y-6">
-      <PageHeader title="Import PGN" subtitle="Review games from anywhere: paste PGN text or upload a .pgn file (multiple games supported). Games whose players match a connected account count toward its insights." />
+      <PageHeader title="Import PGN" description="Review games from anywhere: paste PGN text or upload a .pgn file (multiple games supported). Games whose players match a connected account count toward its insights." />
       <Card>
         <div className="space-y-4">
           <label className="flex cursor-pointer items-center justify-center gap-3 rounded-lg border border-dashed border-line-strong bg-subtle px-4 py-6 text-sm text-fg-2 transition-colors hover:border-fg-3 hover:text-fg focus-within:border-accent-ink focus-within:text-fg"
@@ -70,7 +72,7 @@ export default function ImportPgn() {
             placeholder={'[Event "Casual game"]\n[White "Me"]\n[Black "Friend"]\n\n1. e4 e5 2. Nf3 Nc6 ...'}
             className="w-full rounded-md border border-line bg-surface p-3 font-mono text-[13px] text-fg outline-none transition-colors placeholder:text-fg-3 hover:border-line-strong focus:border-accent-ink" />}
           <Switch checked={analyze} onChange={setAnalyze} label="Analyse immediately" description="Imported games jump to the front of the analysis queue." />
-          <Button variant="primary" onClick={() => imp.mutate()} loading={reading || imp.isPending} disabled={!text.trim()}><Upload className="h-4 w-4" />Import</Button>
+          <Button variant="primary" onClick={() => importPgn()} loading={reading || imp.isPending} disabled={!text.trim()}><Upload className="h-4 w-4" />Import</Button>
           {imp.error && <ErrorNote error={imp.error} />}
           {imp.data && (
             <div className="rounded-lg border border-accent/40 bg-accent/5 p-4 text-sm">

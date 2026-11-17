@@ -18,7 +18,7 @@ export default function ActivityPage() {
   const d = q.data!
   return (
     <div className="appear space-y-6">
-      <PageHeader title="Activity" subtitle="Background analysis queue and synchronisation log. Everything here survives restarts."
+      <PageHeader title="Activity" description="Background analysis queue and synchronisation log. Everything here survives restarts."
         actions={<>
           {d.paused ? <Button variant="primary" onClick={() => act.mutate('resume')}><Play className="h-4 w-4" />Resume</Button>
             : <Button onClick={() => act.mutate('pause')}><Pause className="h-4 w-4" />Pause</Button>}

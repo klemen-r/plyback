@@ -1,3 +1,4 @@
+import { useSingleFlight } from '../lib/useSingleFlight'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Mark } from '../components/Logo'
@@ -11,9 +12,10 @@ export default function Login() {
     mutationFn: () => api.login(password),
     onSuccess: s => { qc.setQueryData(['session'], s); qc.invalidateQueries() },
   })
+  const signIn = useSingleFlight(login.mutateAsync)
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg px-4">
-      <form className="appear w-full max-w-[340px]" onSubmit={e => { e.preventDefault(); if (password) login.mutate() }}>
+      <form className="appear w-full max-w-[340px]" onSubmit={e => { e.preventDefault(); if (password) signIn() }}>
         <Mark size={32} />
         <h1 className="mt-6 text-[22px] font-semibold tracking-[-0.03em]">Sign in to Plyback</h1>
         <p className="mt-1 text-[14px] text-fg-2">This Plyback server is protected with a password.</p>

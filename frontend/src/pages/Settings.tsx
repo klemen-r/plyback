@@ -1,3 +1,4 @@
+import { useSingleFlight } from '../lib/useSingleFlight'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { Check, Save } from 'lucide-react'
@@ -93,9 +94,10 @@ function AccessPassword() {
       setCurrent(''); setPassword(''); setConfirmation('')
     },
   })
+  const submitSettings = useSingleFlight(save.mutateAsync)
   const protected_ = session.data?.password_set
   return <Card title="Access password" subtitle="Protect access to this server. Changing the password signs out other sessions.">
-    <form className="space-y-3" onSubmit={e => { e.preventDefault(); if (password.length >= 8 && password === confirmation) save.mutate() }}>
+    <form className="space-y-3" onSubmit={e => { e.preventDefault(); if (password.length >= 8 && password === confirmation) submitSettings() }}>
       {protected_ && <label className="block text-sm">Current password<Input className="mt-1 block w-full" type="password" autoComplete="current-password" required value={current} onChange={e => setCurrent(e.target.value)} /></label>}
       <label className="block text-sm">New password<Input className="mt-1 block w-full" type="password" autoComplete="new-password" minLength={8} maxLength={256} required value={password} onChange={e => setPassword(e.target.value)} /></label>
       <label className="block text-sm">Confirm new password<Input className="mt-1 block w-full" type="password" autoComplete="new-password" required value={confirmation} onChange={e => setConfirmation(e.target.value)} /></label>
@@ -118,6 +120,7 @@ export default function SettingsPage() {
     mutationFn: (patch: Partial<Settings>) => api.saveSettings(patch),
     onSuccess: d => { qc.setQueryData(['settings'], d); setForm(d); qc.invalidateQueries({ queryKey: ['status'] }) },
   })
+  const submitSettings = useSingleFlight(save.mutateAsync)
   if (s.error) return <ErrorNote error={s.error} />
   // Appearance and the access password do not need the server status, so they stay usable.
   if (status.error && !status.data) {
@@ -132,7 +135,7 @@ export default function SettingsPage() {
 
   return (
     <div className="appear max-w-3xl space-y-6">
-      <PageHeader title="Settings" actions={<Button variant="primary" disabled={!dirty} loading={save.isPending} onClick={() => save.mutate(form)}>{save.isSuccess && !dirty ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />}Save changes</Button>} />
+      <PageHeader title="Settings" actions={<Button variant="primary" disabled={!dirty} loading={save.isPending} onClick={() => submitSettings(form)}>{save.isSuccess && !dirty ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />}Save changes</Button>} />
       {save.error && <ErrorNote error={save.error} />}
       <Card title="Engine" subtitle={status.data.engine.error ? undefined : `${status.data.engine.name ?? 'Stockfish'} · ${status.data.engine.path ?? ''}`}>
         {status.data.engine.error && <div className="mb-3"><ErrorNote error={status.data.engine.error} /></div>}

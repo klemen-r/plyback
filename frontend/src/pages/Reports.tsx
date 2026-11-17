@@ -1,3 +1,4 @@
+import { useSingleFlight } from '../lib/useSingleFlight'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { FileText, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
@@ -20,6 +21,7 @@ export default function Reports() {
     refetchInterval: q => (q.state.data?.some(r => r.status === 'analyzing') ? 3000 : false),
   })
   const create = useMutation({ mutationFn: () => api.createReport(account!.id, toInsightFilters(fs), title || undefined), onSuccess: r => nav(`/reports/${r.id}`) })
+  const createReport = useSingleFlight(create.mutateAsync)
   // Reports are frozen snapshots that cannot be recreated, so deleting one asks first.
   const [confirming, setConfirming] = useState<number | null>(null)
   // Each row tracks its own delete, so a slow one does not spin or close another row's confirmation.
@@ -34,19 +36,20 @@ export default function Reports() {
       setConfirming(c => (c === id ? null : c))
     },
   })
+  const deleteReport = useSingleFlight(del.mutateAsync, id => id)
   const cancelDelete = (id: number) => { setConfirming(null); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`[data-report-delete="${id}"]`)?.focus()) }
 
   if (loading) return <Loading />
   if (!account) return <Empty icon={<FileText className="h-10 w-10" />} title="Connect a Chess.com account first" action={<Link to="/accounts"><Button variant="primary">Connect account</Button></Link>} />
   return (
     <div className="appear space-y-6">
-      <PageHeader title="Account analysis reports" subtitle="A report analyses every game in the selected scope (reusing existing analyses) and saves a snapshot you can revisit." />
+      <PageHeader title="Account analysis reports" description="A report analyses every game in the selected scope (reusing existing analyses) and saves a snapshot you can revisit." />
       <Card title="New report">
         <div className="space-y-3">
           <FilterBar value={fs} onChange={setFs} />
           <div className="flex flex-wrap gap-2">
             <Input value={title} onChange={e => setTitle(e.target.value)} maxLength={120} placeholder="Title (optional)" aria-label="Report title" className="min-w-48 flex-1" />
-            <Button variant="primary" onClick={() => create.mutate()} loading={create.isPending}><Plus className="h-4 w-4" />Analyse & create report</Button>
+            <Button variant="primary" onClick={() => createReport()} loading={create.isPending}><Plus className="h-4 w-4" />Analyse & create report</Button>
           </div>
           {create.error && <ErrorNote error={create.error} />}
         </div>
@@ -66,7 +69,7 @@ export default function Reports() {
             </Badge>
             {confirming === r.id || deleting.has(r.id)
               ? <span className="flex items-center gap-2" onKeyDown={e => { if (e.key === 'Escape' && !deleting.has(r.id)) cancelDelete(r.id) }}>
-                  <Button size="sm" variant="danger" loading={deleting.has(r.id)} onClick={() => del.mutate(r.id)}>Delete</Button>
+                  <Button size="sm" variant="danger" loading={deleting.has(r.id)} onClick={() => deleteReport(r.id)}>Delete</Button>
                   <Button size="sm" variant="ghost" autoFocus disabled={deleting.has(r.id)} onClick={() => cancelDelete(r.id)}>Cancel</Button>
                 </span>
               : <Button size="sm" variant="ghost" data-report-delete={r.id} onClick={() => setConfirming(r.id)} aria-label="Delete report"><Trash2 className="h-4 w-4" /></Button>}

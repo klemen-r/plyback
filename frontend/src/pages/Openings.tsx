@@ -1,12 +1,11 @@
 import type { Key } from '@lichess-org/chessground/types'
 import { useQuery } from '@tanstack/react-query'
-import { Chess, type Square } from 'chess.js'
+import { Chess } from 'chess.js'
 import clsx from 'clsx'
 import { ChevronLeft, RotateCcw } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import Board from '../components/Board'
-import PromotionPicker, { type Promotion } from '../components/PromotionPicker'
+import Board, { type BoardMove } from '../components/Board'
 import { WDLBar } from '../components/charts'
 import { Button, Card, Empty, ErrorNote, Loading, PageHeader, Select, Tabs } from '../components/ui'
 import { useAccount } from '../lib/account-context'
@@ -81,15 +80,12 @@ export default function Openings() {
   const requested = useMemo(() => (params.get('line') ?? '').split(' ').filter(Boolean), [params])
   const focus = params.get('focus')
   const [notice, setNotice] = useState<string | null>(null)
-  const [nonce, setNonce] = useState(0)
-  const [promotion, setPromotion] = useState<{ orig: string; dest: string } | null>(null)
   // Moves replace the URL instead of adding history entries, so browser back leaves the page
   // in one step (use the back arrow, ← or Backspace to step back a move).
   const update = (patch: Record<string, string | null>) => {
     const next = new URLSearchParams(params)
     for (const [k, v] of Object.entries(patch)) { if (v === null || v === '') next.delete(k); else next.set(k, v) }
     setNotice(null)
-    setPromotion(null)
     setParams(next, { replace: true })
   }
   const go = (moves: string[], highlight: string | null = null) => update({ line: moves.join(' ') || null, focus: highlight })
@@ -143,21 +139,14 @@ export default function Openings() {
     : null
 
   /** Playing a move on the board follows the tree when games went that way. */
-  const follow = (orig: string, dest: string, piece?: Promotion) => {
+  const follow = ({ from, to, promotion }: BoardMove) => {
     let san: string | null = null
-    try { san = new Chess(fen).move({ from: orig, to: dest, promotion: piece }).san } catch { /* not legal */ }
+    try { san = new Chess(fen).move({ from, to, promotion }).san } catch { /* not legal */ }
     const child = san && children.find(n => n.san === san)
-    if (child) { go([...line, child.san]); return }
-    setNonce(n => n + 1)
+    if (child) { go([...line, child.san]); return true }
     if (san) setNotice(`No game continued with ${san} here.`)
+    return false
   }
-  // A pawn reaching the last rank asks which piece, so underpromotions can be followed too.
-  const onBoardMove = (orig: string, dest: string) => {
-    if (new Chess(fen).get(orig as Square)?.type === 'p' && (dest[1] === '8' || dest[1] === '1')) setPromotion({ orig, dest })
-    else follow(orig, dest)
-  }
-  const cancelPromotion = () => { setPromotion(null); setNonce(n => n + 1) }
-
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Alt+← is the browser's Back; Home at the start position scrolls the page as usual.
@@ -168,12 +157,7 @@ export default function Openings() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   })
-  useEffect(() => {
-    if (!promotion) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setPromotion(null); setNonce(n => n + 1) } }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [promotion])
+
 
   if (loading) return <Loading />
   if (!account) {
@@ -214,9 +198,7 @@ export default function Openings() {
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]">
           <div className="mx-auto w-full min-w-[280px] max-w-[620px] lg:max-w-[min(620px,calc(100vh-19rem))]">
             <div className="relative">
-              <Board fen={fen} orientation={color} lastMove={last} interactive={!promotion} nonce={nonce} onMove={onBoardMove} />
-              {promotion && <PromotionPicker onCancel={cancelPromotion}
-                onPick={p => { const { orig, dest } = promotion; setPromotion(null); follow(orig, dest, p) }} />}
+              <Board fen={fen} orientation={color} lastMove={last} interactive onMove={follow} />
             </div>
             <div className="mt-3 flex items-start gap-2">
               <Button size="icon" variant="ghost" aria-label="Back one move" disabled={!line.length} onClick={() => go(line.slice(0, -1))}><ChevronLeft className="h-4 w-4" /></Button>

@@ -1,3 +1,4 @@
+import { useSingleFlight } from '../lib/useSingleFlight'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Cpu, Printer } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
@@ -13,6 +14,7 @@ export default function ReportView() {
   const q = useQuery({ queryKey: ['report', id], queryFn: () => api.report(id), enabled: valid, refetchInterval: query => (query.state.data?.status === 'analyzing' ? 3000 : false) })
   const status = useQuery({ queryKey: ['status'], queryFn: api.status, refetchInterval: 4000, enabled: q.data?.status === 'analyzing' })
   const finalize = useMutation({ mutationFn: () => api.finalizeReport(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['report', id] }) })
+  const buildReport = useSingleFlight(finalize.mutateAsync)
   const back = <Link to="/reports" className="mb-3 inline-flex items-center gap-1 text-sm text-fg-2 hover:text-fg"><ArrowLeft className="h-4 w-4" />Reports</Link>
   if (!valid) return <div className="appear">{back}<ErrorNote error="Report not found" /></div>
   if (q.isLoading) return <Loading />
@@ -28,7 +30,7 @@ export default function ReportView() {
     <div className="appear">
       {back}
       <PageHeader title={r.title ?? `Report #${r.id}`}
-        subtitle={r.status === 'ready' ? `Snapshot from ${fmtDate(r.completed_at, true)} · ${snapshotAnalyzed} of ${r.total_games} games analysed${variants ? ` · ${variants} chess variant ${variants === 1 ? 'game' : 'games'} not reviewed` : ''}` : `Created ${fmtDate(r.created_at, true)}`}
+        description={r.status === 'ready' ? `Snapshot from ${fmtDate(r.completed_at, true)} · ${snapshotAnalyzed} of ${r.total_games} games analysed${variants ? ` · ${variants} chess variant ${variants === 1 ? 'game' : 'games'} not reviewed` : ''}` : `Created ${fmtDate(r.created_at, true)}`}
         actions={r.status === 'ready' ? <Button size="sm" onClick={() => window.print()}><Printer className="h-4 w-4" />Print / PDF</Button> : undefined} />
       {r.status === 'analyzing' && (
         <Card>
@@ -40,14 +42,14 @@ export default function ReportView() {
               <Progress value={r.analyzed_games} max={r.total_games} className="mt-2" />
               <p className="mt-2 text-xs text-fg-3">You can leave this page — the report is built automatically when analysis finishes. Games already analysed at the report’s depth are reused; shallower analyses are redone.</p>
             </div>
-            <Button size="sm" onClick={() => finalize.mutate()} loading={finalize.isPending} disabled={r.total_games === 0}>Build now</Button>
+            <Button size="sm" onClick={() => buildReport()} loading={finalize.isPending} disabled={r.total_games === 0}>Build now</Button>
           </div>
         </Card>
       )}
       {r.status === 'failed' && (
         <div className="space-y-3">
           <ErrorNote error={r.error ?? 'Report failed'} />
-          <Button size="sm" onClick={() => finalize.mutate()} loading={finalize.isPending}>Try again</Button>
+          <Button size="sm" onClick={() => buildReport()} loading={finalize.isPending}>Try again</Button>
         </div>
       )}
       {finalize.error && <ErrorNote error={finalize.error} />}

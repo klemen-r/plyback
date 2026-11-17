@@ -100,7 +100,7 @@ export default function Compare() {
   const rows = qa.data && qb.data ? metrics(qa.data, qb.data) : []
   return (
     <div className="appear space-y-6">
-      <PageHeader title="Compare" subtitle="Put two selections side by side: recent form vs. all time, blitz vs. rapid, White vs. Black, or two accounts." />
+      <PageHeader title="Compare" description="Put two selections side by side: recent form vs. all time, blitz vs. rapid, White vs. Black, or two accounts." />
       <div className="grid gap-4 lg:grid-cols-2">
         <SegmentPicker label="Selection A" seg={segA} onChange={setA} color={SERIES.you} />
         <SegmentPicker label="Selection B" seg={segB} onChange={setB} color={SERIES.opp} />
