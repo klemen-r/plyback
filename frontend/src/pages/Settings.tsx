@@ -162,7 +162,7 @@ export default function SettingsPage() {
         <NumberField label="Check for new games every" value={form.sync_interval_seconds} onChange={v => set('sync_interval_seconds', v)} min={60} max={86400} step={30} suffix="sec" />
         <NumberField label="…while actively playing" description="Used for 30 minutes after a new game was found" value={form.active_sync_interval_seconds} onChange={v => set('active_sync_interval_seconds', v)} min={30} max={3600} step={10} suffix="sec" />
         <label className="flex items-center justify-between gap-4 py-2">
-          <span><span className="block text-sm font-medium">Contact (optional)</span><span className="block text-xs text-fg-2">Added to the User-Agent so Chess.com can reach you about API usage.</span></span>
+          <span><span className="block text-sm font-medium">Contact (optional)</span><span className="block text-xs text-fg-2">Added to the User-Agent so your game platforms can reach you about API usage.</span></span>
           <Input value={form.contact} onChange={e => set('contact', e.target.value)} placeholder="you@example.com" aria-label="Contact" className="w-56" />
         </label>
         <Switch checked={form.auto_analyze_new} onChange={v => set('auto_analyze_new', v)} label="Default: analyse new games automatically" />

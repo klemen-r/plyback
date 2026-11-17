@@ -300,12 +300,7 @@ pub fn analyze_with(
         progress(i + 1, boards.len() + game.moves.len());
     }
     let spent = pgn::time_spent(&game);
-    let tc = pgn::parse_time_control(
-        game.headers
-            .get("TimeControl")
-            .map(String::as_str)
-            .unwrap_or(""),
-    );
+    let controls = pgn::clock_controls(&game.headers);
     let mut out: Vec<Value> = Vec::with_capacity(game.moves.len());
     let mut counts = json!({"white":{},"black":{}});
     for (i, played) in game.moves.iter().enumerate() {
@@ -315,6 +310,7 @@ pub fn analyze_with(
         let before = &boards[i];
         let after = &boards[i + 1];
         let white = before.turn().is_white();
+        let tc = &controls[usize::from(!white)];
         let mv = parse_move(&played.uci, before)?;
         let full_best = &evaluations[i][0];
         let best_uci = full_best.pv.first().cloned();
@@ -1372,6 +1368,28 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result["moves"][0]["classification"], "brilliant");
+    }
+
+    #[test]
+    fn berserk_time_pressure_uses_the_players_starting_clock() {
+        let text = "[PlybackClockSource \"lichess\"]\n[TimeControl \"300+5\"]\n[WhiteTimeControl \"150+0\"]\n[FEN \"4k3/7p/8/8/8/8/P7/4K3 w - - 0 20\"]\n\n20. Kd2 {[%clk 0:00:20]} *";
+        let result = analyze_with(
+            text,
+            &AnalysisOptions::default(),
+            &AtomicBool::new(false),
+            |_, _| {},
+            "Fake",
+            |request| {
+                Ok(if request.moves.is_empty() {
+                    vec![fake_line(0, &["e1d2"]), fake_line(-500, &["a2a3"])]
+                } else {
+                    vec![fake_line(0, &["h7h6"])]
+                })
+            },
+        )
+        .unwrap();
+        assert!(result["moves"][0]["tags"].get("time_pressure").is_none());
+        assert_eq!(result["moves"][0]["time_spent"], 130.0);
     }
 
     #[test]

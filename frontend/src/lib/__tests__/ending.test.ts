@@ -6,6 +6,11 @@ const game = (white: string | null, black: string | null, user_color: 'white' | 
 })
 
 describe('endingOf', () => {
+  it('words Lichess statuses that have no result code', () => {
+    expect(endingOf(game('win', 'lose', 'white', 'cheat'))).toEqual({ short: 'White won', text: 'Cheat detected' })
+    expect(endingOf(game(null, null, 'white', 'unknownFinish'))).toEqual({ short: 'Unknown finish', text: 'Unknown finish' })
+  })
+
   it('describes decisive endings from your side', () => {
     expect(endingOf(game('win', 'checkmated'))).toEqual({ short: 'Checkmate', text: 'Won by checkmate' })
     expect(endingOf(game('win', 'checkmated', 'black'))).toEqual({ short: 'Checkmate', text: 'Lost by checkmate' })

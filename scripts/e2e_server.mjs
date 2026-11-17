@@ -35,7 +35,7 @@ await sweepStale()
 const data = await mkdtemp(path.join(tmpdir(), PREFIX))
 await writeFile(path.join(data, OWNERS), JSON.stringify([process.pid]))
 const binary = process.env.PLYBACK_BINARY ?? path.join(root, 'rust/target/release', process.platform === 'win32' ? 'plyback.exe' : 'plyback')
-const env = { ...process.env, PLYBACK_DATA: data, PLYBACK_PORT: process.env.PLYBACK_PORT ?? '8790', PLYBACK_HOST: '127.0.0.1', PLYBACK_FRONTEND: path.join(root, 'frontend/dist'), PLYBACK_CHESSCOM_API: 'http://127.0.0.1:8799/pub' }
+const env = { ...process.env, PLYBACK_DATA: data, PLYBACK_PORT: process.env.PLYBACK_PORT ?? '8790', PLYBACK_HOST: '127.0.0.1', PLYBACK_FRONTEND: path.join(root, 'frontend/dist'), PLYBACK_CHESSCOM_API: 'http://127.0.0.1:8799/pub', PLYBACK_LICHESS_API: 'http://127.0.0.1:8799' }
 // A developer's deployment settings must not leak into this isolated test instance.
 delete env.PLYBACK_PASSWORD
 delete env.PLYBACK_SECURE_COOKIES

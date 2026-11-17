@@ -26,3 +26,4 @@ __pycache__/
 /klemen_r_analysis_and_training_plan.md
 # Local agent and editor settings.
 /.claude/
+/.codex-summary.md

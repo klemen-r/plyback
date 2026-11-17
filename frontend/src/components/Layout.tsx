@@ -9,6 +9,7 @@ import { fmtDuration } from '../lib/format'
 import { TABS } from '../lib/nav'
 import { setAppearance, useAppearance, type Mode } from '../lib/theme'
 import CommandPalette from './CommandPalette'
+import PlatformMark from './PlatformMark'
 import { Mark } from './Logo'
 import { ErrorNote, Kbd } from './ui'
 
@@ -69,14 +70,14 @@ function AccountMenu() {
   }
   return (
     <Menu label="Switch account" trigger={() => (
-      <><Avatar src={account.avatar} name={account.username} /><span className="max-w-[160px] truncate font-medium">{account.display_name}</span><ChevronsUpDown className="h-3.5 w-3.5 text-fg-3" /></>
+      <><Avatar src={account.avatar} name={account.username} /><PlatformMark platform={account.platform} /><span className="max-w-[160px] truncate font-medium">{account.display_name}</span><ChevronsUpDown className="h-3.5 w-3.5 text-fg-3" /></>
     )}>
       {close => (
         <>
-          <div className="px-2 pb-1 pt-1.5 text-[12px] text-fg-3">Chess.com accounts</div>
+          <div className="px-2 pb-1 pt-1.5 text-[12px] text-fg-3">Connected accounts</div>
           {accounts.map(a => (
             <MenuItem key={a.id} active={a.id === account.id} onClick={() => { select(a.id); close() }}>
-              <Avatar src={a.avatar} name={a.username} size={18} /><span className="truncate">{a.display_name}</span>
+              <Avatar src={a.avatar} name={a.username} size={18} /><PlatformMark platform={a.platform} /><span className="truncate">{a.display_name}</span>
             </MenuItem>
           ))}
           <div className="my-1 h-px bg-line" />

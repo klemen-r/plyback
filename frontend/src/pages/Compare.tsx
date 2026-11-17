@@ -14,6 +14,7 @@ import { PHASE_LABEL } from '../lib/classification'
 import { difference, knownAccount } from '../lib/compare'
 import type { Insights } from '../lib/types'
 import { insightPollInterval } from '../lib/insight-query'
+import { platformName } from '../lib/platform'
 
 interface Segment { accountId: number | null; filters: FilterState }
 
@@ -72,7 +73,7 @@ function SegmentPicker({ label, seg, onChange, color }: { label: string; seg: Se
     <Card title={<span className="flex items-center gap-2"><span className="h-3 w-3 rounded-full" style={{ background: color }} />{label}</span>}
       actions={accounts.length > 1 ? (
         <Select label={`${label} account`} value={String(seg.accountId ?? '')} onChange={v => onChange({ ...seg, accountId: Number(v) })} className="h-8 text-xs">
-          {accounts.map(a => <option key={a.id} value={a.id}>{a.display_name}</option>)}
+          {accounts.map(a => <option key={a.id} value={a.id}>{a.display_name} · {platformName(a.platform)}</option>)}
         </Select>) : undefined}>
       <FilterBar value={seg.filters} onChange={f => onChange({ ...seg, filters: f })} />
     </Card>

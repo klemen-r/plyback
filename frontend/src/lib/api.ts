@@ -71,7 +71,7 @@ export const api = {
   events: (limit = 100, account_id?: number) => request<EventRow[]>('GET', `/events${qs({ limit, account_id })}`),
 
   accounts: () => request<Account[]>('GET', '/accounts'),
-  addAccount: (body: { username: string; import_since?: string | null; analyze_history?: boolean; auto_analyze?: boolean }) =>
+  addAccount: (body: { username: string; platform?: Account['platform']; import_since?: string | null; analyze_history?: boolean; auto_analyze?: boolean }) =>
     request<Account>('POST', '/accounts', body),
   patchAccount: (id: number, body: Partial<Pick<Account, 'sync_enabled' | 'auto_analyze' | 'analyze_history' | 'import_since'>>) =>
     request<Account>('PATCH', `/accounts/${id}`, body),

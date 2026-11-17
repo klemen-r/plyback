@@ -547,6 +547,7 @@ impl Engine {
                 match db.position_searches.claim(&key) {
                     FlightClaim::Leader(leader) => break Some(leader),
                     FlightClaim::Follower(flight) => {
+                        tracing::debug!(target: "plyback::review_timing", event = "shared_wait");
                         if let Some(lines) = flight.wait(cancel)? {
                             self.metrics.shared_search_hits += 1;
                             return Ok(lines);

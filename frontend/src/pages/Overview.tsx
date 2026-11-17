@@ -21,7 +21,7 @@ function Welcome() {
       <Mark size={36} />
       <h1 className="mt-8 text-[34px] font-semibold leading-tight tracking-[-0.04em] sm:text-[40px]">Every game you play, reviewed.</h1>
       <p className="mt-3 text-[16px] leading-relaxed text-fg-2">
-        Connect a Chess.com username. Plyback imports your games, reviews every move with Stockfish on this
+        Connect a Chess.com or Lichess username. Plyback imports your games, reviews every move with Stockfish on this
         computer, and shows the patterns that are costing you points — each one backed by positions from your own games.
       </p>
       <Card className="mt-8"><AddAccountForm /></Card>

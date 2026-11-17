@@ -45,6 +45,7 @@ pub struct Services {
     /// meaning the last successful sync (the boundary between history and new games).
     sync_failed_at: Mutex<HashMap<i64, i64>>,
     client: sync::ChessComClient,
+    lichess_client: sync::LichessClient,
 }
 
 impl Services {
@@ -75,6 +76,7 @@ impl Services {
             sync_busy_until: Mutex::new(HashMap::new()),
             sync_failed_at: Mutex::new(HashMap::new()),
             client: sync::ChessComClient::new()?,
+            lichess_client: sync::LichessClient::new()?,
         }))
     }
     pub fn start(self: &Arc<Self>) {

@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { linkedSite } from '../lib/platform'
 import type { DrawShape } from '@lichess-org/chessground/draw'
 import type { Key } from '@lichess-org/chessground/types'
 import { Chess } from 'chess.js'
@@ -252,8 +253,8 @@ function GameReviewContent() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {g.url && <a href={g.url} target="_blank" rel="noreferrer"><Button size="sm" variant="ghost"><ExternalLink className="h-4 w-4" />Chess.com</Button></a>}
-          <a href={`https://lichess.org/analysis/${g.rules === 'chess960' ? 'chess960/' : ''}${fen.replace(/ /g, '_')}`} target="_blank" rel="noreferrer"><Button size="sm" variant="ghost"><ExternalLink className="h-4 w-4" />Lichess</Button></a>
+          {g.url && <a href={g.url} target="_blank" rel="noreferrer" aria-label={`View on ${linkedSite(g.source, g.url)}`}><Button size="sm" variant="ghost"><ExternalLink className="h-4 w-4" />View on {linkedSite(g.source, g.url)}</Button></a>}
+          <a href={`https://lichess.org/analysis/${g.rules === 'chess960' ? 'chess960/' : ''}${fen.replace(/ /g, '_')}`} target="_blank" rel="noreferrer"><Button size="sm" variant="ghost"><ExternalLink className="h-4 w-4" />Analyse on Lichess</Button></a>
         </div>
       </div>
 

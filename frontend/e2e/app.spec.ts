@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
-import { playMove } from './support'
+import { playMove, waitForAnalysis } from './support'
 
 const LEGAL = `[Event "E2E"]
 [White "klemen_r"]
@@ -7,14 +7,6 @@ const LEGAL = `[Event "E2E"]
 [Result "1-0"]
 
 1. e4 e5 2. Nf3 d6 3. Bc4 Bg4 4. Nc3 g6 5. Nxe5 Bxd1 6. Bxf7+ Ke7 7. Nd5# 1-0`
-
-async function waitForAnalysis(page: Page, total: number) {
-  await expect.poll(async () => {
-    const r = await page.request.get('/api/accounts')
-    const accs = await r.json()
-    return accs[0]?.analyzed ?? 0
-  }, { timeout: 150_000, intervals: [1000] }).toBe(total)
-}
 
 async function importPosition(page: Page, fen: string, move: string, variant = 'Standard') {
   await page.goto('/import')
@@ -315,7 +307,7 @@ test.describe.serial('Plyback end to end', () => {
       await page.getByRole('button', { name: 'First move' }).click()
       await playMove(page, 'a7', 'a8')
       await page.getByRole('group', { name: 'Promote pawn' }).getByRole('button', { name: label, exact: true }).click()
-      await expect(page.getByRole('link', { name: 'Lichess', exact: true })).toHaveAttribute('href', `https://lichess.org/analysis/${piece}6k/8/8/8/8/8/8/7K_b_-_-_0_1`)
+      await expect(page.getByRole('link', { name: 'Analyse on Lichess', exact: true })).toHaveAttribute('href', `https://lichess.org/analysis/${piece}6k/8/8/8/8/8/8/7K_b_-_-_0_1`)
     }
     await page.getByRole('button', { name: 'Stop engine' }).click()
     await expect(page.getByText('Engine paused.', { exact: true })).toBeVisible()
@@ -323,10 +315,10 @@ test.describe.serial('Plyback end to end', () => {
     await importPosition(page, 'r3k2r/8/8/3pP3/8/8/8/R3K2R w KQkq d6 0 1', 'O-O')
     await page.getByRole('button', { name: 'Stop engine' }).click()
     await playMove(page, 'e1', 'g1')
-    await expect(page.getByRole('link', { name: 'Lichess', exact: true })).toHaveAttribute('href', 'https://lichess.org/analysis/r3k2r/8/8/3pP3/8/8/8/R4RK1_b_kq_-_1_1')
+    await expect(page.getByRole('link', { name: 'Analyse on Lichess', exact: true })).toHaveAttribute('href', 'https://lichess.org/analysis/r3k2r/8/8/3pP3/8/8/8/R4RK1_b_kq_-_1_1')
     await page.getByRole('button', { name: 'First move' }).click()
     await playMove(page, 'e5', 'd6')
-    await expect(page.getByRole('link', { name: 'Lichess', exact: true })).toHaveAttribute('href', 'https://lichess.org/analysis/r3k2r/8/3P4/8/8/8/8/R3K2R_b_KQkq_-_0_1')
+    await expect(page.getByRole('link', { name: 'Analyse on Lichess', exact: true })).toHaveAttribute('href', 'https://lichess.org/analysis/r3k2r/8/3P4/8/8/8/8/R3K2R_b_KQkq_-_0_1')
     await page.getByRole('button', { name: 'First move' }).click()
     await expect(page.getByText('+0.73', { exact: true })).toHaveCount(0)
   })
@@ -338,7 +330,7 @@ test.describe.serial('Plyback end to end', () => {
     await expect(page.getByText(/Chess960 games support recorded-move review/)).toBeVisible()
     await expect(page.getByRole('button', { name: 'Hint', exact: true })).toBeDisabled()
     await page.getByRole('button', { name: 'Last move' }).click()
-    await expect(page.getByRole('link', { name: 'Lichess', exact: true })).toHaveAttribute('href', 'https://lichess.org/analysis/chess960/4k3/8/8/8/8/8/8/5RK1_b_-_-_1_1')
+    await expect(page.getByRole('link', { name: 'Analyse on Lichess', exact: true })).toHaveAttribute('href', 'https://lichess.org/analysis/chess960/4k3/8/8/8/8/8/8/5RK1_b_-_-_1_1')
     expect(liveRequests).toBe(0)
   })
 

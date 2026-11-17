@@ -3,7 +3,7 @@ import type { Account } from '../src/lib/types'
 
 export function account(overrides: Partial<Account> = {}): Account {
   return {
-    id: 1, username: 'fixture', display_name: 'Fixture', avatar: null, title: null,
+    id: 1, platform: 'chesscom', username: 'fixture', display_name: 'Fixture', avatar: null, title: null,
     country: null, profile_url: '', joined: null, ratings: {}, added_at: 1, last_sync_at: 1,
     sync_status: 'idle', sync_error: null, sync_enabled: true, auto_analyze: true,
     analyze_history: true, import_since: null, games: 0, analyzed: 0, queued: 0,
@@ -60,6 +60,15 @@ export async function mockApi(page: Page, handle: ApiHandler = () => false, revi
     else await route.fulfill({ status: options.fallbackStatus ?? 503, json: { detail: 'Not mocked' } })
   })
   return { errors, seen }
+}
+
+/** Wait for an isolated fixture account's real engine queue to finish. */
+export async function waitForAnalysis(page: Page, total: number, identity?: Pick<Account, 'platform' | 'username'>) {
+  await expect.poll(async () => {
+    const accounts = await (await page.request.get('/api/accounts')).json() as Account[]
+    const selected = identity ? accounts.find(a => a.platform === identity.platform && a.username === identity.username) : accounts[0]
+    return selected?.analyzed ?? 0
+  }, { timeout: 150_000, intervals: [1000] }).toBe(total)
 }
 
 export async function playMove(page: Page, from: string, to: string, orientation: 'white' | 'black' = 'white') {

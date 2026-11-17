@@ -162,7 +162,7 @@ export default function Openings() {
   if (loading) return <Loading />
   if (!account) {
     return <div className="appear"><PageHeader title="Openings" />
-      <Empty title="Connect a Chess.com account first" action={<Link to="/accounts"><Button variant="primary">Connect account</Button></Link>}>
+      <Empty title="Connect an account first" action={<Link to="/accounts"><Button variant="primary">Connect account</Button></Link>}>
         The repertoire is built from your own reviewed games.
       </Empty></div>
   }

@@ -24,6 +24,10 @@ pub const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/008.sql"),
     include_str!("../migrations/009.sql"),
     include_str!("../migrations/010.sql"),
+    include_str!("../migrations/011.sql"),
+    include_str!("../migrations/012.sql"),
+    include_str!("../migrations/013.sql"),
+    include_str!("../migrations/014.sql"),
 ];
 
 pub struct Database {
@@ -123,38 +127,65 @@ impl Database {
             bail!("Database schema v{current} requires a newer version of Plyback");
         }
         for (i, sql) in MIGRATIONS.iter().enumerate().skip(current as usize) {
-            let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            tx.execute_batch(sql)
-                .with_context(|| format!("Schema migration {} failed", i + 1))?;
-            if i == 2 {
-                let rows = query_connection(
-                    &tx,
-                    "SELECT rowid,fen_before FROM moves WHERE phase='endgame' AND endgame_type IS NULL",
-                    &[],
-                )?;
-                for row in rows {
-                    tx.execute(
-                        "UPDATE moves SET endgame_type=? WHERE rowid=?",
-                        rusqlite::params![
-                            board::endgame_type(
-                                row["fen_before"]
-                                    .as_str()
-                                    .unwrap_or("")
-                                    .split(' ')
-                                    .next()
-                                    .unwrap_or("")
-                            ),
-                            row["rowid"].as_i64()
-                        ],
-                    )?;
-                }
+            // SQLite cannot change foreign_keys inside a transaction. Rebuild
+            // the accounts parent without firing child ON DELETE CASCADEs. Decided by
+            // the migration's own SQL, not its number, so renumbering cannot let the
+            // DROP TABLE cascade-delete every account's links, archives and reports.
+            let rebuild_accounts = sql.contains("DROP TABLE accounts;");
+            if rebuild_accounts {
+                c.pragma_update(None, "foreign_keys", false)?;
             }
-            tx.execute("DELETE FROM schema_version", [])?;
-            tx.execute(
-                "INSERT INTO schema_version(version) VALUES(?)",
-                [i as i64 + 1],
-            )?;
-            tx.commit()?;
+            let result = (|| -> Result<()> {
+                let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                tx.execute_batch(sql)
+                    .with_context(|| format!("Schema migration {} failed", i + 1))?;
+                if i == 2 {
+                    let rows = query_connection(
+                        &tx,
+                        "SELECT rowid,fen_before FROM moves WHERE phase='endgame' AND endgame_type IS NULL",
+                        &[],
+                    )?;
+                    for row in rows {
+                        tx.execute(
+                            "UPDATE moves SET endgame_type=? WHERE rowid=?",
+                            rusqlite::params![
+                                board::endgame_type(
+                                    row["fen_before"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .split(' ')
+                                        .next()
+                                        .unwrap_or(""),
+                                ),
+                                row["rowid"].as_i64()
+                            ],
+                        )?;
+                    }
+                }
+                tx.execute("DELETE FROM schema_version", [])?;
+                tx.execute(
+                    "INSERT INTO schema_version(version) VALUES(?)",
+                    [i as i64 + 1],
+                )?;
+                if rebuild_accounts {
+                    // Rebuilding accounts must preserve its references. Other
+                    // pre-existing orphan rows are unrelated to this migration.
+                    let violation = tx.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM pragma_foreign_key_check WHERE parent='accounts')",
+                        [],
+                        |row| row.get::<_, bool>(0),
+                    )?;
+                    if violation {
+                        bail!("Schema migration {} violates foreign keys", i + 1);
+                    }
+                }
+                tx.commit()?;
+                Ok(())
+            })();
+            if rebuild_accounts {
+                c.pragma_update(None, "foreign_keys", true)?;
+            }
+            result?;
         }
         Ok(())
     }
@@ -459,6 +490,282 @@ mod tests {
         c
     }
     #[test]
+    fn upgrading_v11_adds_an_exact_persistent_lichess_creation_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("schema11.db");
+        let snapshot = dir.path().join("schema11-copy.db");
+        let legacy = legacy_database(&source, 11);
+        legacy.execute("INSERT INTO accounts(id,platform,username,added_at) VALUES(7,'chesscom','fixture',0),(8,'lichess','fixture',0)", []).unwrap();
+        legacy.execute("INSERT INTO games(id,uuid,pgn,source,start_time,end_time,imported_at) VALUES(12,'lichess:existing','1. e4 e5 *','lichess',1770000000,1770000060,0)", []).unwrap();
+        legacy
+            .execute("INSERT INTO account_games VALUES(8,12,'white')", [])
+            .unwrap();
+        drop(legacy);
+        Database::backup(&source, &snapshot).unwrap();
+        let db = Database::open(&snapshot).unwrap();
+        assert_eq!(
+            db.scalar("SELECT version FROM schema_version", &[])
+                .unwrap(),
+            MIGRATIONS.len()
+        );
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM accounts", &[]).unwrap(), 2);
+        assert_eq!(
+            db.scalar(
+                "SELECT COUNT(*) FROM account_games WHERE account_id=8 AND game_id=12",
+                &[]
+            )
+            .unwrap(),
+            1
+        );
+        assert!(
+            db.scalar("SELECT lichess_cursor_ms FROM accounts WHERE id=8", &[])
+                .unwrap()
+                .is_null()
+        );
+        assert_eq!(
+            db.scalar("SELECT start_time FROM games WHERE id=12", &[])
+                .unwrap(),
+            1770000000
+        );
+        assert_eq!(
+            db.scalar("SELECT end_time FROM games WHERE id=12", &[])
+                .unwrap(),
+            1770000060
+        );
+        db.execute(
+            "UPDATE accounts SET lichess_cursor_ms=? WHERE id=8",
+            &[json!(1770000000123_i64)],
+        )
+        .unwrap();
+        drop(db);
+        let reopened = Database::open(&snapshot).unwrap();
+        assert_eq!(
+            reopened
+                .scalar("SELECT lichess_cursor_ms FROM accounts WHERE id=8", &[])
+                .unwrap(),
+            1770000000123_i64
+        );
+        assert!(
+            reopened
+                .scalar("SELECT lichess_cursor_ms FROM accounts WHERE id=7", &[])
+                .unwrap()
+                .is_null()
+        );
+        let original =
+            Connection::open_with_flags(&source, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .unwrap();
+        assert_eq!(
+            original
+                .query_row("SELECT version FROM schema_version", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            11
+        );
+        assert_eq!(original.query_row("SELECT COUNT(*) FROM pragma_table_info('accounts') WHERE name='lichess_cursor_ms'", [], |r| r.get::<_,i64>(0)).unwrap(), 0);
+    }
+    #[test]
+    fn upgrading_v10_snapshot_preserves_accounts_children_and_snapshots() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("schema10.db");
+        let snapshot = dir.path().join("schema10-copy.db");
+        let legacy = legacy_database(&source, 10);
+        legacy.execute("INSERT INTO accounts(id,username,display_name,avatar,profile_json,stats_json,profile_fetched_at,added_at,last_sync_at,last_new_game_at,sync_status,sync_error,sync_enabled,auto_analyze,analyze_history,import_since,history_complete) VALUES(7,'Fixture','Display','https://example.test/avatar','{\"profile\": true}','{\"stats\": true}',1,2,3,4,'error','old error',0,0,0,'2026/10',1)", []).unwrap();
+        legacy.execute("INSERT INTO games(id,uuid,pgn,imported_at) VALUES(12,'chesscom-existing','1. e4 e5 *',0)", []).unwrap();
+        legacy
+            .execute("INSERT INTO account_games VALUES(7,12,'white')", [])
+            .unwrap();
+        legacy.execute("INSERT INTO archives(account_id,period,url) VALUES(7,'2026/10','https://api.chess.com/pub/player/fixture/games/2026/10')", []).unwrap();
+        legacy.execute("INSERT INTO reports(id,account_id,filters_json,created_at,status,scope_frozen,report_json) VALUES(4,7,'{}',0,'ready',1,'{\"snapshot\": true}')", []).unwrap();
+        legacy
+            .execute(
+                "INSERT INTO report_games VALUES(4,12,'chesscom-existing')",
+                [],
+            )
+            .unwrap();
+        legacy.execute("INSERT INTO practice_items(account_id,game_id,ply,due_at,first_seen_at,last_seen_at) VALUES(7,12,1,10,1,1)", []).unwrap();
+        legacy
+            .execute(
+                "INSERT INTO sync_pending(account_id,game_id,priority) VALUES(7,12,10)",
+                [],
+            )
+            .unwrap();
+        legacy.execute("INSERT INTO jobs(game_id,status,priority,created_at,followup_priority,followup_depth) VALUES(12,'running',10,0,20,24)", []).unwrap();
+        let before = query_connection(&legacy, "SELECT * FROM accounts", &[]).unwrap()[0].clone();
+        let revision = legacy
+            .query_row("SELECT revision FROM data_revision", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap();
+        drop(legacy);
+        Database::backup(&source, &snapshot).unwrap();
+        let db = Database::open(&snapshot).unwrap();
+        let account = db
+            .one("SELECT * FROM accounts WHERE id=7", &[])
+            .unwrap()
+            .unwrap();
+        for (key, value) in before.as_object().unwrap() {
+            assert_eq!(&account[key], value, "{key}");
+        }
+        assert_eq!(account["platform"], "chesscom");
+        assert_eq!(
+            db.query("SELECT account_id,game_id,priority FROM sync_pending", &[])
+                .unwrap(),
+            vec![json!({"account_id":7,"game_id":12,"priority":10})]
+        );
+        assert_eq!(
+            db.query("SELECT followup_priority,followup_depth FROM jobs", &[])
+                .unwrap(),
+            vec![json!({"followup_priority":20,"followup_depth":24})]
+        );
+        assert_eq!(
+            db.scalar("SELECT version FROM schema_version", &[])
+                .unwrap(),
+            14
+        );
+        for table in [
+            "account_games",
+            "archives",
+            "reports",
+            "report_games",
+            "practice_items",
+            "sync_pending",
+        ] {
+            assert_eq!(
+                db.scalar(&format!("SELECT COUNT(*) FROM {table}"), &[])
+                    .unwrap(),
+                1,
+                "{table}"
+            );
+        }
+        assert_eq!(
+            db.scalar("SELECT report_json FROM reports", &[]).unwrap(),
+            "{\"snapshot\": true}"
+        );
+        assert_eq!(
+            db.scalar("SELECT revision FROM data_revision", &[])
+                .unwrap(),
+            revision
+        );
+        assert_eq!(db.scalar("PRAGMA foreign_keys", &[]).unwrap(), 1);
+        assert!(
+            db.query("PRAGMA foreign_key_check", &[])
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            db.execute(
+                "UPDATE accounts SET sync_generation='different' WHERE id=7",
+                &[]
+            )
+            .is_err()
+        );
+        db.execute(
+            "INSERT INTO accounts(platform,username,added_at) VALUES('lichess','fixture',0)",
+            &[],
+        )
+        .unwrap();
+        assert!(
+            db.execute(
+                "INSERT INTO accounts(platform,username,added_at) VALUES('lichess','FIXTURE',0)",
+                &[]
+            )
+            .is_err()
+        );
+        assert!(
+            db.execute(
+                "INSERT INTO accounts(username,added_at) VALUES('FIXTURE',0)",
+                &[]
+            )
+            .is_err()
+        );
+        assert_eq!(
+            db.scalar("SELECT COUNT(DISTINCT sync_generation) FROM accounts", &[])
+                .unwrap(),
+            2
+        );
+        let original =
+            Connection::open_with_flags(&source, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .unwrap();
+        assert_eq!(
+            original
+                .query_row("SELECT version FROM schema_version", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            10
+        );
+        db.execute("DELETE FROM accounts WHERE id=7", &[]).unwrap();
+        for table in [
+            "account_games",
+            "archives",
+            "reports",
+            "report_games",
+            "practice_items",
+            "sync_pending",
+        ] {
+            assert_eq!(
+                db.scalar(&format!("SELECT COUNT(*) FROM {table}"), &[])
+                    .unwrap(),
+                0,
+                "{table}"
+            );
+        }
+        assert_eq!(
+            db.scalar("SELECT uuid FROM games", &[]).unwrap(),
+            "chesscom-existing"
+        );
+    }
+    #[test]
+    fn failed_v11_rebuild_preserves_v10_schema_and_account_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("schema10-conflict.db");
+        let legacy = legacy_database(&path, 10);
+        legacy
+            .execute(
+                "INSERT INTO accounts(id,username,added_at) VALUES(7,'fixture',0)",
+                [],
+            )
+            .unwrap();
+        legacy
+            .execute_batch("CREATE TABLE accounts_new(conflict INTEGER)")
+            .unwrap();
+        drop(legacy);
+        assert!(Database::open(&path).is_err());
+        let legacy = Connection::open(&path).unwrap();
+        assert_eq!(
+            legacy
+                .query_row("SELECT version FROM schema_version", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            10
+        );
+        assert_eq!(
+            legacy
+                .query_row("SELECT username FROM accounts WHERE id=7", [], |r| r
+                    .get::<_, String>(0))
+                .unwrap(),
+            "fixture"
+        );
+        assert_eq!(
+            legacy
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('accounts') WHERE name='platform'",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+        legacy.execute_batch("DROP TABLE accounts_new").unwrap();
+        drop(legacy);
+        assert_eq!(
+            Database::open(&path)
+                .unwrap()
+                .scalar("SELECT platform FROM accounts", &[])
+                .unwrap(),
+            "chesscom"
+        );
+    }
+    #[test]
     fn upgrading_v2_backfills_endgame_and_preserves_existing_data() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("legacy.db");
@@ -595,6 +902,378 @@ mod tests {
             db.scalar("SELECT scope_frozen FROM reports", &[]).unwrap(),
             0
         );
+    }
+    #[test]
+    fn upgrading_v12_keeps_the_import_cursor_and_persists_slice_checkpoints() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("schema12.db");
+        let legacy = legacy_database(&path, 12);
+        legacy.execute("INSERT INTO accounts(id,username,platform,added_at,lichess_cursor_ms) VALUES(1,'fixture','lichess',0,1770000000123)",[]).unwrap();
+        drop(legacy);
+        let db = Database::open(&path).unwrap();
+        assert_eq!(
+            db.scalar("SELECT lichess_cursor_ms FROM accounts", &[])
+                .unwrap(),
+            1770000000123i64
+        );
+        for key in [
+            "lichess_scan_ms",
+            "lichess_pending_ms",
+            "lichess_finished_ms",
+        ] {
+            assert!(
+                db.scalar(&format!("SELECT {key} FROM accounts"), &[])
+                    .unwrap()
+                    .is_null()
+            );
+        }
+        db.execute("UPDATE accounts SET lichess_scan_ms=1770000100456,lichess_pending_ms=1770000000123,lichess_finished_ms=1770000100456",&[]).unwrap();
+        drop(db);
+        let db = Database::open(&path).unwrap();
+        assert_eq!(
+            db.scalar("SELECT lichess_scan_ms FROM accounts", &[])
+                .unwrap(),
+            1770000100456i64
+        );
+        assert_eq!(
+            db.scalar("SELECT lichess_pending_ms FROM accounts", &[])
+                .unwrap(),
+            1770000000123i64
+        );
+        assert_eq!(
+            db.scalar("SELECT lichess_finished_ms FROM accounts", &[])
+                .unwrap(),
+            1770000100456i64
+        );
+    }
+
+    #[test]
+    fn upgrading_v13_discovers_pending_ids_without_changing_game_or_report_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("schema13.db");
+        let snapshot = dir.path().join("schema13-copy.db");
+        let legacy = legacy_database(&source, 13);
+        legacy.execute_batch(
+            r#"INSERT INTO accounts(id,platform,username,added_at,lichess_cursor_ms,lichess_scan_ms,lichess_pending_ms,lichess_finished_ms) VALUES
+             (1,'lichess','fixture1',0,1770000300456,1770000400789,1770000000123,1770000300456),
+             (2,'lichess','fixture2',0,1770000000999,1770000400789,1770000100456,1770000300456),
+             (3,'lichess','fixture3',0,NULL,1770000400789,1770000050123,1770000300456),
+             (4,'chesscom','fixture1',0,42,43,44,45),
+             (5,'lichess','fixture5',0,1770000300456,1770000400789,NULL,1770000300456);
+             INSERT INTO games(id,uuid,pgn,source,start_time,end_time,imported_at) VALUES
+             (12,'lichess:fixture','1. e4 e5 *','lichess',1770000000,1770000060,0);
+             INSERT INTO account_games VALUES(1,12,'white');
+             INSERT INTO archives(account_id,period,url) VALUES(1,'2026/10','https://example.test/archive');
+             INSERT INTO reports(id,account_id,filters_json,created_at,status,scope_frozen,report_json)
+             VALUES(4,1,'{}',0,'ready',1,'{"snapshot":{"games":[12],"source":"fixture"}}');
+             INSERT INTO report_games VALUES(4,12,'lichess:fixture');"#,
+        ).unwrap();
+        let before_accounts =
+            query_connection(&legacy, "SELECT * FROM accounts ORDER BY id", &[]).unwrap();
+        let before_games =
+            query_connection(&legacy, "SELECT * FROM games ORDER BY id", &[]).unwrap();
+        let before_reports =
+            query_connection(&legacy, "SELECT * FROM reports ORDER BY id", &[]).unwrap();
+        let before_archives =
+            query_connection(&legacy, "SELECT * FROM archives ORDER BY account_id", &[]).unwrap();
+        drop(legacy);
+        Database::backup(&source, &snapshot).unwrap();
+        let db = Database::open(&snapshot).unwrap();
+        assert_eq!(
+            db.scalar("SELECT version FROM schema_version", &[])
+                .unwrap(),
+            MIGRATIONS.len()
+        );
+        let accounts = db.query("SELECT * FROM accounts ORDER BY id", &[]).unwrap();
+        for (index, original) in before_accounts.iter().enumerate() {
+            let mut expected = original.clone();
+            if expected["platform"] == "lichess" {
+                expected["lichess_cursor_ms"] = json!(match index {
+                    0 => 1770000000123i64,
+                    1 => 1770000000999i64,
+                    2 => 1770000050123i64,
+                    4 => 1770000300456i64,
+                    _ => unreachable!(),
+                });
+                for key in [
+                    "lichess_scan_ms",
+                    "lichess_pending_ms",
+                    "lichess_finished_ms",
+                ] {
+                    expected[key] = Value::Null;
+                }
+            }
+            assert_eq!(accounts[index], expected);
+        }
+        assert_eq!(
+            db.query("SELECT * FROM games ORDER BY id", &[]).unwrap(),
+            before_games
+        );
+        assert_eq!(
+            db.query("SELECT * FROM reports ORDER BY id", &[]).unwrap(),
+            before_reports
+        );
+        assert_eq!(
+            db.query("SELECT * FROM archives ORDER BY account_id", &[])
+                .unwrap(),
+            before_archives
+        );
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM report_games WHERE report_id=4 AND game_id=12 AND game_uuid='lichess:fixture'", &[]).unwrap(), 1);
+        assert_eq!(
+            db.scalar(
+                "SELECT COUNT(*) FROM account_games WHERE account_id=1 AND game_id=12",
+                &[]
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM games WHERE typeof(start_time)='integer' AND typeof(end_time)='integer'", &[]).unwrap(), 1);
+        assert_eq!(
+            db.scalar("SELECT COUNT(*) FROM lichess_pending_games", &[])
+                .unwrap(),
+            0
+        );
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='lichess_pending_poll'", &[]).unwrap(), 1);
+
+        let revision = db
+            .scalar("SELECT revision FROM data_revision", &[])
+            .unwrap();
+        db.execute("INSERT INTO lichess_pending_games(account_id,game_id,created_at_ms) VALUES(1,'oldgame',1770000000123),(2,'oldgame',1770000000999)", &[]).unwrap();
+        assert_eq!(
+            db.scalar(
+                "SELECT checked_at FROM lichess_pending_games WHERE account_id=1",
+                &[]
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            db.scalar(
+                "SELECT misses FROM lichess_pending_games WHERE account_id=1",
+                &[]
+            )
+            .unwrap(),
+            0
+        );
+        assert!(
+            db.execute(
+                "UPDATE lichess_pending_games SET misses=NULL WHERE account_id=1",
+                &[]
+            )
+            .is_err()
+        );
+        assert!(
+            db.execute(
+                "UPDATE lichess_pending_games SET misses=-1 WHERE account_id=1",
+                &[]
+            )
+            .is_err()
+        );
+        assert!(db.execute("INSERT INTO lichess_pending_games(account_id,game_id,created_at_ms) VALUES(1,'oldgame',0)", &[]).is_err());
+        assert!(db.execute("INSERT INTO lichess_pending_games(account_id,game_id,created_at_ms) VALUES(999,'invalid',0)", &[]).is_err());
+        db.execute("INSERT INTO lichess_pending_games(account_id,game_id,created_at_ms,checked_at) VALUES(1,'latergame',1770000100456,5)", &[]).unwrap();
+        let pending = db.query("SELECT game_id FROM lichess_pending_games WHERE account_id=1 ORDER BY checked_at,game_id LIMIT 300", &[]).unwrap();
+        assert_eq!(
+            pending
+                .iter()
+                .map(|row| row["game_id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["oldgame", "latergame"]
+        );
+        db.execute("UPDATE lichess_pending_games SET checked_at=10,misses=2 WHERE account_id=1 AND game_id='oldgame'", &[]).unwrap();
+        db.execute(
+            "DELETE FROM lichess_pending_games WHERE game_id='latergame'",
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            db.scalar("SELECT revision FROM data_revision", &[])
+                .unwrap(),
+            revision
+        );
+        assert_eq!(db.scalar("PRAGMA foreign_keys", &[]).unwrap(), 1);
+        db.execute("DELETE FROM accounts WHERE id=2", &[]).unwrap();
+        assert_eq!(
+            db.scalar(
+                "SELECT COUNT(*) FROM lichess_pending_games WHERE account_id=2",
+                &[]
+            )
+            .unwrap(),
+            0
+        );
+        drop(db);
+        let db = Database::open(&snapshot).unwrap();
+        assert_eq!(
+            db.scalar(
+                "SELECT created_at_ms FROM lichess_pending_games WHERE account_id=1",
+                &[]
+            )
+            .unwrap(),
+            1770000000123i64
+        );
+        assert_eq!(
+            db.scalar(
+                "SELECT checked_at FROM lichess_pending_games WHERE account_id=1",
+                &[]
+            )
+            .unwrap(),
+            10
+        );
+        assert_eq!(
+            db.scalar(
+                "SELECT misses FROM lichess_pending_games WHERE account_id=1",
+                &[]
+            )
+            .unwrap(),
+            2
+        );
+        assert_eq!(
+            db.query("SELECT * FROM reports ORDER BY id", &[]).unwrap(),
+            before_reports
+        );
+        assert!(
+            db.query("PRAGMA foreign_key_check", &[])
+                .unwrap()
+                .is_empty()
+        );
+
+        let original =
+            Connection::open_with_flags(&source, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .unwrap();
+        assert_eq!(
+            original
+                .query_row("SELECT version FROM schema_version", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            13
+        );
+        assert_eq!(
+            original
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE name='lichess_pending_games'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            original
+                .query_row(
+                    "SELECT lichess_cursor_ms FROM accounts WHERE id=1",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            1770000300456i64
+        );
+    }
+
+    #[test]
+    fn rebuilding_accounts_preserves_unrelated_orphans_without_blocking_upgrade() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("schema9-unrelated-orphan.db");
+        let legacy = legacy_database(&path, 9);
+        legacy
+            .execute(
+                "INSERT INTO accounts(id,username,added_at) VALUES(7,'fixture',0)",
+                [],
+            )
+            .unwrap();
+        legacy.execute_batch("PRAGMA foreign_keys=OFF; INSERT INTO account_games VALUES(7,999,'white'); PRAGMA foreign_keys=ON").unwrap();
+        assert_eq!(
+            legacy
+                .query_row("SELECT parent FROM pragma_foreign_key_check", [], |r| {
+                    r.get::<_, String>(0)
+                })
+                .unwrap(),
+            "games"
+        );
+        drop(legacy);
+        let db = Database::open(&path).unwrap();
+        assert_eq!(
+            db.scalar("SELECT version FROM schema_version", &[])
+                .unwrap(),
+            MIGRATIONS.len()
+        );
+        assert_eq!(
+            db.scalar("SELECT platform FROM accounts WHERE id=7", &[])
+                .unwrap(),
+            "chesscom"
+        );
+        assert_eq!(
+            db.scalar(
+                "SELECT COUNT(*) FROM account_games WHERE account_id=7 AND game_id=999",
+                &[]
+            )
+            .unwrap(),
+            1
+        );
+        let orphans = db.query("PRAGMA foreign_key_check", &[]).unwrap();
+        assert_eq!(orphans.len(), 1);
+        assert_eq!(orphans[0]["parent"], "games");
+        assert_eq!(db.scalar("PRAGMA foreign_keys", &[]).unwrap(), 1);
+        assert!(db.execute("INSERT INTO archives(account_id,period,url) VALUES(999,'2026/10','https://example.test/archive')", &[]).is_err());
+    }
+    #[test]
+    fn rebuilding_accounts_rejects_account_orphans_and_restores_foreign_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("schema9-account-orphan.db");
+        let legacy = legacy_database(&path, 9);
+        legacy
+            .execute(
+                "INSERT INTO accounts(id,username,added_at) VALUES(7,'fixture',0)",
+                [],
+            )
+            .unwrap();
+        legacy.execute_batch("PRAGMA foreign_keys=OFF; INSERT INTO archives(account_id,period,url) VALUES(999,'2026/10','https://example.test/archive'); PRAGMA foreign_keys=ON").unwrap();
+        let db = Database {
+            path,
+            connection: Mutex::new(legacy),
+            position_searches: crate::engine::SearchFlights::default(),
+            practice_candidates: crate::practice::CandidateCache::default(),
+            insight_games: crate::insights::LoadedGamesCache::default(),
+        };
+        assert!(
+            db.migrate()
+                .unwrap_err()
+                .to_string()
+                .contains("violates foreign keys")
+        );
+        assert_eq!(db.scalar("PRAGMA foreign_keys", &[]).unwrap(), 1);
+        // Main migration 010 commits before the accounts rebuild in 011 fails.
+        assert_eq!(
+            db.scalar("SELECT version FROM schema_version", &[])
+                .unwrap(),
+            10
+        );
+        assert_eq!(
+            db.scalar("SELECT username FROM accounts WHERE id=7", &[])
+                .unwrap(),
+            "fixture"
+        );
+        assert_eq!(
+            db.scalar("SELECT COUNT(*) FROM archives WHERE account_id=999", &[])
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.scalar(
+                "SELECT COUNT(*) FROM pragma_table_info('accounts') WHERE name='platform'",
+                &[]
+            )
+            .unwrap(),
+            0
+        );
+        db.execute("DELETE FROM archives WHERE account_id=999", &[])
+            .unwrap();
+        db.migrate().unwrap();
+        assert_eq!(
+            db.scalar("SELECT version FROM schema_version", &[])
+                .unwrap(),
+            MIGRATIONS.len()
+        );
+        assert_eq!(db.scalar("PRAGMA foreign_keys", &[]).unwrap(), 1);
     }
     #[test]
     fn failed_migration_can_be_retried_without_partial_schema() {

@@ -7,6 +7,7 @@ export type Confidence = 'insufficient' | 'low' | 'moderate' | 'high'
 
 export interface Account {
   id: number
+  platform: 'chesscom' | 'lichess'
   username: string
   display_name: string
   avatar: string | null

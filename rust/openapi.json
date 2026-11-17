@@ -548,7 +548,10 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Account" }
+                }
               }
             }
           }
@@ -572,9 +575,15 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": { "$ref": "#/components/schemas/Account" }
               }
             }
+          },
+          "404": {
+            "description": "The username does not exist on the selected platform."
+          },
+          "409": {
+            "description": "The username is already connected on the selected platform."
           },
           "422": {
             "description": "Validation Error",
@@ -609,7 +618,7 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": { "$ref": "#/components/schemas/Account" }
               }
             }
           },
@@ -1654,8 +1663,25 @@
   },
   "components": {
     "schemas": {
+      "Account": {
+        "type": "object",
+        "required": ["id", "username", "platform"],
+        "properties": {
+          "id": { "type": "integer" },
+          "username": { "type": "string" },
+          "platform": { "type": "string", "enum": ["chesscom", "lichess"] },
+          "profile_url": { "type": "string", "format": "uri" }
+        },
+        "additionalProperties": true
+      },
       "AccountIn": {
         "properties": {
+          "platform": {
+            "type": "string",
+            "enum": ["chesscom", "lichess"],
+            "default": "chesscom",
+            "description": "Game source. Lichess usernames use 2-30 ASCII letters, digits, underscores or hyphens; Chess.com allows 2-40. Profiles are verified on the selected platform."
+          },
           "username": {
             "type": "string",
             "title": "Username"

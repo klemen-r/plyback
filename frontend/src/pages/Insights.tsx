@@ -50,7 +50,7 @@ export default function InsightsPage() {
   const createReport = useSingleFlight(report.mutateAsync)
 
   if (loading) return <Loading />
-  if (!account) return <Empty icon={<BarChart3 className="h-10 w-10" />} title="Connect a Chess.com account first" action={<Link to="/accounts"><Button variant="primary">Connect account</Button></Link>} />
+  if (!account) return <Empty icon={<BarChart3 className="h-10 w-10" />} title="Connect an account first" action={<Link to="/accounts"><Button variant="primary">Connect account</Button></Link>} />
 
   const dq = q.data?.data_quality
   // Only standard and Chess960 games can be reviewed; variants such as odds chess stay unanalysed.

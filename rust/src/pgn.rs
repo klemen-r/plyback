@@ -353,18 +353,86 @@ pub fn parse_time_control(raw: &str) -> TimeControl {
     }
 }
 
+/// Per-player controls are emitted only by the Lichess mapper for berserk games. The shared
+/// TimeControl remains unchanged for rating pools and filters, and ordinary PGNs ignore overrides.
+pub(crate) fn clock_controls(headers: &BTreeMap<String, String>) -> [TimeControl; 2] {
+    let shared = parse_time_control(headers.get("TimeControl").map(String::as_str).unwrap_or(""));
+    let mut controls = [shared.clone(), shared];
+    if headers.get("PlybackClockSource").map(String::as_str) == Some("lichess") {
+        for (side, key) in ["WhiteTimeControl", "BlackTimeControl"].iter().enumerate() {
+            if let Some(raw) = headers.get(*key) {
+                let control = parse_time_control(raw);
+                if control.base.is_some() && !control.daily {
+                    controls[side] = control;
+                }
+            }
+        }
+    }
+    controls
+}
+
+struct ClockVisitor;
+impl Visitor for ClockVisitor {
+    type Tags = BTreeMap<String, String>;
+    type Movetext = ();
+    type Output = Option<[TimeControl; 2]>;
+
+    fn begin_tags(&mut self) -> ControlFlow<Self::Output, Self::Tags> {
+        ControlFlow::Continue(BTreeMap::new())
+    }
+    fn tag(
+        &mut self,
+        tags: &mut Self::Tags,
+        name: &[u8],
+        value: RawTag<'_>,
+    ) -> ControlFlow<Self::Output> {
+        if value.as_bytes().len() > 8192 {
+            return ControlFlow::Break(None);
+        }
+        if matches!(
+            name,
+            b"TimeControl" | b"WhiteTimeControl" | b"BlackTimeControl" | b"PlybackClockSource"
+        ) {
+            tags.insert(
+                String::from_utf8_lossy(name).into_owned(),
+                value.decode_utf8_lossy().into_owned(),
+            );
+        }
+        ControlFlow::Continue(())
+    }
+    fn begin_movetext(&mut self, headers: Self::Tags) -> ControlFlow<Self::Output, Self::Movetext> {
+        // Stop before parsing any moves: Insights needs only the clock metadata.
+        ControlFlow::Break(
+            (headers.get("PlybackClockSource").map(String::as_str) == Some("lichess"))
+                .then(|| clock_controls(&headers)),
+        )
+    }
+    fn end_game(&mut self, _: Self::Movetext) -> Self::Output {
+        None
+    }
+}
+
+pub(crate) fn lichess_clock_controls(text: &str) -> Option<[TimeControl; 2]> {
+    if text.len() > MAX_GAME_BYTES || text.contains('\0') {
+        return None;
+    }
+    Reader::build(text.as_bytes())
+        .set_supported_tag_line_length(16_384)
+        .finish()
+        .read_game(&mut ClockVisitor)
+        .ok()
+        .flatten()
+        .flatten()
+}
+
 pub fn time_spent(game: &ParsedGame) -> Vec<Option<f64>> {
-    let tc = parse_time_control(
-        game.headers
-            .get("TimeControl")
-            .map(String::as_str)
-            .unwrap_or(""),
-    );
-    let mut last = [tc.base, tc.base];
+    let controls = clock_controls(&game.headers);
+    let mut last = [controls[0].base, controls[1].base];
     game.moves
         .iter()
         .map(|m| {
             let side = usize::from(m.color == "b");
+            let tc = &controls[side];
             let spent = if tc.daily {
                 None
             } else {
@@ -389,6 +457,11 @@ mod tests {
         assert_eq!(game.moves.len(), 3);
         assert_eq!(game.moves[0].clock, Some(301.0));
         assert_eq!(time_spent(&game)[0], Some(1.0));
+        let ordinary = parse(
+            "[TimeControl \"300+2\"]\n[WhiteTimeControl \"150+0\"]\n\n1. e4 {[%clk 0:05:01]} *",
+        )
+        .unwrap();
+        assert_eq!(time_spent(&ordinary), vec![Some(1.0)]);
         assert_eq!(game.moves[2].uci, "g1f3");
         assert!(parse("1. e5 *").is_err());
     }

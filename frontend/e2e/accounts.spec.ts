@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { account as makeAccount, status as makeStatus, mockApi } from './support'
+import { account as makeAccount, status as makeStatus, mockApi, waitForAnalysis } from './support'
 
 const fixture = makeAccount({ username: 'account_fixture', display_name: 'Account fixture' })
 
@@ -65,4 +65,44 @@ test('Accounts reports mutation failures on the affected card and restores rejec
   await card.getByRole('button', { name: 'Remove', exact: true }).click()
   await expect(card).toHaveCount(0)
   await expect(other).toBeVisible()
+})
+
+test('connect a Lichess account, import its game and open an engine review', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  try {
+    await page.goto('/accounts')
+    await page.getByRole('tab', { name: 'Lichess', exact: true }).click()
+    await expect(page.getByRole('tab', { name: 'Lichess', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await page.screenshot({ path: test.info().outputPath('lichess-accounts.png') })
+    await page.getByLabel('Lichess username').fill('no_such_player')
+    await page.getByRole('button', { name: 'Connect', exact: true }).click()
+    await expect(page.getByText(/No Lichess player named/)).toBeVisible()
+    await page.getByLabel('Lichess username').fill('lichess_fixture')
+    await page.getByRole('button', { name: 'Connect', exact: true }).click()
+    await waitForAnalysis(page, 1, { platform: 'lichess', username: 'lichess_fixture' })
+    await page.getByRole('button', { name: 'Switch account' }).click()
+    await page.getByRole('menuitem').filter({ hasText: 'lichess_fixture' }).click()
+    await page.goto('/games')
+    await expect(page.getByText('1 game played by lichess_fixture')).toBeVisible()
+    const game = page.getByRole('row').filter({ hasText: 'FixtureFriend' })
+    await expect(game.getByRole('img', { name: 'Lichess', exact: true })).toBeVisible()
+    await game.press('Enter')
+    await expect(page.locator('cg-board')).toBeVisible()
+    await expect(page.getByRole('img', { name: 'Evaluation graph' })).toBeVisible()
+    const originalGame = page.getByRole('link', { name: 'View on Lichess', exact: true })
+    const analysisBoard = page.getByRole('link', { name: 'Analyse on Lichess', exact: true })
+    await expect(originalGame).toHaveText('View on Lichess')
+    await expect(originalGame).toHaveAttribute('href', 'https://lichess.org/fixture1')
+    await expect(analysisBoard).toHaveText('Analyse on Lichess')
+    await expect(analysisBoard).toHaveAttribute('href', 'https://lichess.org/analysis/rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR_w_KQkq_-_0_1')
+    await expect(page.getByRole('link', { name: 'Lichess', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'Move quality', exact: true })).toBeVisible()
+    expect(errors).toEqual([])
+  } finally {
+    // Only this test's account is removed; the server uses its isolated temporary database.
+    const accounts = await (await page.request.get('/api/accounts')).json() as { id: number; platform: string; username: string }[]
+    const connected = accounts.find(a => a.platform === 'lichess' && a.username === 'lichess_fixture')
+    if (connected) expect((await page.request.delete(`/api/accounts/${connected.id}`)).ok()).toBe(true)
+  }
 })

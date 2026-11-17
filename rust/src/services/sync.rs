@@ -17,6 +17,8 @@ impl std::fmt::Display for SyncDbBusy {
     }
 }
 impl std::error::Error for SyncDbBusy {}
+mod lichess;
+pub(super) use lichess::LichessClient;
 
 const OFFICIAL_BASE: &str = "https://api.chess.com/pub";
 const MAX_RESPONSE: u64 = 32 * 1024 * 1024;
@@ -669,6 +671,9 @@ impl Services {
         Ok(())
     }
     fn sync_account(&self, account: &Value) -> Result<()> {
+        if account["platform"] == "lichess" {
+            return self.sync_lichess_account(account);
+        }
         let claim = AccountSync::from_row(account)?;
         let id = claim.id;
         let username = account["username"].as_str().unwrap_or("");

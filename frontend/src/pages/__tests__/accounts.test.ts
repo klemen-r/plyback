@@ -17,7 +17,7 @@ const account = (id: number): Account => ({
   id, username: `fixture${id}`, display_name: `Fixture ${id}`, avatar: null, title: null,
   country: null, profile_url: '', joined: null, ratings: {}, added_at: 0, last_sync_at: null,
   sync_status: 'idle', sync_error: null, sync_enabled: true, auto_analyze: true,
-  analyze_history: true, import_since: null, games: 0, analyzed: 0, queued: 0,
+  analyze_history: true, import_since: null, games: 0, analyzed: 0, queued: 0, platform: 'chesscom',
 })
 
 beforeEach(() => mutation.mockReset())

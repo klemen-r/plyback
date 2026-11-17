@@ -145,6 +145,20 @@ const GAME_COLS: &[&str] = &[
     "imported_at",
 ];
 
+/// The Lichess game ID in a game link: `https://lichess.org/<8 characters>`, optionally
+/// followed by a player suffix (4 more characters, or `/white` / `/black`).
+fn lichess_game_id(url: &str) -> Option<&str> {
+    let rest = url
+        .strip_prefix("https://lichess.org/")
+        .or_else(|| url.strip_prefix("http://lichess.org/"))?;
+    let id = rest.get(..8)?;
+    let tail = &rest[8..];
+    let valid_tail = tail.is_empty()
+        || ["/white", "/black", "/"].contains(&tail)
+        || (tail.len() == 4 && tail.bytes().all(|c| c.is_ascii_alphanumeric()));
+    (id.bytes().all(|c| c.is_ascii_alphanumeric()) && valid_tail).then_some(id)
+}
+
 pub fn game_row_from_pgn(text: &str) -> Result<Value> {
     let game = pgn::parse(text)?;
     let h = &game.headers;
@@ -197,9 +211,12 @@ pub fn game_row_from_pgn(text: &str) -> Result<Value> {
     });
     let (opening, _) = analysis::identify_opening(&game);
     let opening = opening.unwrap_or(Value::Null);
+    // A game downloaded from Lichess keeps the identity the Lichess sync gives it, so the
+    // same game is stored once whichever arrives first.
+    let lichess = get("Site").or(get("Link")).and_then(lichess_game_id);
     let mut row = json!({
-        "uuid":format!("pgn-{}",&hex::encode(Sha1::digest(text.trim().as_bytes()))[..24]),
-        "url":safe_url(get("Link")),"source":"pgn","pgn":format!("{}\n",text.trim()),"rules":game.rules,
+        "uuid":lichess.map_or_else(||format!("pgn-{}",&hex::encode(Sha1::digest(text.trim().as_bytes()))[..24]),|id|format!("lichess:{id}")),
+        "url":lichess.map(|id|format!("https://lichess.org/{id}")).or_else(||safe_url(get("Link"))),"source":"pgn","pgn":format!("{}\n",text.trim()),"rules":game.rules,
         "time_control":tc,"time_class":tc_class,"rated":null,
         "start_time":timestamp(get("UTCDate"),get("UTCTime")),
         // Without EndTime (Lichess and most other sites), the start time is a far better end time
@@ -353,22 +370,94 @@ pub fn game_row_from_chesscom(game: &Value) -> Result<Option<Value>> {
     Ok(Some(row))
 }
 
+fn same_main_line(stored: &str, synced: &str) -> bool {
+    match (pgn::parse(stored), pgn::parse(synced)) {
+        (Ok(stored), Ok(synced)) => {
+            stored.initial_fen == synced.initial_fen
+                && stored.chess960 == synced.chess960
+                && stored
+                    .moves
+                    .iter()
+                    .map(|m| &m.san)
+                    .eq(synced.moves.iter().map(|m| &m.san))
+        }
+        _ => false,
+    }
+}
+
 pub fn upsert_games(tx: &Transaction<'_>, rows: &[Value]) -> Result<Vec<(i64, bool)>> {
     let sql = format!(
         "INSERT INTO games({}) VALUES({})",
         GAME_COLS.join(","),
         vec!["?"; GAME_COLS.len()].join(",")
     );
+    // Sync can correct platform metadata without taking ownership of an import or
+    // changing any PGN input used by its review. No other columns are promoted.
+    let metadata = [
+        "rated",
+        "time_class",
+        "time_control",
+        "start_time",
+        "end_time",
+        "white_rating",
+        "black_rating",
+        "white_result",
+        "black_result",
+        "result",
+        "termination",
+    ];
+    let promote_sql = format!(
+        "UPDATE games SET {} WHERE id=?{} AND ({})",
+        metadata
+            .iter()
+            .enumerate()
+            .map(|(i, col)| format!("{col}=?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(","),
+        metadata.len() + 1,
+        // Retaining source=pgn means this path is revisited on sync. Avoid firing
+        // the data_revision trigger again when all metadata is already current.
+        metadata
+            .iter()
+            .enumerate()
+            .map(|(i, col)| format!("{col} IS NOT ?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(" OR "),
+    );
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
         let existing = tx
             .query_row(
-                "SELECT id,chesscom_accuracy_white FROM games WHERE uuid=?",
-                [row["uuid"].as_str()],
-                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<f64>>(1)?)),
+                "SELECT id,chesscom_accuracy_white,CASE WHEN source='pgn' AND uuid LIKE 'lichess:%' AND ?2='lichess' THEN pgn END FROM games WHERE uuid=?1",
+                rusqlite::params![row["uuid"].as_str(),row["source"].as_str()],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<f64>>(1)?,r.get::<_,Option<String>>(2)?)),
             )
             .optional()?;
-        if let Some((id, acc)) = existing {
+        if let Some((id, acc, imported_pgn)) = existing {
+            if let Some(imported_pgn) = imported_pgn {
+                if !same_main_line(&imported_pgn, row["pgn"].as_str().unwrap_or("")) {
+                    crate::db::insert_event(
+                        tx,
+                        "warning",
+                        "sync",
+                        &format!(
+                            "Skipped Lichess metadata for '{}': stored PGN main line differs or could not be parsed",
+                            row["uuid"].as_str().unwrap_or("")
+                        ),
+                        None,
+                    )?;
+                    out.push((id, false));
+                    continue;
+                }
+                let mut values = metadata
+                    .iter()
+                    .map(|col| row[*col].clone())
+                    .collect::<Vec<_>>();
+                values.push(json!(id));
+                tx.execute(&promote_sql, params_from_iter(sql_values(&values)?))?;
+                out.push((id, false));
+                continue;
+            }
             if acc.is_none() && !row["chesscom_accuracy_white"].is_null() {
                 tx.execute(
                     UPDATE_CHESSCOM_ACCURACY_SQL,
@@ -406,6 +495,24 @@ pub fn link_games(
     // already imported is not new to the database, but it is new to this account.
     let mut linked = Vec::with_capacity(rows.len());
     for (row, (id, _)) in rows.iter().zip(ids) {
+        // A URL can identify an edited PGN as the same platform game. Upsert left
+        // that import alone; linking must not silently associate it with sync either.
+        if row["source"] == "lichess"
+            && row["uuid"]
+                .as_str()
+                .is_some_and(|uuid| uuid.starts_with("lichess:"))
+            && let Some(stored) = tx
+                .query_row(
+                    "SELECT pgn FROM games WHERE id=? AND source='pgn'",
+                    [id],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()?
+            && !same_main_line(&stored, row["pgn"].as_str().unwrap_or(""))
+        {
+            linked.push(false);
+            continue;
+        }
         let color = if row["white_username"]
             .as_str()
             .unwrap_or("")
@@ -570,6 +677,7 @@ pub fn save_analysis(
 pub fn account_public(db: &Database, account: &Value) -> Result<Value> {
     let stats = decode(&account["stats_json"], json!({}));
     let profile = decode(&account["profile_json"], json!({}));
+    let platform = account["platform"].as_str().unwrap_or("chesscom");
     let mut ratings = json!({});
     if let Some(stats) = stats.as_object() {
         for (key, val) in stats {
@@ -588,15 +696,54 @@ pub fn account_public(db: &Database, account: &Value) -> Result<Value> {
             }
         }
     }
+    if platform == "lichess" {
+        // Lichess lists every speed with a provisional 1500 even when it was never played; show
+        // only rated speeds, under the same pool names Insights uses.
+        for (perf, pool) in [
+            ("correspondence", "daily"),
+            ("classical", "classical"),
+            ("ultraBullet", "ultraBullet"),
+            ("bullet", "bullet"),
+            ("blitz", "blitz"),
+            ("rapid", "rapid"),
+        ] {
+            let stats = &profile["perfs"][perf];
+            if stats["games"].as_i64().unwrap_or(0) == 0 || stats["prov"].as_bool() == Some(true) {
+                continue;
+            }
+            if let Some(rating) = stats["rating"].as_i64().filter(|n| (0..=10000).contains(n)) {
+                ratings[pool] = json!({"rating":rating,"best":null,"record":null});
+            }
+        }
+    }
+    let profile_url = if platform == "lichess" {
+        format!(
+            "https://lichess.org/@/{}",
+            account["username"].as_str().unwrap_or("")
+        )
+    } else {
+        safe_url(profile["url"].as_str()).unwrap_or_else(|| {
+            format!(
+                "https://www.chess.com/member/{}",
+                account["username"].as_str().unwrap_or("")
+            )
+        })
+    };
+    let joined = if platform == "lichess" {
+        profile["createdAt"].as_i64().map(|t| t / 1000)
+    } else {
+        profile["joined"].as_i64()
+    }
+    .filter(|t| (0..=253402300799).contains(t));
     let counts = db
         .one(ACCOUNT_ANALYSIS_COUNTS_SQL, &[account["id"].clone()])?
         .unwrap_or(json!({}));
     let queued = db.scalar(ACCOUNT_QUEUE_COUNT_SQL, &[account["id"].clone()])?;
     Ok(
-        json!({"id":account["id"],"username":account["username"],"display_name":account.get("display_name").filter(|v|!v.is_null()).unwrap_or(&account["username"]),"avatar":safe_url(account["avatar"].as_str()),"title":profile["title"].as_str().filter(|s|s.len()<=40),
-        "country":profile["country"].as_str().and_then(|s|s.rsplit('/').next()).filter(|s|!s.is_empty()),
-        "profile_url":safe_url(profile["url"].as_str()).unwrap_or_else(||format!("https://www.chess.com/member/{}",account["username"].as_str().unwrap_or(""))),
-        "joined":profile["joined"].as_i64().filter(|t|(0..=253402300799).contains(t)),"ratings":ratings,"added_at":account["added_at"],"last_sync_at":account["last_sync_at"],"sync_status":account["sync_status"],"sync_error":account["sync_error"],
+        json!({"id":account["id"],"platform":platform,"username":account["username"],"display_name":account.get("display_name").filter(|v|!v.is_null()).unwrap_or(&account["username"]),"avatar":safe_url(account["avatar"].as_str()),"title":profile["title"].as_str().filter(|s|s.len()<=40),
+        "country":(if platform == "lichess" { profile["profile"]["flag"].as_str() } else { profile["country"].as_str() }).and_then(|s|s.rsplit('/').next()).filter(|s|!s.is_empty() && s.len() <= 64),
+        "profile_url":profile_url,
+        "joined":joined,"ratings":ratings,"added_at":account["added_at"],"last_sync_at":account["last_sync_at"],"sync_status":account["sync_status"],"sync_error":account["sync_error"],
         "sync_enabled":account["sync_enabled"].as_i64()==Some(1),"auto_analyze":account["auto_analyze"].as_i64()==Some(1),"analyze_history":account["analyze_history"].as_i64()==Some(1),"import_since":account["import_since"],"games":counts["games"],"analyzed":counts["analyzed"],"queued":queued}),
     )
 }
@@ -604,6 +751,134 @@ pub fn account_public(db: &Database, account: &Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lichess_pgn_promotion_keeps_text_identity_analysis_and_snapshots() {
+        let db = Database::open(":memory:").unwrap();
+        let imported = game_row_from_pgn("[Site \"https://lichess.org/pgnfirst\"]\n[White \"fixture\"]\n[Black \"opponent\"]\n[TimeControl \"300+5\"]\n[Result \"1-0\"]\n\n1. e4 $1 {My notes [%clk 0:04:59]} (1. d4 d5) e5 1-0").unwrap();
+        let id = db
+            .transaction(|tx| Ok(upsert_games(tx, std::slice::from_ref(&imported))?[0].0))
+            .unwrap();
+        db.execute(
+            "INSERT INTO accounts(id,platform,username,added_at) VALUES(1,'lichess','fixture',0)",
+            &[],
+        )
+        .unwrap();
+        db.execute("INSERT INTO game_analysis(game_id,depth,multipv,version,analyzed_at) VALUES(?,18,2,?,0)", &[json!(id),json!(ANALYSIS_VERSION)]).unwrap();
+        db.execute("INSERT INTO reports(id,account_id,filters_json,status,created_at,scope_frozen,report_json) VALUES(1,1,'{}','ready',0,1,'{\"frozen\":true}')", &[]).unwrap();
+        db.execute(
+            "INSERT INTO report_games VALUES(1,?,'lichess:pgnfirst')",
+            &[json!(id)],
+        )
+        .unwrap();
+        let reports = db.query("SELECT * FROM reports", &[]).unwrap();
+        let members = db.query("SELECT * FROM report_games", &[]).unwrap();
+        let analysis = db.query("SELECT * FROM game_analysis", &[]).unwrap();
+        let mut synced = imported.clone();
+        synced["source"] = json!("lichess");
+        synced["pgn"] = json!("[TimeControl \"1800+0\"]\n\n1. e4 e5 1-0");
+        synced["imported_at"] = json!(0);
+        let metadata = [
+            ("rated", json!(1)),
+            ("time_class", json!("rapid")),
+            ("time_control", json!("1800+0")),
+            ("start_time", json!(1760000000)),
+            ("end_time", json!(1760001500)),
+            ("white_rating", json!(1806)),
+            ("black_rating", json!(1794)),
+            ("white_result", json!("win")),
+            ("black_result", json!("resigned")),
+            ("result", json!("1-0")),
+            ("termination", json!("resign")),
+        ];
+        for (key, value) in &metadata {
+            synced[*key] = value.clone();
+        }
+        // Unrelated platform fields must not replace the import either.
+        synced["opening_name"] = json!("Platform opening");
+        synced["white_username"] = json!("FIXTURE");
+        let before = db.query("SELECT * FROM games", &[]).unwrap();
+        assert!(
+            db.transaction::<()>(|tx| {
+                upsert_games(tx, std::slice::from_ref(&synced))?;
+                anyhow::bail!("rollback")
+            })
+            .is_err()
+        );
+        assert_eq!(db.query("SELECT * FROM games", &[]).unwrap(), before);
+        let revision = db
+            .scalar("SELECT revision FROM data_revision", &[])
+            .unwrap()
+            .as_i64()
+            .unwrap();
+        assert_eq!(
+            db.transaction(|tx| upsert_games(tx, std::slice::from_ref(&synced)))
+                .unwrap(),
+            vec![(id, false)]
+        );
+        let stored = db
+            .one("SELECT * FROM games WHERE id=?", &[json!(id)])
+            .unwrap()
+            .unwrap();
+        for key in GAME_COLS {
+            assert_eq!(
+                stored[*key],
+                if metadata.iter().any(|(col, _)| col == key) {
+                    synced[*key].clone()
+                } else {
+                    imported[*key].clone()
+                },
+                "{key}"
+            );
+        }
+        assert!(
+            db.scalar("SELECT revision FROM data_revision", &[])
+                .unwrap()
+                .as_i64()
+                .unwrap()
+                > revision
+        );
+        let revision = db
+            .scalar("SELECT revision FROM data_revision", &[])
+            .unwrap()
+            .as_i64()
+            .unwrap();
+        db.transaction(|tx| upsert_games(tx, std::slice::from_ref(&synced)))
+            .unwrap();
+        assert_eq!(
+            db.scalar("SELECT revision FROM data_revision", &[])
+                .unwrap()
+                .as_i64()
+                .unwrap(),
+            revision,
+            "identical resync is a no-op"
+        );
+        db.transaction(|tx| upsert_games(tx, &[imported])).unwrap();
+        assert_eq!(
+            db.one("SELECT * FROM games WHERE id=?", &[json!(id)])
+                .unwrap()
+                .unwrap(),
+            stored
+        );
+        assert_eq!(
+            db.query("SELECT * FROM game_analysis", &[]).unwrap(),
+            analysis
+        );
+        assert_eq!(db.query("SELECT * FROM reports", &[]).unwrap(), reports);
+        assert_eq!(
+            db.query("SELECT * FROM report_games", &[]).unwrap(),
+            members
+        );
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM jobs", &[]).unwrap(), 0);
+        db.execute(
+            "INSERT INTO account_games VALUES(1,?,'white')",
+            &[json!(id)],
+        )
+        .unwrap();
+        let insights = crate::insights::compute(&db, 1, &json!({})).unwrap();
+        assert_eq!(insights["ratings"]["classical"]["games"], 1);
+        assert!(insights["ratings"]["rapid"].is_null());
+    }
     #[test]
     fn save_analysis_bumps_revision_in_the_same_second() {
         let db = Database::open(":memory:").unwrap();
@@ -755,6 +1030,39 @@ mod tests {
         assert_eq!(row["end_time"], 1_793_558_400);
     }
     #[test]
+    fn pgns_downloaded_from_lichess_share_the_synced_identity() {
+        let row = |site: &str| {
+            game_row_from_pgn(&format!(
+                "[Site \"{site}\"]
+[Result \"1-0\"]
+
+1. e4 e5 1-0"
+            ))
+            .unwrap()
+        };
+        for site in [
+            "https://lichess.org/AbCd1234",
+            "https://lichess.org/AbCd1234wxyz",
+            "https://lichess.org/AbCd1234/black",
+        ] {
+            let game = row(site);
+            assert_eq!(game["uuid"], "lichess:AbCd1234", "{site}");
+            assert_eq!(game["url"], "https://lichess.org/AbCd1234");
+            assert_eq!(game["source"], "pgn");
+        }
+        for site in [
+            "https://lichess.org/study/AbCd1234",
+            "https://lichess.org/AbCd12",
+            "https://lichess.org.evil.test/AbCd1234",
+            "https://www.chess.com/game/live/1",
+        ] {
+            assert!(
+                row(site)["uuid"].as_str().unwrap().starts_with("pgn-"),
+                "{site}"
+            );
+        }
+    }
+    #[test]
     fn imported_links_cannot_use_executable_schemes() {
         let row = game_row_from_pgn("[Link \"javascript:alert(1)\"]\n\n1. e4 e5 *").unwrap();
         assert!(row["url"].is_null());
@@ -785,6 +1093,26 @@ mod tests {
         let mut game = good;
         game["accuracies"] = json!({"white":101});
         assert!(game_row_from_chesscom(&game).is_err());
+    }
+    #[test]
+    fn lichess_public_account_includes_platform_profile_and_ratings() {
+        let db = Database::open(":memory:").unwrap();
+        let profile = json!({"username":"Fixture","createdAt":1700000000123i64,"title":"GM","profile":{"flag":"SI"},"perfs":{"blitz":{"games":40,"rating":1800},"correspondence":{"games":3,"rating":1700},"classical":{"games":9,"rating":1750},"rapid":{"games":20,"rating":1900},"bullet":{"games":0,"rating":1500,"prov":true},"ultraBullet":{"games":2,"rating":1400,"prov":true}}});
+        db.execute("INSERT INTO accounts(platform,username,added_at,profile_json) VALUES('lichess','Fixture',0,?)", &[json!(profile.to_string())]).unwrap();
+        let account = db.one("SELECT * FROM accounts", &[]).unwrap().unwrap();
+        let public = account_public(&db, &account).unwrap();
+        assert_eq!(public["platform"], "lichess");
+        assert_eq!(public["profile_url"], "https://lichess.org/@/Fixture");
+        assert_eq!(public["joined"], 1700000000);
+        assert_eq!(public["country"], "SI");
+        assert_eq!(public["ratings"]["blitz"]["rating"], 1800);
+        assert_eq!(public["ratings"]["rapid"]["rating"], 1900);
+        assert_eq!(public["ratings"]["daily"]["rating"], 1700);
+        // Classical is its own Lichess rating, and unplayed or provisional speeds are left out.
+        assert_eq!(public["ratings"]["classical"]["rating"], 1750);
+        assert!(public["ratings"]["bullet"].is_null());
+        assert!(public["ratings"]["ultraBullet"].is_null());
+        assert!(public["ratings"]["blitz"]["record"].is_null());
     }
     #[test]
     fn public_profile_fields_are_safe_and_typed() {

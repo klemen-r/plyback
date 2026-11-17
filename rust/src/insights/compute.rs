@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 const SCOPE_GAMES_SQL: &str =
     "SELECT g.id FROM account_games ag JOIN games g ON g.id=ag.game_id WHERE ";
-const INSIGHT_GAMES_SQL: &str = "SELECT g.id,g.url,g.time_control,g.time_class,g.rated,g.start_time,g.end_time,g.white_username,g.white_rating,g.white_result,g.black_username,g.black_rating,g.black_result,g.result,g.plies,g.chesscom_accuracy_white,g.chesscom_accuracy_black,g.first_moves,g.opening_eco,g.opening_name,g.opening_family,g.opening_variation,g.rules,ag.color,ga.game_id AS analyzed,ga.revision,ga.accuracy_white,ga.accuracy_black,ga.acpl_white,ga.acpl_black FROM account_games ag JOIN games g ON g.id=ag.game_id LEFT JOIN game_analysis ga ON ga.game_id=g.id WHERE ";
+const INSIGHT_GAMES_SQL: &str = "SELECT g.id,g.uuid,g.url,g.source,CASE WHEN ga.game_id IS NOT NULL AND instr(g.pgn,'[PlybackClockSource')>0 THEN g.pgn END AS clock_pgn,g.time_control,g.time_class,g.rated,g.start_time,g.end_time,g.white_username,g.white_rating,g.white_result,g.black_username,g.black_rating,g.black_result,g.result,g.plies,g.chesscom_accuracy_white,g.chesscom_accuracy_black,g.first_moves,g.opening_eco,g.opening_name,g.opening_family,g.opening_variation,g.rules,ag.color,ga.game_id AS analyzed,ga.revision,ga.accuracy_white,ga.accuracy_black,ga.acpl_white,ga.acpl_black FROM account_games ag JOIN games g ON g.id=ag.game_id LEFT JOIN game_analysis ga ON ga.game_id=g.id WHERE ";
 const INSIGHT_MOVES_SQL: &str = "SELECT game_id,ply,color,san,classification,phase,ep_loss,cp_loss,accuracy,win_before,win_after,clock,time_spent,is_book,tags,epd_before,best_san,endgame_type FROM moves WHERE game_id IN (";
 
 const ERRORS: &[&str] = &["mistake", "blunder", "miss"];
@@ -545,7 +545,17 @@ fn load(db: &Database, account: i64, filters: &Value, report_id: Option<i64>) ->
     );
     let rows = db.read(|connection| crate::db::query_connection(connection, &sql, &params))?;
     let mut games = Vec::with_capacity(rows.len());
-    for row in rows {
+    for mut row in rows {
+        if let Some(controls) = row["clock_pgn"]
+            .as_str()
+            .and_then(crate::pgn::lichess_clock_controls)
+        {
+            row["white_clock_base"] = json!(controls[0].base);
+            row["black_clock_base"] = json!(controls[1].base);
+        }
+        if let Some(fields) = row.as_object_mut() {
+            fields.remove("clock_pgn");
+        }
         let white = row["color"] == "white";
         let (us, them) = if white {
             ("white", "black")
@@ -997,11 +1007,34 @@ fn overview(games: &[&Game], analyzed: &[&Game]) -> Value {
 /// The rating pool a game counts for: its time class, and separately for Chess960, whose
 /// ratings are not the standard ones of the same time class.
 fn pool(game: &Game) -> String {
-    let time_class = text(&game.row["time_class"]);
+    // Source records import ownership; a Lichess PGN keeps source='pgn' after sync.
+    let lichess = text(&game.row["uuid"]).starts_with("lichess:")
+        || url::Url::parse(text(&game.row["url"]))
+            .ok()
+            .is_some_and(|url| matches!(url.host_str(), Some("lichess.org" | "www.lichess.org")));
+    let time_class = if lichess {
+        lichess_pool(text(&game.row["time_control"])).unwrap_or(text(&game.row["time_class"]))
+    } else {
+        text(&game.row["time_class"])
+    };
     if game.row["rules"] == "chess960" {
         format!("{time_class} 960")
     } else {
         time_class.into()
+    }
+}
+
+/// Lichess rates ultraBullet and classical games separately from the bullet and rapid time
+/// classes they are filed under. Its speed is the estimated duration, initial + 40 × increment.
+fn lichess_pool(time_control: &str) -> Option<&'static str> {
+    let (initial, increment) = time_control.trim().split_once('+')?;
+    let estimate = initial.parse::<f64>().ok()? + 40.0 * increment.parse::<f64>().ok()?;
+    if estimate < 30.0 {
+        Some("ultraBullet")
+    } else if estimate >= 1500.0 {
+        Some("classical")
+    } else {
+        None
     }
 }
 
@@ -1259,8 +1292,8 @@ fn trend(games: &[&Game]) -> Value {
     json!(buckets.into_iter().map(|(period,sub)|{let an=sub.iter().copied().filter(|g|g.analyzed).collect::<Vec<_>>();let scored=decided(&sub);
         // Ratings of different time classes, and of Chess960, are separate pools: a period that
         // mixes them has no single rating, and its last game's rating would jump between pools.
-        let first=&sub[0].row;
-        let one_pool=sub.iter().all(|g|g.row["time_class"]==first["time_class"] && g.row["rules"]==first["rules"]);
+        let first=pool(sub[0]);
+        let one_pool=sub.iter().all(|g|pool(g)==first);
         json!({"period":period,"games":sub.len(),"score":pct(scored.iter().filter_map(|g|g.score).sum(),scored.len()),"accuracy":avg(an.iter().map(|g|g.accuracy)),"analyzed":an.len(),"blunders_per_game":if an.is_empty(){Value::Null}else{json!(round(an.iter().flat_map(|g|&g.user).filter(|m|m.class=="blunder").count() as f64/an.len() as f64,2))},"rating":if one_pool{sub.last().unwrap().user_rating}else{None}})}).collect::<Vec<_>>())
 }
 
@@ -1479,10 +1512,22 @@ fn time_info(analyzed: &[&Game], games: &[&Game]) -> Value {
                 return None;
             }
             let base = tc.split('+').next()?.parse::<f64>().ok()?;
-            if !base.is_finite() || base <= 0.0 || !g.user.iter().any(|m| m.clock.is_some()) {
+            let (user_key, opp_key) = if g.color == "white" {
+                ("white_clock_base", "black_clock_base")
+            } else {
+                ("black_clock_base", "white_clock_base")
+            };
+            let user_base = g.row[user_key].as_f64().unwrap_or(base);
+            let opp_base = g.row[opp_key].as_f64().unwrap_or(base);
+            if !user_base.is_finite()
+                || user_base <= 0.0
+                || !opp_base.is_finite()
+                || opp_base <= 0.0
+                || !g.user.iter().any(|m| m.clock.is_some())
+            {
                 None
             } else {
-                Some((*g, base))
+                Some((*g, user_base, opp_base))
             }
         })
         .collect::<Vec<_>>();
@@ -1503,7 +1548,7 @@ fn time_info(analyzed: &[&Game], games: &[&Game]) -> Value {
         ("loss", Vec::new()),
         ("draw", Vec::new()),
     ]);
-    for &(g, base) in &timed {
+    for &(g, base, opp_base) in &timed {
         let threshold = 10_f64.max(0.1 * base);
         let mut had_low = false;
         for m in &g.user {
@@ -1542,7 +1587,7 @@ fn time_info(analyzed: &[&Game], games: &[&Game]) -> Value {
                 to.entry(&m.phase).or_default().push(t);
             }
             if let Some(c) = m.clock {
-                co.entry((m.ply + 1) / 2).or_default().push(c / base);
+                co.entry((m.ply + 1) / 2).or_default().push(c / opp_base);
             }
         }
         if had_low {
@@ -2450,6 +2495,119 @@ mod tests {
             serde_json::to_vec(&cached).unwrap(),
             serde_json::to_vec(&uncached).unwrap()
         );
+    }
+
+    #[test]
+    fn lichess_pgn_promotion_berserk_clock_curves_use_each_players_base() {
+        let db = Database::open(":memory:").unwrap();
+        db.execute(
+            "INSERT INTO accounts(id,username,platform,added_at) VALUES(1,'fixture','lichess',0)",
+            &[],
+        )
+        .unwrap();
+        let pgn = "[PlybackClockSource \"lichess\"]\n[TimeControl \"300+0\"]\n[WhiteTimeControl \"150+0\"]\n\n1. e4 e5 2. Nf3 Nc6 1-0";
+        for id in 1..=3 {
+            db.execute("INSERT INTO games(id,uuid,source,pgn,time_control,time_class,white_username,black_username,white_result,black_result,end_time,imported_at) VALUES(?,?,'lichess',?,'300+0','blitz','fixture','opponent','win','resigned',?,0)", &[json!(id),json!(format!("lichess:berserk{id}")),json!(pgn),json!(id)]).unwrap();
+            db.execute(
+                "INSERT INTO account_games(account_id,game_id,color) VALUES(1,?,'white')",
+                &[json!(id)],
+            )
+            .unwrap();
+            db.execute("INSERT INTO game_analysis(game_id,depth,multipv,version,analyzed_at) VALUES(?,6,2,1,0)", &[json!(id)]).unwrap();
+            for (ply, color, clock) in [
+                (1, "w", 149.0),
+                (2, "b", 299.0),
+                (3, "w", 20.0),
+                (4, "b", 20.0),
+            ] {
+                db.execute("INSERT INTO moves(game_id,ply,color,san,uci,fen_before,epd_before,classification,phase,clock,time_spent,is_book,tags) VALUES(?,?,?,'e4','e2e4','','','good','opening',?,1,0,'{}')", &[json!(id),json!(ply),json!(color),json!(clock)]).unwrap();
+            }
+        }
+        let clock_stats = || {
+            let expected =
+                compute_once_with(&db, 1, &json!({}), None, false).unwrap()["time"].clone();
+            // A filtered miss uses SQL directly; a full load fills the shared cache.
+            db.insight_games.0.lock().unwrap().entries.clear();
+            let filters = json!({"since": 0});
+            assert_eq!(
+                compute_once_with(&db, 1, &filters, None, true).unwrap()["time"],
+                expected
+            );
+            let loaded = loaded_games(&db, 1).unwrap();
+            for game in loaded.iter() {
+                assert_eq!(game.row["white_clock_base"], 150);
+                assert_eq!(game.row["black_clock_base"], 300);
+                assert!(game.row.get("clock_pgn").is_none());
+            }
+            assert_eq!(
+                compute_once_with(&db, 1, &json!({}), None, true).unwrap()["time"],
+                expected
+            );
+            assert_eq!(
+                compute_once_with(&db, 1, &filters, None, true).unwrap()["time"],
+                expected
+            );
+            assert!(Arc::ptr_eq(&loaded, &loaded_games(&db, 1).unwrap()));
+            expected
+        };
+        let time = clock_stats();
+        assert_eq!(time["clock_curve"][0]["user"], 99.3);
+        assert_eq!(time["clock_curve"][0]["opponent"], 99.7);
+        assert_eq!(time["time_trouble"]["games"], 0);
+        db.execute("UPDATE account_games SET color='black'", &[])
+            .unwrap();
+        let time = clock_stats();
+        assert_eq!(time["clock_curve"][0]["user"], 99.7);
+        assert_eq!(time["clock_curve"][0]["opponent"], 99.3);
+        assert_eq!(time["time_trouble"]["games"], 3);
+        // Import ownership does not change the meaning of the clock marker.
+        db.execute("UPDATE games SET source='pgn'", &[]).unwrap();
+        let time = clock_stats();
+        assert_eq!(time["clock_curve"][0]["user"], 99.7);
+        assert_eq!(time["clock_curve"][0]["opponent"], 99.3);
+        assert_eq!(time["time_trouble"]["games"], 3);
+        // Analysis honours the explicit marker in any PGN, so Insights must too.
+        db.execute("UPDATE games SET uuid='pgn-'||id", &[]).unwrap();
+        let time = clock_stats();
+        assert_eq!(time["clock_curve"][0]["opponent"], 99.3);
+    }
+
+    #[test]
+    fn lichess_pgn_promotion_rating_pool() {
+        let db = Database::open(":memory:").unwrap();
+        db.execute(
+            "INSERT INTO accounts(id,username,platform,added_at) VALUES(1,'fixture','lichess',0)",
+            &[],
+        )
+        .unwrap();
+        for (id, uuid, url) in [
+            (1, "lichess:classical", ""),
+            (2, "pgn-linked", "https://lichess.org/linked"),
+            (3, "pgn-unrelated", "https://example.org/game"),
+            (4, "pgn-lookalike", "https://lichess.org.example.org/game"),
+        ] {
+            db.execute("INSERT INTO games(id,uuid,url,source,pgn,time_control,time_class,rated,white_username,white_rating,black_username,white_result,black_result,end_time,imported_at) VALUES(?,?,?,'pgn','','1800+0','rapid',1,'fixture',1800,'opponent','win','resigned',?,0)", &[json!(id),json!(uuid),json!(url),json!(id)]).unwrap();
+            db.execute(
+                "INSERT INTO account_games(account_id,game_id,color) VALUES(1,?,'white')",
+                &[json!(id)],
+            )
+            .unwrap();
+        }
+        let ratings = compute(&db, 1, &json!({})).unwrap()["ratings"].clone();
+        assert_eq!(ratings["classical"]["games"], 2);
+        assert_eq!(ratings["rapid"]["games"], 2);
+        assert_eq!(ratings["classical"]["points"][0]["game_id"], 1);
+        assert_eq!(ratings["classical"]["points"][1]["game_id"], 2);
+    }
+
+    #[test]
+    fn lichess_ultrabullet_and_classical_are_their_own_rating_pools() {
+        assert_eq!(lichess_pool("15+0"), Some("ultraBullet"));
+        assert_eq!(lichess_pool("60+0"), None);
+        assert_eq!(lichess_pool("600+5"), None);
+        assert_eq!(lichess_pool("1800+0"), Some("classical"));
+        assert_eq!(lichess_pool("900+15"), Some("classical"));
+        assert_eq!(lichess_pool("1/86400"), None)
     }
     #[test]
     fn compact_tags_match_json_presence_and_piece_semantics() {

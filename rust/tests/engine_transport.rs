@@ -4,9 +4,15 @@ use std::{
     sync::{
         Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
+        mpsc,
     },
     time::{Duration, Instant},
 };
+use tracing::{
+    Event, Subscriber,
+    field::{Field, Visit},
+};
+use tracing_subscriber::{Layer, layer::Context, prelude::*};
 
 fn fixture(mode: &str) -> (tempfile::TempDir, PathBuf) {
     static BINARY: OnceLock<(tempfile::TempDir, PathBuf)> = OnceLock::new();
@@ -253,8 +259,33 @@ fn concurrent_different_keys_and_databases_search_independently() {
     );
 }
 
-#[test]
-fn cancelling_a_follower_does_not_cancel_the_shared_search() {
+/// Observe this worker selecting a shared flight, rather than guessing that a
+/// sleep was long enough for it to get scheduled and reach the follower path.
+struct SharedWaitSignal(mpsc::Sender<()>);
+
+impl<S: Subscriber> Layer<S> for SharedWaitSignal {
+    fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
+        if event.metadata().target() != "plyback::review_timing" {
+            return;
+        }
+        struct EventName(bool);
+        impl Visit for EventName {
+            fn record_str(&mut self, field: &Field, value: &str) {
+                if field.name() == "event" && value == "shared_wait" {
+                    self.0 = true;
+                }
+            }
+            fn record_debug(&mut self, _field: &Field, _value: &dyn std::fmt::Debug) {}
+        }
+        let mut name = EventName(false);
+        event.record(&mut name);
+        if name.0 {
+            let _ = self.0.send(());
+        }
+    }
+}
+
+fn observe_follower_cancellation(controller_pause: Duration) -> (Duration, Duration) {
     let (dir, path) = fixture("gate");
     let db = Arc::new(plyback::db::Database::open(dir.path().join("cache.db")).unwrap());
     let mut leader = Engine::with_path(path.clone(), 1, 16).unwrap();
@@ -262,20 +293,60 @@ fn cancelling_a_follower_does_not_cancel_the_shared_search() {
     let mut follower = Engine::with_path(path.clone(), 1, 16).unwrap();
     follower.attach_database(Arc::clone(&db));
     let leader = std::thread::spawn(move || {
-        leader.analyse(STARTING_FEN, 12, 2, 2.0, &AtomicBool::new(false))
+        // The gate, not a search timeout, must end this deliberately blocked search.
+        leader.analyse(STARTING_FEN, 12, 2, 10.0, &AtomicBool::new(false))
     });
     wait_for_searches(&path, 1);
     let cancel = Arc::new(AtomicBool::new(false));
     let follower_cancel = Arc::clone(&cancel);
-    let follower =
-        std::thread::spawn(move || follower.analyse(STARTING_FEN, 12, 2, 2.0, &follower_cancel));
-    std::thread::sleep(Duration::from_millis(50));
+    let (waiting_tx, waiting_rx) = mpsc::channel();
+    let (response_tx, response_rx) = mpsc::channel();
+    let (cleanup_tx, cleanup_rx) = mpsc::channel();
+    let follower = std::thread::spawn(move || {
+        let subscriber = tracing_subscriber::registry().with(SharedWaitSignal(waiting_tx));
+        tracing::subscriber::with_default(subscriber, || {
+            let result = follower.analyse(STARTING_FEN, 12, 2, 10.0, &follower_cancel);
+            // Timestamp the API response before Engine::Drop, process shutdown,
+            // or the controller thread being scheduled to receive this message.
+            let responded_at = Instant::now();
+            let error = result.unwrap_err();
+            response_tx
+                .send((
+                    error.downcast_ref::<plyback::ApiError>().unwrap().0,
+                    responded_at,
+                ))
+                .unwrap();
+            // Retain the engine until the controller has checked cancellation
+            // independently from cleanup. A panic cannot strand the worker.
+            let _ = cleanup_rx.recv_timeout(Duration::from_secs(5));
+            drop(follower);
+        });
+    });
+    waiting_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     let started = Instant::now();
     cancel.store(true, Ordering::SeqCst);
-    let error = follower.join().unwrap().unwrap_err();
-    assert_eq!(error.downcast_ref::<plyback::ApiError>().unwrap().0, 499);
-    assert!(started.elapsed() < Duration::from_millis(500));
+    std::thread::sleep(controller_pause);
+    let (status, responded_at) = response_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let response_elapsed = responded_at.duration_since(started);
+    assert_eq!(status, 499);
+    assert!(
+        response_elapsed < Duration::from_millis(500),
+        "cancellation response took {response_elapsed:?}"
+    );
+    assert!(
+        !follower.is_finished(),
+        "response must precede engine cleanup"
+    );
+    assert!(
+        !leader.is_finished(),
+        "cancelling a follower must not release its leader"
+    );
     assert_eq!(searches(&path), 1);
+    assert_eq!(
+        db.scalar("SELECT COUNT(*) FROM position_cache", &[])
+            .unwrap(),
+        0
+    );
     release_searches(&path);
     assert!(leader.join().unwrap().is_ok());
     assert_eq!(
@@ -283,6 +354,25 @@ fn cancelling_a_follower_does_not_cancel_the_shared_search() {
             .unwrap(),
         1
     );
+    cleanup_tx.send(()).unwrap();
+    follower.join().unwrap();
+    (response_elapsed, started.elapsed())
+}
+
+#[test]
+fn cancelling_a_follower_does_not_cancel_the_shared_search() {
+    observe_follower_cancellation(Duration::ZERO);
+}
+
+#[test]
+fn follower_cancellation_response_excludes_controller_delay_and_engine_cleanup() {
+    // Reproduce a controller descheduled beyond the original deadline, while
+    // the worker retains its engine. The old join-based measurement necessarily
+    // exceeds 500ms here even when cancellation itself is immediate.
+    let (response_elapsed, joined_after) =
+        observe_follower_cancellation(Duration::from_millis(650));
+    assert!(response_elapsed < Duration::from_millis(500));
+    assert!(joined_after >= Duration::from_millis(650));
 }
 
 #[test]

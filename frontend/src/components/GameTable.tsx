@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { fmtDate, fmtTimeControl } from '../lib/format'
 import type { Classification, GameSummary } from '../lib/types'
 import ClassIcon from './ClassIcon'
+import PlatformMark from './PlatformMark'
 import { endingOf } from '../lib/ending'
 import { ResultMark, Spinner } from './ui'
 
@@ -64,6 +65,7 @@ export default function GameTable({ games, compact, selected, onSelect }:
               <td className="py-2.5 pl-4"><ResultMark outcome={g.outcome} /></td>
               <td className="max-w-[220px] py-2.5 pr-3">
                 <div className="flex items-center gap-2 truncate">
+                  <PlatformMark platform={g.source} />
                   {g.user_color && <span className={clsx('h-2.5 w-2.5 shrink-0 rounded-[2px] border border-line-strong', g.user_color === 'white' ? 'bg-white' : 'bg-[#262626]')} title={`You played ${g.user_color}`} />}
                   <span className="truncate">{opp ? opp.username : `${g.white.username} – ${g.black.username}`}</span>
                   {opp?.rating && <span className="tnum text-fg-3">{opp.rating}</span>}

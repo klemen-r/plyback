@@ -56,7 +56,7 @@ export default function Methodology() {
       </Block>
       <Block title="Account insights">
         <p>Result statistics use every game in the selection; engine statistics only use analysed games. Every pattern shows its sample size and a confidence label, and score ranges use Wilson 95% intervals. Openings are only flagged as a weakness or strength when the difference is large relative to the sample.</p>
-        <p>Where possible you are compared with <b>your opponents in the same games</b>: because Chess.com pairs players of similar rating, this is a fair like-for-like baseline. Improvement priorities are ranked by winning chances lost per game in each area, weighted by how you compare with those opponents. Categories can overlap (one blunder can both hang a piece and ignore a threat).</p>
+        <p>Where possible you are compared with <b>your opponents in the same games</b>. This gives context from positions you both played, though differences in rating and playing conditions can affect the comparison. Improvement priorities are ranked by winning chances lost per game in each area, weighted by how you compare with those opponents. Categories can overlap (one blunder can both hang a piece and ignore a threat).</p>
       </Block>
       <Block title="Practice">
         <p>Practice uses your own moves reviewed as a blunder, mistake or miss in standard chess, but only where the engine’s best move was at least <b>5 points of winning chance</b> better than its second choice. That makes the best move the one fair answer, so your answer is checked against the stored review without a new engine search. Positions where two moves are nearly equal are left out.</p>
@@ -74,7 +74,7 @@ export default function Methodology() {
           <li>Time limits can reduce the completed depth. Extra candidate and threat searches take time; saved results help repeated reviews, but a new game still needs engine work.</li>
           <li>Brilliant/Great definitions are our own, documented heuristics — they will not always match Chess.com’s labels.</li>
           <li>Estimated scores and tactical tags have limits. Tags inspect a few engine lines; an absent tag does not prove there is no tactic.</li>
-          <li>We cannot know premoves, mouse slips, or connection issues. Time statistics need clock data, which Chess.com includes for live games.</li>
+          <li>We cannot know premoves, mouse slips, or connection issues. Time statistics need clock data, which Chess.com and Lichess include for live games.</li>
           <li>Chess.com’s public API can lag by a few minutes for new games; polling backs off automatically on rate limits or errors.</li>
         </ul>
       </Block>

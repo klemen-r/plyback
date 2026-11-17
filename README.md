@@ -1,9 +1,10 @@
 # Plyback
 
-Self-hosted Chess.com game review and account insights, powered by Stockfish.
-Connect public Chess.com usernames or import PGN files, review games on an interactive board,
+Self-hosted chess game review and account insights, powered by Stockfish.
+Connect public Chess.com or Lichess usernames or import PGN files, review games on an interactive board,
 compare selections, and save account analysis snapshots. Public game data and analyses stay in SQLite.
-No Chess.com password or paid service is needed.
+No platform password or paid service is needed. Choose the platform on Accounts; the same username
+can be connected once on each platform.
 
 The interface follows the Vercel-style direction (study A) from the
 [design explorations](docs/design-explorations/README.md).
@@ -107,6 +108,8 @@ It is still the same server, so the phone needs a connection to it.
 
 - New Chess.com games are imported automatically. Unchanged monthly archives are not downloaded again,
   and a sync that hits an error or a rate limit waits and tries again on its own.
+- New Lichess games are imported automatically too. Requests run one at a time, and a rate limit
+  pauses them for at least 60 seconds before trying again.
 - Games are reviewed in the background: games you ask for first, then new games, then older history.
   Several games can be reviewed at once. A review interrupted by a restart continues afterwards, and
   re-reviewing a game reuses positions that were already searched.
@@ -123,6 +126,19 @@ It is still the same server, so the phone needs a connection to it.
 Accuracy and classifications use documented heuristics, not Chess.com's proprietary algorithms.
 They can differ from Chess.com and depend on engine depth/budget. Insights describe the selected
 sample; they are not proof of causation or coaching outcomes. See [METHODOLOGY.md](METHODOLOGY.md).
+
+Lichess imports standard chess (including legal from-position games), with players, ratings,
+results, opening metadata and move clocks. UltraBullet maps to bullet, classical to rapid,
+and correspondence to daily. Variants are skipped. Lichess analysis and accuracy are discarded;
+review accuracy and classifications come from Plyback's engine pipeline.
+
+Incremental Lichess sync discovers games by creation time and imports only finished games.
+Ongoing game IDs are persisted separately and rechecked in batches of up to 300, at least 60 seconds
+apart, so correspondence games do not hold the history cursor back. The inclusive creation cursor
+deduplicates overlap by game ID. Exports yield after 15 seconds; a deadline or interrupted stream
+keeps complete records and resumes from the checkpoint on the next tick. During a 429 cooldown,
+sync skips the account without updating its last-sync time. Account connection waits at most five
+seconds for the Lichess request slot.
 
 ## Data, upgrades and backups
 

@@ -312,7 +312,7 @@ function Errors({ data }: { data: Insights }) {
 
 function Time({ data }: { data: Insights }) {
   const t = data.time
-  if (!t.games) return <Card title="Time management"><Empty title="No clock data">Time statistics need analysed games with clock information (live games from Chess.com include it).</Empty></Card>
+  if (!t.games) return <Card title="Time management"><Empty title="No clock data">Time statistics need analysed games with clock information (live games from Chess.com and Lichess include it).</Empty></Card>
   const tt = t.time_trouble!
   return (
     <div className="space-y-4">

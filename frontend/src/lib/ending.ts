@@ -13,6 +13,12 @@ const DRAWS: Record<string, string> = {
   '50move': 'the 50-move rule', timevsinsufficient: 'time against insufficient material',
 }
 
+/** Lichess statuses that have no per-side result code, in words. */
+const STATUS: Record<string, string> = {
+  cheat: 'Cheat detected', unknownFinish: 'Unknown finish', variantEnd: 'Variant ending', noStart: 'Not started',
+}
+const said = (termination: string) => STATUS[termination] ?? termination
+
 export interface Ending {
   /** One or two words for tables: "Checkmate", "Time", "Repetition". */
   short: string
@@ -36,13 +42,13 @@ export function endingOf(g: { white: Side; black: Side } & Pick<GameSummary, 'us
   const whiteWon = w === 'win', blackWon = b === 'win'
   if (!whiteWon && !blackWon) {
     // No result codes (for example an imported PGN without them): fall back to the stored text.
-    return g.termination ? { short: g.termination, text: g.termination } : null
+    return g.termination ? { short: said(g.termination), text: said(g.termination) } : null
   }
   const how = HOW[whiteWon ? b : w]
   if (!how) {
     // A win without a known reason (Chess.com's generic "lose", or a PGN without a Termination).
     const short = whiteWon ? 'White won' : 'Black won'
-    if (g.termination) return { short, text: g.termination }
+    if (g.termination) return { short, text: said(g.termination) }
     return { short, text: g.user_color ? ((g.user_color === 'white') === whiteWon ? 'Won' : 'Lost') : short }
   }
   const short = how === 'time' ? 'Time' : how[0].toUpperCase() + how.slice(1)

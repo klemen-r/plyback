@@ -99,7 +99,7 @@ function PracticeSession() {
   if (loading) return <Loading />
   if (!account) {
     return <div className="appear"><PageHeader title="Practice" />
-      <Empty title="Connect a Chess.com account first" action={<Link to="/accounts"><Button variant="primary">Connect account</Button></Link>}>
+      <Empty title="Connect an account first" action={<Link to="/accounts"><Button variant="primary">Connect account</Button></Link>}>
         Practice uses positions from your own reviewed games.
       </Empty></div>
   }

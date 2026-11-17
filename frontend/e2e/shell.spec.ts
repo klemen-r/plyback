@@ -12,7 +12,7 @@ test.describe(() => {
     await expect(page.getByRole('link', { name: 'Connect account' })).toHaveCount(0)
     await page.goto('/reports')
     await expect(page.getByRole('alert')).toHaveText('Database unavailable')
-    await expect(page.getByText('Connect a Chess.com account first')).toHaveCount(0)
+    await expect(page.getByText('Connect an account first')).toHaveCount(0)
   })
 
   test('The header says the server is not reachable instead of "Up to date"', async ({ page }) => {

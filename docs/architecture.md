@@ -21,11 +21,12 @@ development reference and benchmark baseline; the launchers and the container ne
 
 | Table | Purpose |
 |---|---|
-| `accounts`, `archives` | Connected users, each row with a fixed sync generation, and fetched monthly archives with ETags. |
+| `accounts`, `archives` | Connected users scoped by platform, each row with a fixed sync generation, and fetched Chess.com monthly archives with ETags. |
 | `games`, `account_games` | De-duplicated games and account/colour links. |
 | `game_analysis`, `moves` | Versioned summaries, evaluations, labels, explanations and lines. |
 | `jobs` | Persistent priority queue, attempts, a unique token for each claim and pending deeper-review requests. |
 | `sync_pending` | Games a sync stored for an account that still have to be queued for review. |
+| `lichess_pending_games` | Ongoing Lichess game IDs waiting to be checked again. |
 | `position_cache` | Durable engine results keyed by position history, engine and search options. |
 | `reports`, `report_games` | Saved snapshots and their fixed game membership, checked by game UUID. |
 | `practice_items` | Per-account practice schedule for positions that have been answered. |
@@ -50,6 +51,12 @@ running server is refused. Add a new file for every change; never edit a release
 | 008 | `accounts.sync_generation`, a random value that cannot change, so a late sync response cannot write to a deleted and re-created account. |
 | 009 | `practice_items`. |
 | 010 | `sync_pending`, and `jobs.followup_priority` / `followup_depth` for deeper reviews requested while a job runs. |
+| 011 | Platform-scoped accounts, allowing the same username on Chess.com and Lichess. The account rebuild preserves child rows, including pending review handoffs. |
+| 012 | `accounts.lichess_cursor_ms`, a creation-time cursor in milliseconds. |
+| 013 | Lichess scan checkpoints for bounded exports. |
+| 014 | `lichess_pending_games`, so ongoing games can be checked by ID without holding back history discovery. |
+
+The current schema version is 14.
 
 When stored analysis results change, bump `ANALYSIS_VERSION` in `rust/src/lib.rs` (currently 7).
 On start, games analysed with an older version are queued for refresh; their old analysis stays
@@ -60,9 +67,12 @@ freeze on their first update or on finalization if unfinished; ready ones keep t
 
 ## Analysis pipeline
 
-1. Sync validates public API metadata and archive URLs, sends conditional requests, makes up to
+1. Chess.com sync validates public API metadata and archive URLs, sends conditional requests, makes up to
    six attempts with exponential back-off, then stores de-duplicated games and names their openings
-   without running an engine. Each write checks the account's sync generation in the same transaction.
+   without running an engine. Lichess sync streams finished standard-chess games by creation time,
+   checkpoints bounded exports and checks ongoing game IDs separately. Requests are serialized, and
+   HTTP 429 pauses requests for at least 60 seconds. Each write checks the account's sync generation
+   in the same transaction.
    New games go to `sync_pending` in the archive's transaction and leave it in the transaction that
    queues them, so an interrupted sync resumes with an exact list.
 2. Workers claim queued games by priority. Each claim records a random token, the game UUID and PGN;
