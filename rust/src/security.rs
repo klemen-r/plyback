@@ -253,10 +253,22 @@ pub fn host_name(host: &str) -> Option<String> {
 pub struct RateLimiter {
     buckets: Mutex<HashMap<(String, String), (f64, Instant)>>,
 }
+/// The rate-limit identity of a client: its address, or for IPv6 its /64 network, since one
+/// host or home network commonly holds a whole /64 and could otherwise rotate addresses.
+fn client_bucket(client: &str) -> String {
+    match client.parse::<IpAddr>().map(|ip| ip.to_canonical()) {
+        Ok(IpAddr::V6(ip)) => {
+            let s = ip.segments();
+            format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
+        }
+        _ => client.to_owned(),
+    }
+}
+
 impl RateLimiter {
     pub fn allow(&self, client: &str, rule: &str, per_minute: u32) -> bool {
         let mut buckets = self.buckets.lock().unwrap_or_else(|p| p.into_inner());
-        let key = (client.to_owned(), rule.to_owned());
+        let key = (client_bucket(client), rule.to_owned());
         let instant = Instant::now();
         if buckets.len() >= 10_000 && !buckets.contains_key(&key) {
             buckets.retain(|_, (_, last)| last.elapsed().as_secs() < 120);
@@ -306,6 +318,20 @@ pub fn rate_rule(method: &str, path: &str) -> Option<(&'static str, u32)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ipv6_clients_share_a_bucket_per_64_network() {
+        let limiter = RateLimiter::default();
+        for host in 1..=3 {
+            assert!(limiter.allow(&format!("2001:db8:1:2::{host}"), "login", 3));
+        }
+        // A fourth address in the same /64 is the same client.
+        assert!(!limiter.allow("2001:db8:1:2:ffff::9", "login", 3));
+        // Another /64 and IPv4 clients have their own budgets.
+        assert!(limiter.allow("2001:db8:1:3::1", "login", 3));
+        assert!(limiter.allow("192.0.2.1", "login", 3));
+        assert!(limiter.allow("::ffff:192.0.2.2", "login", 3));
+    }
+
     use super::*;
     #[test]
     fn practice_answers_do_not_share_the_account_budget() {

@@ -115,6 +115,81 @@ fn body_json(body: &[u8]) -> Value {
 }
 
 #[test]
+fn a_request_cannot_carry_a_body_on_get() {
+    let test = TestApp::new();
+    let (status, _, _) = test.request("GET", "/api/health", json!({}), &[("content-length", "2")]);
+    assert_eq!(status, 400);
+    let (status, _, _) = test.request("GET", "/api/health", json!({}), &[("content-length", "0")]);
+    assert_eq!(status, 200);
+}
+
+/// Sends a request head that announces a body and then never sends it.
+fn stalled_upload(addr: SocketAddr) -> std::net::TcpStream {
+    use std::io::Write;
+    let mut stream = std::net::TcpStream::connect(addr).unwrap();
+    stream
+        .write_all(
+            b"POST /api/auth/login HTTP/1.1\r\nHost: localhost\r\nX-Requested-With: plyback\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n",
+        )
+        .unwrap();
+    stream
+}
+
+/// The response status, or None if nothing arrives within `wait`.
+fn status_within(stream: &mut std::net::TcpStream, wait: std::time::Duration) -> Option<u16> {
+    use std::io::Read;
+    stream.set_read_timeout(Some(wait)).unwrap();
+    let mut head = [0u8; 12];
+    stream.read_exact(&mut head).ok()?;
+    std::str::from_utf8(&head[9..12]).ok()?.parse().ok()
+}
+
+#[test]
+fn stalled_uploads_do_not_take_the_server_down() {
+    let test = TestApp::new();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = test.app.clone();
+    test.rt.spawn(async move {
+        let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+        axum::serve(
+            listener,
+            router(app).into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    // More stalled bodies than there are work permits (16).
+    let mut stalled: Vec<_> = (0..20).map(|_| stalled_upload(addr)).collect();
+    // Beyond the per-client upload cap (4), further uploads are refused at once; the rest wait.
+    let statuses = stalled
+        .iter_mut()
+        .map(|stream| status_within(stream, std::time::Duration::from_secs(2)))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        statuses.iter().filter(|s| **s == Some(429)).count(),
+        16,
+        "{statuses:?}"
+    );
+    assert_eq!(
+        statuses.iter().filter(|s| s.is_none()).count(),
+        4,
+        "{statuses:?}"
+    );
+    // Everything else keeps working while four uploads are still waiting for their bodies.
+    use std::io::Write;
+    let mut health = std::net::TcpStream::connect(addr).unwrap();
+    health
+        .write_all(b"GET /api/health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    assert_eq!(
+        status_within(&mut health, std::time::Duration::from_secs(10)),
+        Some(200)
+    );
+}
+
+#[test]
 fn password_cannot_be_removed_over_the_api_on_a_network_bind() {
     let test = TestApp::with_host("0.0.0.0");
     security::set_password(&test.app.db, Some("test-password")).unwrap();
@@ -978,6 +1053,61 @@ fn login_rate_limit_is_per_client_and_hides_internal_data() {
     assert_eq!(status, 429);
     assert_eq!(headers["retry-after"], "60");
     assert!(!String::from_utf8_lossy(&body).contains("test-password"));
+}
+
+#[test]
+fn https_from_a_configured_proxy_is_a_same_origin_request() {
+    // Docker behind a reverse proxy: the proxy connects from its own container address.
+    let proxy: SocketAddr = "172.18.0.2:40000".parse().unwrap();
+    let test = TestApp::configured(|c| {
+        c.host = "0.0.0.0".into();
+        c.allowed_hosts.push("chess.test".into());
+        c.trusted_proxies.push(proxy.ip());
+    });
+    security::set_password(&test.app.db, Some("test-password")).unwrap();
+    let headers = [
+        ("host", "chess.test"),
+        ("origin", "https://chess.test"),
+        ("x-forwarded-proto", "https"),
+    ];
+    let (status, response, _) = test.request_from(
+        proxy,
+        "POST",
+        "/api/auth/login",
+        json!({"password":"test-password"}),
+        &headers,
+    );
+    assert_eq!(status, 200);
+    let cookie = response["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let with_cookie = [
+        headers[0],
+        headers[1],
+        headers[2],
+        ("cookie", cookie.as_str()),
+    ];
+    let (status, _, _) = test.request_from(
+        proxy,
+        "PUT",
+        "/api/settings",
+        json!({"analysis_depth":12}),
+        &with_cookie,
+    );
+    assert_eq!(status, 200);
+    // Any other peer still can't claim https for itself.
+    let (status, _, _) = test.request_from(
+        "192.0.2.10:40000".parse().unwrap(),
+        "PUT",
+        "/api/settings",
+        json!({"analysis_depth":12}),
+        &with_cookie,
+    );
+    assert_eq!(status, 403);
 }
 
 #[test]

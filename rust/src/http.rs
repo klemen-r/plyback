@@ -12,13 +12,14 @@ use crate::{
 };
 use axum::{
     Router,
-    body::{Body, to_bytes},
+    body::{Body, HttpBody, to_bytes},
     extract::{ConnectInfo, State},
     http::{HeaderMap, HeaderValue, Request, StatusCode},
     response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
 use std::{
+    collections::HashMap,
     net::{IpAddr, SocketAddr},
     path::{Component, Path},
     sync::{
@@ -38,9 +39,50 @@ pub struct App {
     interactive: Mutex<Option<Engine>>,
     limiter: security::RateLimiter,
     permits: Arc<Semaphore>,
+    /// Request bodies being received, per client. Uploads hold no work permit, so a slow or
+    /// stalled body cannot starve other requests; these caps bound what they can hold instead.
+    uploads: Mutex<HashMap<String, usize>>,
     requests: Mutex<Vec<Weak<AtomicBool>>>,
     shutting_down: AtomicBool,
     local_hosts: Vec<String>,
+}
+
+/// Concurrent request bodies one client may be sending, and all clients together.
+const UPLOADS_PER_CLIENT: usize = 4;
+const UPLOADS_TOTAL: usize = 32;
+
+/// One upload in progress, released when the body has been read or the request is dropped.
+struct Upload<'a> {
+    uploads: &'a Mutex<HashMap<String, usize>>,
+    client: String,
+}
+
+impl<'a> Upload<'a> {
+    fn start(uploads: &'a Mutex<HashMap<String, usize>>, client: &str) -> Option<Self> {
+        let mut active = uploads.lock().unwrap_or_else(|p| p.into_inner());
+        if active.values().sum::<usize>() >= UPLOADS_TOTAL
+            || active.get(client).copied().unwrap_or(0) >= UPLOADS_PER_CLIENT
+        {
+            return None;
+        }
+        *active.entry(client.to_owned()).or_insert(0) += 1;
+        Some(Self {
+            uploads,
+            client: client.to_owned(),
+        })
+    }
+}
+
+impl Drop for Upload<'_> {
+    fn drop(&mut self) {
+        let mut active = self.uploads.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(count) = active.get_mut(&self.client) {
+            *count -= 1;
+            if *count == 0 {
+                active.remove(&self.client);
+            }
+        }
+    }
 }
 
 impl App {
@@ -58,6 +100,7 @@ impl App {
             interactive: Mutex::new(None),
             limiter: security::RateLimiter::default(),
             permits: Arc::new(Semaphore::new(16)),
+            uploads: Mutex::new(HashMap::new()),
             requests: Mutex::new(Vec::new()),
             shutting_down: AtomicBool::new(false),
             local_hosts,
@@ -573,6 +616,23 @@ async fn handle_inner(app: Arc<App>, request: Request<Body>) -> Response {
     if app.shutting_down.load(Ordering::Acquire) {
         return failure(api_error(503, "Server is shutting down."));
     }
+    let headers = request.headers();
+    let declared_length = headers
+        .get("content-length")
+        .map(|length| length.to_str().ok().and_then(|v| v.parse::<u64>().ok()));
+    if declared_length.is_some_and(|n| n.is_none_or(|n| n > MAX_BODY_BYTES as u64)) {
+        return failure(api_error(413, "Request is too large."));
+    }
+    let declares_body = headers.contains_key("transfer-encoding")
+        || declared_length.is_some_and(|n| n.is_some_and(|n| n > 0));
+    if declares_body
+        && matches!(
+            request.method().as_str(),
+            "GET" | "HEAD" | "OPTIONS" | "DELETE"
+        )
+    {
+        return failure(api_error(400, "This request takes no body."));
+    }
     let Ok(permit) = app.permits.clone().try_acquire_owned() else {
         return failure(api_error(503, "Server is busy. Try again shortly."));
     };
@@ -580,10 +640,17 @@ async fn handle_inner(app: Arc<App>, request: Request<Body>) -> Response {
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
         .map(|c| c.0);
-    let headers = request.headers();
-    let scheme = if peer.is_some_and(|p| p.ip().to_canonical().is_loopback())
-        && header(headers, "x-forwarded-proto") == "https"
-    {
+    // Only a local or configured proxy may say the browser connected over HTTPS.
+    let from_proxy = peer.is_some_and(|p| {
+        let ip = p.ip().to_canonical();
+        ip.is_loopback()
+            || app
+                .config
+                .trusted_proxies
+                .iter()
+                .any(|proxy| proxy.to_canonical() == ip)
+    });
+    let scheme = if from_proxy && header(headers, "x-forwarded-proto") == "https" {
         "https"
     } else {
         "http"
@@ -608,15 +675,6 @@ async fn handle_inner(app: Arc<App>, request: Request<Body>) -> Response {
             .map(|p| client_ip(p.ip(), headers, &app.config.trusted_proxies).to_string())
             .unwrap_or_else(|| "local-test".into()),
     };
-    if let Some(length) = headers.get("content-length")
-        && length
-            .to_str()
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .is_none_or(|n| n > MAX_BODY_BYTES as u64)
-    {
-        return failure(api_error(413, "Request is too large."));
-    }
     let (state, metadata) = (app.clone(), meta.clone());
     let permit =
         match tokio::task::spawn_blocking(move || (state.preflight(&metadata), permit)).await {
@@ -668,15 +726,35 @@ async fn handle_inner(app: Arc<App>, request: Request<Body>) -> Response {
             Err(err) => failure(err.into()),
         };
     }
-    let data = match tokio::time::timeout(
-        Duration::from_secs(15),
-        to_bytes(request.into_body(), MAX_BODY_BYTES),
-    )
-    .await
-    {
-        Ok(Ok(data)) => data,
-        Ok(Err(_)) => return failure(api_error(413, "Request is too large.")),
-        Err(_) => return failure(api_error(408, "Request body timed out.")),
+    // Receive a body without holding a work permit: a client that announces a body and then
+    // sends it slowly (or never) must not be able to occupy every permit.
+    // Ask the body itself: HTTP/2 can send one without a length header.
+    let (data, permit) = if !request.body().is_end_stream() {
+        drop(permit);
+        let data = {
+            let Some(_upload) = Upload::start(&app.uploads, &meta.client) else {
+                return failure(api_error(
+                    429,
+                    "Too many uploads in progress. Try again shortly.",
+                ));
+            };
+            match tokio::time::timeout(
+                Duration::from_secs(15),
+                to_bytes(request.into_body(), MAX_BODY_BYTES),
+            )
+            .await
+            {
+                Ok(Ok(data)) => data,
+                Ok(Err(_)) => return failure(api_error(413, "Request is too large.")),
+                Err(_) => return failure(api_error(408, "Request body timed out.")),
+            }
+        };
+        let Ok(permit) = app.permits.clone().try_acquire_owned() else {
+            return failure(api_error(503, "Server is busy. Try again shortly."));
+        };
+        (data, permit)
+    } else {
+        (Default::default(), permit)
     };
     let body = if data.is_empty() {
         json!({})
