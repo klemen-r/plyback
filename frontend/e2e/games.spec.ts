@@ -17,8 +17,10 @@ test.describe(() => {
     await page.getByRole('button', { name: 'Switch account' }).click()
     await page.getByRole('menuitem', { name: 'Small' }).click()
     await expect(page).not.toHaveURL(/page=/)
-    await expect.poll(() => requests.at(-1)?.searchParams.get('account_id')).toBe('2')
-    expect(requests.at(-1)?.searchParams.get('page')).toBe('1')
+    await expect.poll(() => {
+      const last = requests.at(-1)?.searchParams
+      return [last?.get('account_id'), last?.get('page')]
+    }).toEqual(['2', '1'])
     // A link to a page that no longer exists lands on the last one.
     await page.getByRole('button', { name: 'Switch account' }).click()
     await page.getByRole('menuitem', { name: 'Large' }).click()
