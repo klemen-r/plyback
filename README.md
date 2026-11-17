@@ -1,250 +1,88 @@
+<img src="docs/brand/mark.svg" width="44" alt="">
+
 # Plyback
 
-Self-hosted chess game review and account insights, powered by Stockfish.
-Connect public Chess.com or Lichess usernames or import PGN files, review games on an interactive board,
-compare selections, and save account analysis snapshots. Public game data and analyses stay in SQLite.
-No platform password or paid service is needed. Choose the platform on Accounts; the same username
-can be connected once on each platform.
+Self-hosted game review for Chess.com and Lichess, powered by Stockfish.
 
-The interface follows the Vercel-style direction (study A) from the
-[design explorations](docs/design-explorations/README.md).
+Plyback imports the games you play, reviews every one in the background and turns the reviews into
+work you can act on: the mistakes you keep repeating, the openings where you go wrong, and positions
+from your own games to solve again. It runs on your machine as one native program with a SQLite file.
+No platform password, account or subscription is needed.
 
-## Run locally
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/review-dark.png">
+  <img src="docs/screenshots/review-light.png" alt="Game review: board, evaluation graph, engine lines and move classifications">
+</picture>
 
-Builds with **Rust 1.97.1+** and **Node.js 22.12+**. The production server is a native Rust
-executable; running the built app requires neither Python nor Node.
+## What it does
 
-Windows:
+- **Review** every game: move classifications, evaluation graph, engine lines, key moments, and free
+  exploration on the board.
+- **Insights** across an account: openings, game phases, recurring mistakes, time use, converting
+  advantages, and playing sessions, each with a confidence label and links to the positions behind it.
+- **Practice** positions taken from your own mistakes, on a spaced-repetition schedule, filtered by
+  phase or tactical theme.
+- **Openings** as a move tree of your games: results per line, where you leave theory, and the moves
+  that keep losing.
+- **Sync** public games from Chess.com and Lichess automatically, or import PGN files.
+- **Compare** periods or accounts side by side, and save reports as fixed snapshots.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File setup.ps1
-.\start.ps1
-```
+| Insights | Practice |
+|---|---|
+| ![Insights](docs/screenshots/insights-light.png) | ![Practice](docs/screenshots/practice-light.png) |
+| **Openings** | **Games** |
+| ![Openings](docs/screenshots/openings-light.png) | ![Games](docs/screenshots/games-light.png) |
 
-macOS / Linux:
+The screenshots use sample data: 360 engine games for a fictional player rated around 2000, reviewed
+by Plyback itself. In daily use on a desktop PC, Plyback keeps an account of over 1,300 games
+(78,000 moves) reviewed, and a new game is ready about 10 seconds after it is imported.
+
+## Getting started
+
+You need [Rust](https://rustup.rs) 1.97.1 or newer and [Node.js](https://nodejs.org) 22.12 or newer to
+build. The built app needs neither.
 
 ```sh
+# macOS / Linux
 bash setup.sh
 bash start.sh
 ```
 
-Open [localhost:8000](http://localhost:8000). The setup installs locked dependencies, builds the
-interface and downloads Stockfish from its official release (pinned in `scripts/install_stockfish.mjs`,
-checked against a recorded SHA-256). To use an installed engine instead,
-set `PLYBACK_STOCKFISH` to its executable path. Settings control depth, workers, threads, hash and sync.
-Use `start.ps1 -Port 8080` or `bash start.sh --port 8080` to choose another port.
-
-### Command shortcuts (macOS / Linux)
-
-If [just](https://just.systems/) is installed (`brew install just` on macOS), run these
-from the repository directory. `just` by itself lists all commands.
-
-| Command | What it does |
-|---|---|
-| `just setup` | Install locked dependencies, Stockfish and build the interface |
-| `just setup-dev` | Set up the app plus development tools and Chromium |
-| `just run` | Start the app at localhost:8000; Ctrl+C stops it |
-| `just run --port 8080 --no-browser` | Choose a port and skip opening a browser |
-| `just status` | Check whether the local server is responding |
-| `just logs` | Follow the application log |
-| `just dev` | Start the interface with live updates at localhost:5173; run `just run` in another terminal |
-| `just build` | Build the native server and interface |
-| `just lint` / `just test` | Check code style / run backend and interface unit tests |
-| `just e2e` | Run browser tests against separate test data and local fixtures |
-| `just check` | Run lint, unit tests, build and browser tests in order |
-| `just password` | Set or change the access password interactively |
-| `just backup "/path/to/new-backup.db"` | Save a consistent database backup; never overwrite an existing file |
-| `just stockfish` | Install or verify the engine |
-| `just audit` | Check the locked dependencies for known vulnerabilities |
-| `just update-deps` | Refresh compatible dependencies, install them and run `just check` |
-
-Run `just setup-dev` before using all checks. Python 3.11+ is needed only for the preserved
-baseline's development tests and benchmark oracle. `just update-deps` also needs
-[uv](https://docs.astral.sh/uv/) for those development locks. Review dependency and license
-changes before committing. Windows users can use the PowerShell scripts and the commands below.
-
-## Network and Docker deployments
-
-A server belongs to one person or household. All signed-in users share the same accounts, settings,
-games and reports. This is not a service with isolated user tenants.
-
-Set a password before enabling network access:
-
 ```powershell
-# Windows, from the repository root
-.\rust\target\release\plyback.exe set-password
-.\start.ps1 -Lan
+# Windows
+powershell -ExecutionPolicy Bypass -File setup.ps1
+.\start.ps1
 ```
 
-On macOS/Linux use `rust/target/release/plyback set-password` from the repository root, then
-`bash start.sh --lan` from the root. Use an HTTPS reverse proxy on untrusted networks and set
-`PLYBACK_SECURE_COOKIES=1`. See [SECURITY.md](SECURITY.md).
+Open [localhost:8000](http://localhost:8000) and add a Chess.com or Lichess username. Setup builds the
+interface and downloads Stockfish from its official release, checked against a pinned SHA-256.
 
-For Docker, export a strong `PLYBACK_PASSWORD` for the first start and run:
+With Docker, set a password for the first start:
 
 ```sh
-docker compose up -d --build
+PLYBACK_PASSWORD='choose-a-strong-one' docker compose up -d --build
 ```
 
-The container listens on all interfaces, so it refuses to start until a password is saved. The first
-start saves `PLYBACK_PASSWORD`; later starts and other `docker compose` commands do not need it.
-Changing the environment password after initial setup does not replace a saved password; use Settings
-or `docker compose exec plyback plyback set-password`. The non-root container has a read-only root
-filesystem, publishes port 8000 and is built for the host architecture.
+## How it works
 
-Data lives in the named volume `plyback-data`, which survives `docker compose down` and rebuilds.
-Without Compose, give `docker run` a named volume too (`-v plyback-data:/data`): the image only
-declares `VOLUME /data`, so a plain `docker run` stores everything in an anonymous volume that is
-easy to lose when the container is removed.
+A Rust server (Axum, shakmaty) syncs games, runs a queue of Stockfish workers and stores everything in
+SQLite. The interface is React and TypeScript. Positions already searched are cached, so re-reviews are
+fast, and an interrupted review continues after a restart.
 
-### On your phone
+Classifications use documented heuristics based on expected-points loss, not Chess.com's proprietary
+algorithm, so labels and accuracy can differ from Chess.com. [METHODOLOGY.md](METHODOLOGY.md)
+describes every rule and threshold.
 
-Once the server is reachable from your phone (for example over Tailscale with `tailscale serve`, or on your LAN),
-open it in the browser and add it to the home screen: **Share → Add to Home Screen** in Safari, or **Install app**
-in Chrome's menu. Plyback then opens full screen with its own icon. Chrome only offers installing over HTTPS.
-It is still the same server, so the phone needs a connection to it.
+## Documentation
 
-## What it does
-
-- New Chess.com games are imported automatically. Unchanged monthly archives are not downloaded again,
-  and a sync that hits an error or a rate limit waits and tries again on its own.
-- New Lichess games are imported automatically too. Requests run one at a time, and a rate limit
-  pauses them for at least 60 seconds before trying again.
-- Games are reviewed in the background: games you ask for first, then new games, then older history.
-  Several games can be reviewed at once. A review interrupted by a restart continues afterwards, and
-  re-reviewing a game reuses positions that were already searched.
-- Move evaluation, classifications, tactical explanations, opening transpositions and key moments.
-- Keyboard board navigation, evaluation graphs, engine lines and interactive exploration.
-- Filters by period, time control, colour, result, rated status, opening and move classification.
-- Account insights for openings, phases, recurring mistakes, time management, conversion and sessions,
-  with confidence labels and links to evidence positions and training resources.
-- Practice: positions from your own mistakes with one clear answer, on a spaced-repetition schedule.
-- Openings: your games as a move tree, with results, where you leave book and the moves that keep going wrong.
-- Side-by-side comparisons and immutable saved report snapshots.
-- A password protects network access; see [SECURITY.md](SECURITY.md) for what else is checked.
-
-Accuracy and classifications use documented heuristics, not Chess.com's proprietary algorithms.
-They can differ from Chess.com and depend on engine depth/budget. Insights describe the selected
-sample; they are not proof of causation or coaching outcomes. See [METHODOLOGY.md](METHODOLOGY.md).
-
-Lichess imports standard chess (including legal from-position games), with players, ratings,
-results, opening metadata and move clocks. UltraBullet maps to bullet, classical to rapid,
-and correspondence to daily. Variants are skipped. Lichess analysis and accuracy are discarded;
-review accuracy and classifications come from Plyback's engine pipeline.
-
-Incremental Lichess sync discovers games by creation time and imports only finished games.
-Ongoing game IDs are persisted separately and rechecked in batches of up to 300, at least 60 seconds
-apart, so correspondence games do not hold the history cursor back. The inclusive creation cursor
-deduplicates overlap by game ID. Exports yield after 15 seconds; a deadline or interrupted stream
-keeps complete records and resumes from the checkpoint on the next tick. During a 429 cooldown,
-sync skips the account without updating its last-sync time. Account connection waits at most five
-seconds for the Lichess request slot.
-
-## Data, upgrades and backups
-
-Everything is stored in `plyback.db` (SQLite with WAL) in the data directory: `data/` in a source
-checkout, `/data` in the container, or the `PLYBACK_DATA` directory when set. If only an older
-`chess-insight.db` exists there, it is copied to the new name on first start and the original is kept.
-
-Upgrades update the database automatically on start, each step in one transaction. When the
-analysis method changes, games are re-reviewed in the background and their previous review stays
-visible until then. Back up before upgrading; an older server cannot open a newer database, so keep
-that backup if you may want to go back.
-
-Save a consistent backup while the service is running (destination must not already exist):
-
-```powershell
-.\rust\target\release\plyback.exe backup D:\Backups\plyback-2026-11-02.db
-```
-
-On macOS/Linux use `rust/target/release/plyback backup /path/to/backup.db` from the repository root.
-Backups include account history, analyses, settings, password hashes and sessions; protect them as
-private data. The command verifies SQLite integrity and publishes the snapshot atomically.
-To restore, stop Plyback, retain the current data directory as a rollback copy, and put the backup
-at `data/plyback.db` in a fresh data directory. Copy or reinstall `data/engine` as needed.
-Do not copy only the main database file from a running WAL database.
-
-## Configuration
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `PLYBACK_HOST` | `127.0.0.1` | Bind address |
-| `PLYBACK_PORT` | `8000` | HTTP port |
-| `PLYBACK_DATA` | repository `data/` | Database, logs and installed engine |
-| `PLYBACK_STOCKFISH` | auto-detect | Explicit Stockfish executable |
-| `PLYBACK_PASSWORD` | unset | Initial access password |
-| `PLYBACK_SECURE_COOKIES` | unset | Require HTTPS for session cookies |
-| `PLYBACK_ALLOWED_HOSTS` | unset | Comma-separated extra Host names, with or without a password |
-| `PLYBACK_TRUSTED_PROXIES` | unset | Comma-separated exact proxy IPs allowed to supply client IPs for rate limits |
-| `PLYBACK_LOG_LEVEL` | `INFO` | Logging level |
-| `PLYBACK_API_DOCS` | unset | `1` enables `/api/docs`, linking to the JSON API schema |
-| `PLYBACK_CHESSCOM_API` | official API | Override for fixtures/development |
-| `PLYBACK_FRONTEND` | `frontend/dist` | Built interface location |
-
-Legacy `CHESS_INSIGHT_DATA`, `CHESS_INSIGHT_FRONTEND`, `CHESSCOM_API_BASE`, `STOCKFISH_PATH`,
-`HOST`, `PORT` and `LOG_LEVEL` remain supported. Remote unauthenticated access requires the explicit
-`PLYBACK_ALLOW_UNAUTHENTICATED_REMOTE=1` override; do not use it on an untrusted network.
-
-Host checks apply even with a password. Loopback names and the configured bind address are
-accepted. With a password and a wildcard bind (`0.0.0.0` or `::`), the machine's interface IPs
-and OS hostname are also accepted; these are discovered at startup, so restart after network
-changes. Add DNS aliases, reverse-proxy names or tailnet names explicitly, for example
-`PLYBACK_ALLOWED_HOSTS=chess.example.org,plyback.tailnet.example` (names only, no scheme
-or port). Existing password-protected deployments using other names must now list them.
-The legacy `*` allowlist entry accepts every name and disables this DNS-rebinding protection.
-In Docker, discovery sees the container's addresses and hostname; list the host machine's
-published IP/name explicitly when using it to reach the mapped port.
-
-Behind a proxy, rate limits use the connecting IP unless that exact IP is listed in
-`PLYBACK_TRUSTED_PROXIES` (for example `127.0.0.1,::1` for a local proxy). Configure the proxy
-to overwrite or safely append `X-Forwarded-For` or `Forwarded`; do not trust client-supplied
-headers unchanged. Plyback walks the chain from right to left through configured proxy IPs
-and uses the first untrusted IP. `X-Forwarded-For` takes precedence when both headers exist;
-missing, malformed or unsupported chains fall back to the connecting IP. See
-[SECURITY.md](SECURITY.md#running-behind-a-reverse-proxy) for deployment details.
-
-## Development and verification
-
-```powershell
-node scripts/install_stockfish.mjs
-node --test scripts/install_stockfish.test.mjs
-cargo fmt --manifest-path rust/Cargo.toml --check
-cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets -- -D warnings
-cargo test --release --locked --manifest-path rust/Cargo.toml
-cargo build --release --locked --manifest-path rust/Cargo.toml
-python -m venv .venv
-.venv\Scripts\python -m pip install --require-hashes -r backend/requirements-dev.txt
-cd backend
-..\.venv\Scripts\python -m ruff check --config pyproject.toml plyback tests bench ../scripts
-..\.venv\Scripts\python -m pytest -m "not live"
-cd ../frontend
-npm ci
-npm run lint
-npm test
-npm run build
-npx playwright install chromium
-npm run e2e
-```
-
-Use `.venv/bin/python` and `../.venv/bin/python` on macOS/Linux. Real-engine tests require Stockfish;
-CI installs it. `pytest -m live` opts into public Chess.com network checks. Tests use isolated data,
-not the user's database. CI verifies Rust on Linux/Windows, the preserved Python oracle, browser
-workflows against Rust, dependency audits and the container. The Python tree is retained as a
-compatibility reference; setup scripts and Docker never run it.
-[Architecture](docs/architecture.md#benchmarks) describes how to run the benchmarks;
-[earlier measurements](docs/performance.md) remain available.
-
-Rust uses `rust/Cargo.lock`; regenerate its bundled licenses with `node scripts/rust_notices.mjs`
-after updating it. Python development dependencies are resolved across platforms with hashes in `backend/requirements*.txt`;
-source constraints live in `backend/pyproject.toml`. Regenerate with `uv pip compile --python-version 3.11 --universal
---generate-hashes`, adding `--extra dev --constraint backend/requirements.txt` for the development
-lock. JavaScript uses `npm ci` and its lockfile. `just update-deps` refreshes these dependency sets
-and runs the verification commands above.
-
-See [architecture](docs/architecture.md), [contributing](CONTRIBUTING.md) and [security](SECURITY.md).
+- [Self-hosting](docs/self-hosting.md): network access, Docker, backups, upgrades, configuration
+- [Methodology](METHODOLOGY.md): how moves are classified and insights are computed
+- [Architecture](docs/architecture.md): components, data model, analysis pipeline
+- [Security](SECURITY.md): what is protected and how to run behind a proxy
+- [Contributing](CONTRIBUTING.md): development setup and checks
 
 ## License
 
-GPL-3.0-or-later. Keep the [license](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md)
-when redistributing. Stockfish is downloaded separately from its official release; opening data
-comes from the CC0 Lichess chess-openings dataset.
+[GPL-3.0-or-later](LICENSE). Stockfish is downloaded separately from its official release. Opening
+names come from the CC0 [Lichess chess-openings](https://github.com/lichess-org/chess-openings) dataset.
+See [third-party notices](THIRD_PARTY_NOTICES.md).
