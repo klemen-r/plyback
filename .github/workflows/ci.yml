@@ -46,7 +46,7 @@ jobs:
       - run: cargo fmt --manifest-path rust/Cargo.toml --check
       - run: cargo clippy --locked --manifest-path rust/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --release --locked --manifest-path rust/Cargo.toml --all-targets
-      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+      - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
         if: matrix.os == 'ubuntu-latest'
         with:
           tool: cargo-audit@0.22.2
