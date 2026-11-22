@@ -1,0 +1,37 @@
+name: Bug report
+description: Something does not work as described.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what happened instead. Screenshots help.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Shown by `plyback --version`, or the release or image tag.
+      placeholder: 3.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installed from
+      options: [Release archive, Docker image, Source checkout]
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System and browser
+      placeholder: Windows 11, Firefox 150
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log lines
+      description: From `data/logs/` (or `docker logs plyback`). Remove anything private.
+      render: text
