@@ -29,11 +29,40 @@ No platform password, account or subscription is needed.
 - **Sync** public games from Chess.com and Lichess automatically, or import PGN files.
 - **Compare** periods or accounts side by side, and save reports as fixed snapshots.
 
-| Insights | Practice |
-|---|---|
-| ![Insights](docs/screenshots/insights-light.png) | ![Practice](docs/screenshots/practice-light.png) |
-| **Openings** | **Games** |
-| ![Openings](docs/screenshots/openings-light.png) | ![Games](docs/screenshots/games-light.png) |
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/overview-dark.png">
+        <img src="docs/screenshots/overview-light.png" alt="Overview: period figures, recent games, the latest game and what to improve">
+      </picture>
+      Overview
+    </td>
+    <td width="50%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/insights-dark.png">
+        <img src="docs/screenshots/insights-light.png" alt="Insights: account figures and areas ranked by the winning chances they cost">
+      </picture>
+      Insights
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/practice-dark.png">
+        <img src="docs/screenshots/practice-light.png" alt="Practice: a position from one of your games with the spaced-repetition counts">
+      </picture>
+      Practice
+    </td>
+    <td width="50%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/openings-dark.png">
+        <img src="docs/screenshots/openings-light.png" alt="Openings: the move tree of your games with results per reply">
+      </picture>
+      Openings
+    </td>
+  </tr>
+</table>
 
 The screenshots use sample data: 360 engine games for a fictional player rated around 2000, imported
 and reviewed by Plyback itself. In daily use on an ordinary desktop PC it keeps an account of over
