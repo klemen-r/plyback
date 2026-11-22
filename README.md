@@ -83,16 +83,16 @@ and reviewed by Plyback itself. In daily use on an ordinary desktop PC it keeps 
 
 ## Install
 
-**Docker** (amd64 and arm64):
+**Download** the archive for Windows, macOS or Linux from the
+[latest release](https://github.com/klemen-r/plyback/releases/latest), unpack it and start `plyback`
+(`plyback.exe` on Windows). Stockfish is included.
+
+**Docker**, for home servers (amd64 and arm64):
 
 ```sh
 docker run -d --name plyback --restart unless-stopped -p 8000:8000 -v plyback-data:/data \
   -e PLYBACK_PASSWORD='choose-a-strong-one' ghcr.io/klemen-r/plyback:3
 ```
-
-**Download** the archive for Windows, macOS or Linux from the
-[latest release](https://github.com/klemen-r/plyback/releases/latest), unpack it and start `plyback`
-(`plyback.exe` on Windows). Stockfish is included.
 
 Then open [localhost:8000](http://localhost:8000) and add a Chess.com or Lichess username. Plyback
 imports the account's history, reviews it in the background and checks for new games every few minutes.
