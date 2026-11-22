@@ -43,7 +43,7 @@ credentials.
 - **Engine** — UCI output, deadlines and retries are bounded. Cancelled requests stop searching;
   unresponsive engines are killed and reaped. Worker count, threads and hash have aggregate limits.
 - **Dependencies** — checked in CI with `cargo audit` and `npm audit`; Dependabot covers Rust,
-  JavaScript and GitHub Actions. The production runtime contains no Python or Node.
+  JavaScript and GitHub Actions. The runtime is a single native binary with no interpreter.
 
 ## Running behind a reverse proxy
 

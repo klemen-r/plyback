@@ -1,4 +1,4 @@
-// Build/setup helper. The production server does not require Node or Python.
+// Installs the pinned official Stockfish release for setup, CI and release archives.
 // Only official release assets are fetched; archive paths are never extracted to
 // disk. Selected regular file contents are streamed into fixed, bounded targets.
 import { createHash, randomUUID } from 'node:crypto'

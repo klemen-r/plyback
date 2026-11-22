@@ -1,4 +1,4 @@
-# Build the native server and interface. Python is not required.
+# Build the native server and interface, and install Stockfish.
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 function Invoke-Checked {

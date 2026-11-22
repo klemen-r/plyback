@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the native server and web interface; Python is not required.
+# Build the native server and interface, and install Stockfish.
 set -euo pipefail
 cd "$(dirname "$0")"
 command -v cargo >/dev/null || { echo "Install Rust from https://rustup.rs and run setup again."; exit 1; }

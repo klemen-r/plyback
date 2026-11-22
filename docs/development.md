@@ -1,6 +1,5 @@
 # Development settings
 
-The shipped server has no fixture-loading endpoints or hidden development pages.
 The API schema is available at `/api/openapi.json` under the same authentication
 rules as other API endpoints. `PLYBACK_API_DOCS=1` additionally makes `/api/docs`
 redirect to that schema.
@@ -22,3 +21,5 @@ Provider API overrides are intended for development and isolated tests:
 `PLYBACK_LOG_LEVEL` controls diagnostic logging. Review timing logs contain
 elapsed times, counts and internal IDs, not HTTP request bodies or credentials.
 Network binds always require a password, including development runs.
+
+To measure review throughput or page performance, see [performance and measurement](app-performance.md).

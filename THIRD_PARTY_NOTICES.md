@@ -21,10 +21,11 @@ and license terms. Dependency source links and complete web dependency notices a
 
 [Complete installed production JavaScript notices](docs/licenses/javascript.txt) are also included
 in the web build as `/THIRD_PARTY_LICENSES.txt`. [Rust dependency notices](docs/licenses/rust.txt)
-are included with the container; regenerate with `node scripts/rust_notices.mjs` after lockfile changes.
-The GPL text is included in [LICENSE](LICENSE).
+are included with the container and the release archives; regenerate them with
+`node scripts/rust_notices.mjs` after lockfile changes. The GPL text is included in [LICENSE](LICENSE).
 
 The Stockfish installer retains COPYING, AUTHORS and README with release tag, source URL and SHA-256
 provenance in each installed version directory. When distributing a binary or container, preserve those
 notices and satisfy Stockfish's corresponding-source requirements for the exact release. The image
-includes its source/provenance record; release archives carry the same files in `licenses/stockfish/`. Do not substitute a modified engine without updating its source offer.
+includes its source/provenance record; release archives carry the same files in `licenses/stockfish/`.
+Do not substitute a modified engine without updating its source offer.

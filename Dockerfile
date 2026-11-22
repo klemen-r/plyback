@@ -1,4 +1,4 @@
-# Plyback: native Rust server + Stockfish + static interface. No Python runtime.
+# Plyback: native Rust server + Stockfish + static interface.
 FROM node:22-slim AS web
 WORKDIR /web
 COPY frontend/package.json frontend/package-lock.json ./
