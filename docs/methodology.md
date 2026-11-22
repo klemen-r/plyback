@@ -29,7 +29,7 @@ None of this replicates Chess.com's proprietary Game Review; labels and accuracy
   takes longer than one search per position. In one measured run of two fixture games (88 and 45 plies), a review
   made 222 engine calls: 135 positions, 71 paired searches and 16 threat checks. A repeat review of the same games with
   a warm position cache started no engine process. The benchmarks are described in
-  [architecture](docs/architecture.md#measurement-tools).
+  [architecture](architecture.md#measurement-tools).
 
 ## 2. Winning chances
 

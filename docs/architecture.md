@@ -80,7 +80,7 @@ freeze on their first update or on finalization if unfinished; ready ones keep t
    progress, retries and completion only apply while that claim still matches.
 3. Each worker reuses one Stockfish process. Best and played moves are compared from the mover's
    side at the same root and completed depth. If the played move is not among the MultiPV lines,
-   one extra paired search evaluates both (see [methodology](../METHODOLOGY.md#1-engine-evaluation)).
+   one extra paired search evaluates both (see [methodology](methodology.md#1-engine-evaluation)).
 4. Insights read typed SQL rows. A per-database response cache is keyed on `data_revision`, serves
    recent stale results while it refreshes, and computes outside the database lock.
 5. Report publication checks the data revision in the same transaction as the saved result; a ready

@@ -1,22 +1,35 @@
-<img src="docs/brand/mark.svg" width="44" alt="">
+<p align="center">
+  <img src="docs/brand/mark.svg" width="56" alt="">
+</p>
 
-# Plyback
+<h1 align="center">Plyback</h1>
 
-[![CI](https://github.com/klemen-r/plyback/actions/workflows/ci.yml/badge.svg)](https://github.com/klemen-r/plyback/actions/workflows/ci.yml)
+<p align="center">Self-hosted game review for Chess.com and Lichess, powered by Stockfish.</p>
 
-Self-hosted game review for Chess.com and Lichess, powered by Stockfish.
+<p align="center">
+  <a href="https://github.com/klemen-r/plyback/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/klemen-r/plyback?label=release"></a>
+  <a href="https://github.com/klemen-r/plyback/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/klemen-r/plyback/ci.yml?branch=main&label=CI"></a>
+  <a href="LICENSE"><img alt="License: GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue"></a>
+</p>
 
-Plyback imports the games you play, reviews every one in the background and turns the reviews into
-work you can act on: the mistakes you keep repeating, the openings where you go wrong, and positions
-from your own games to solve again. It runs on your machine as one native program with a SQLite file.
-No platform password, account or subscription is needed.
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="docs/self-hosting.md">Self-hosting</a> ·
+  <a href="docs/methodology.md">Methodology</a> ·
+  <a href="https://github.com/klemen-r/plyback/releases">Releases</a>
+</p>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/review-dark.png">
   <img src="docs/screenshots/review-light.png" alt="Game review: board, evaluation graph, engine lines and move classifications">
 </picture>
 
-## What it does
+Plyback imports the games you play, reviews every one with Stockfish in the background and turns the
+reviews into things to work on: the mistakes you keep repeating, the openings where you go wrong, and
+positions from your own games to solve again. It runs on your own machine as a single program with a
+SQLite database. It needs no Chess.com or Lichess password and no subscription.
+
+## Features
 
 - **Review** every game: move classifications, evaluation graph, engine lines, key moments, and free
   exploration on the board.
@@ -66,33 +79,26 @@ No platform password, account or subscription is needed.
 
 The screenshots use sample data: 360 engine games for a fictional player rated around 2000, imported
 and reviewed by Plyback itself. In daily use on an ordinary desktop PC it keeps an account of over
-1,300 games (78,000 moves) fully reviewed and checks for new games every few minutes.
+1,300 games (78,000 moves) fully reviewed.
 
-## Getting started
+## Install
 
-You need [Rust](https://rustup.rs) 1.97.1 or newer and [Node.js](https://nodejs.org) 22.12 or newer to
-build. The built app needs neither.
-
-```sh
-# macOS / Linux
-bash setup.sh
-bash start.sh
-```
-
-```powershell
-# Windows
-powershell -ExecutionPolicy Bypass -File setup.ps1
-.\start.ps1
-```
-
-Open [localhost:8000](http://localhost:8000) and add a Chess.com or Lichess username. Setup builds the
-interface and downloads Stockfish from its official release, checked against a pinned SHA-256.
-
-With Docker, set a password for the first start:
+**Docker** (amd64 and arm64):
 
 ```sh
-PLYBACK_PASSWORD='choose-a-strong-one' docker compose up -d --build
+docker run -d --name plyback --restart unless-stopped -p 8000:8000 -v plyback-data:/data \
+  -e PLYBACK_PASSWORD='choose-a-strong-one' ghcr.io/klemen-r/plyback:3
 ```
+
+**Download** the archive for Windows, macOS or Linux from the
+[latest release](https://github.com/klemen-r/plyback/releases/latest), unpack it and start `plyback`
+(`plyback.exe` on Windows). Stockfish is included.
+
+Then open [localhost:8000](http://localhost:8000) and add a Chess.com or Lichess username. Plyback
+imports the account's history, reviews it in the background and checks for new games every few minutes.
+
+The [self-hosting guide](docs/self-hosting.md) covers building from source, access from other devices,
+reverse proxies, backups and upgrades.
 
 ## How it works
 
@@ -101,19 +107,20 @@ SQLite. The interface is React and TypeScript. Positions already searched are ca
 fast, and an interrupted review continues after a restart.
 
 Classifications use documented heuristics based on expected-points loss, not Chess.com's proprietary
-algorithm, so labels and accuracy can differ from Chess.com. [METHODOLOGY.md](METHODOLOGY.md)
+algorithm, so labels and accuracy can differ from Chess.com. The [methodology](docs/methodology.md)
 describes every rule and threshold.
 
 ## Documentation
 
-- [Self-hosting](docs/self-hosting.md): network access, Docker, backups, upgrades, configuration
-- [Methodology](METHODOLOGY.md): how moves are classified and insights are computed
+- [Self-hosting](docs/self-hosting.md): install options, network access, backups, upgrades, configuration
+- [Methodology](docs/methodology.md): how moves are classified and insights are computed
 - [Architecture](docs/architecture.md): components, data model, analysis pipeline
 - [Security](SECURITY.md): what is protected and how to run behind a proxy
-- [Contributing](CONTRIBUTING.md): development setup and checks
+- [Contributing](CONTRIBUTING.md): development setup, checks and releases
 
 ## License
 
-[GPL-3.0-or-later](LICENSE). Stockfish is downloaded separately from its official release. Opening
-names come from the CC0 [Lichess chess-openings](https://github.com/lichess-org/chess-openings) dataset.
-See [third-party notices](THIRD_PARTY_NOTICES.md).
+[GPL-3.0-or-later](LICENSE). Release archives and the container image include Stockfish (GPL-3.0) with
+its notices. Opening names come from the CC0
+[Lichess chess-openings](https://github.com/lichess-org/chess-openings) dataset. See
+[third-party notices](THIRD_PARTY_NOTICES.md).

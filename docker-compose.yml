@@ -1,6 +1,7 @@
 services:
   plyback:
-    build: .
+    image: ghcr.io/klemen-r/plyback:3
+    # To build from a source checkout instead, replace the line above with `build: .`
     ports:
       - "8000:8000"
     environment:
