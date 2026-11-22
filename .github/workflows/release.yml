@@ -1,0 +1,207 @@
+name: Release
+
+# A version tag (v1.2.3) builds the portable archives and the container image, then
+# publishes both with a draft GitHub release. Running it by hand builds everything
+# without publishing.
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+  PUBLISH: ${{ github.event_name == 'push' }}
+
+jobs:
+  archive:
+    name: Archive (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux builds run on the oldest supported runners so the binaries need only glibc 2.35.
+          - { target: linux-x64, runner: ubuntu-22.04 }
+          - { target: linux-arm64, runner: ubuntu-22.04-arm }
+          - { target: windows-x64, runner: windows-latest }
+          - { target: macos-arm64, runner: macos-latest }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Rust 1.97.1
+        shell: bash
+        run: |
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+      - name: Version
+        shell: bash
+        run: |
+          version=$(node -p "require('./frontend/package.json').version")
+          if [ "$PUBLISH" = true ] && [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match version $version"; exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - run: npm ci --prefix frontend --no-audit --no-fund
+      - run: npm run build --prefix frontend
+      - run: cargo build --release --locked --manifest-path rust/Cargo.toml
+      - name: Install Stockfish for the archive
+        shell: bash
+        run: node scripts/install_stockfish.mjs --dest "$RUNNER_TEMP/stockfish"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Package
+        shell: bash
+        run: node scripts/package_release.mjs --target ${{ matrix.target }} --version "$VERSION" --stockfish "$RUNNER_TEMP/stockfish" --out "$RUNNER_TEMP/out"
+      - name: Smoke-test the unpacked archive
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/out/plyback-$VERSION-${{ matrix.target }}"
+          exe=./plyback; [ -f plyback.exe ] && exe=./plyback.exe
+          "$exe" --port 8040 > "$RUNNER_TEMP/server.log" 2>&1 &
+          server=$!
+          trap 'kill $server 2>/dev/null || true; cat "$RUNNER_TEMP/server.log"' EXIT
+          for attempt in $(seq 1 60); do curl --fail --silent http://127.0.0.1:8040/api/health >/dev/null && break; sleep 1; done
+          curl --fail --silent http://127.0.0.1:8040/ | grep -q Plyback
+          # The bundled engine is found without any configuration.
+          curl --fail --silent http://127.0.0.1:8040/api/status | grep -q '"engine":{"error":null'
+          "$exe" --version | grep -q "$VERSION"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: archive-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/out/*.zip
+            ${{ runner.temp }}/out/*.tar.gz
+          if-no-files-found: error
+
+  image:
+    name: Image (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-latest }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        if: env.PUBLISH == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          labels: ${{ steps.meta.outputs.labels }}
+          secrets: github_token=${{ github.token }}
+          outputs: ${{ env.PUBLISH == 'true' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || 'type=cacheonly' }}
+          cache-from: type=gha,scope=image-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=image-${{ matrix.arch }}
+      - name: Keep the digest for the multi-arch manifest
+        if: env.PUBLISH == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: env.PUBLISH == 'true'
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+
+  manifest:
+    name: Image manifest
+    if: github.event_name == 'push'
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digest-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digests
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+      - name: Create and push the manifest
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            -t "$IMAGE:latest" \
+            $(printf "$IMAGE@sha256:%s " *)
+          docker buildx imagetools inspect "$IMAGE:$DOCKER_METADATA_OUTPUT_VERSION"
+
+  release:
+    name: GitHub release
+    if: github.event_name == 'push'
+    needs: [archive, manifest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: archive-*
+          merge-multiple: true
+          path: dist
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Draft the release with the archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber -R "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag --title "Plyback ${GITHUB_REF_NAME#v}" \
+              --notes "Container image: \`$IMAGE:${GITHUB_REF_NAME#v}\`" -R "$GITHUB_REPOSITORY"
+          fi

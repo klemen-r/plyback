@@ -45,6 +45,15 @@ Rust uses `rust/Cargo.lock`; after changing it, regenerate `docs/licenses/rust.t
 `node scripts/rust_notices.mjs`. JavaScript uses `npm ci` and `package-lock.json`.
 Review dependency and licence changes before committing, and keep the required notices.
 
+## Releases
+
+Set the new version in `rust/Cargo.toml`, `rust/Cargo.lock`, `rust/openapi.json`,
+`frontend/package.json` and `frontend/package-lock.json`, merge it, then push a tag such as `v3.1.0`.
+The release workflow builds and smoke-tests the archives for each platform, publishes the container
+image to `ghcr.io/klemen-r/plyback` and drafts a GitHub release with the archives and checksums.
+Write the notes and publish the draft. Running the workflow by hand builds everything without
+publishing.
+
 ## Interface
 
 Build pages from the shared primitives in `frontend/src/components/ui.tsx`. The style is plain: a

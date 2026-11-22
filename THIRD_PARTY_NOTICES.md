@@ -10,7 +10,7 @@ and license terms. Dependency source links and complete web dependency notices a
 | rusqlite / bundled SQLite | https://github.com/rusqlite/rusqlite / https://sqlite.org | MIT / public domain |
 | Rust dependency tree | Exact package versions and source links in `rust/Cargo.lock` and the notice bundle | Individual terms in `docs/licenses/rust.txt` |
 | @lichess-org/chessground and its bundled piece assets | https://github.com/lichess-org/chessground | GPL-3.0-or-later |
-| Stockfish (separately downloaded) | https://github.com/official-stockfish/Stockfish | GPL-3.0 |
+| Stockfish (downloaded by setup; included in release archives and the container image) | https://github.com/official-stockfish/Stockfish | GPL-3.0 |
 | Lichess opening dataset (`rust/data/openings/`) | https://github.com/lichess-org/chess-openings | CC0-1.0 |
 | chess.js | https://github.com/jhlywa/chess.js | BSD-2-Clause |
 | React / React DOM | https://github.com/facebook/react | MIT |
@@ -27,4 +27,4 @@ The GPL text is included in [LICENSE](LICENSE).
 The Stockfish installer retains COPYING, AUTHORS and README with release tag, source URL and SHA-256
 provenance in each installed version directory. When distributing a binary or container, preserve those
 notices and satisfy Stockfish's corresponding-source requirements for the exact release. The image
-includes its source/provenance record. Do not substitute a modified engine without updating its source offer.
+includes its source/provenance record; release archives carry the same files in `licenses/stockfish/`. Do not substitute a modified engine without updating its source offer.
