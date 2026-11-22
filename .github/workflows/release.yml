@@ -74,6 +74,9 @@ jobs:
         run: |
           cd "$RUNNER_TEMP/out/plyback-$VERSION-${{ matrix.target }}"
           exe=./plyback; [ -f plyback.exe ] && exe=./plyback.exe
+          engine=data/engine/stockfish; [ -f data/engine/stockfish.exe ] && engine=data/engine/stockfish.exe
+          # The bundled engine runs on this platform and answers the UCI handshake.
+          printf 'uci\nisready\nquit\n' | "$engine" | grep -q readyok
           "$exe" --port 8040 > "$RUNNER_TEMP/server.log" 2>&1 &
           server=$!
           trap 'kill $server 2>/dev/null || true; cat "$RUNNER_TEMP/server.log"' EXIT
@@ -97,6 +100,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: false
     strategy:
       fail-fast: false
       matrix:
