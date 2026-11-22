@@ -1011,7 +1011,7 @@ mod tests {
         let server = FixtureServer::start();
         let db = Arc::new(Database::open(":memory:").unwrap());
         db.execute(
-            "INSERT INTO accounts(username,added_at,analyze_history,auto_analyze) VALUES('klemen_r',?,1,1)",
+            "INSERT INTO accounts(username,added_at,analyze_history,auto_analyze) VALUES('fixture_player',?,1,1)",
             &[json!(ADDED_AFTER_FIXTURE_GAMES)],
         )
         .unwrap();
@@ -1057,7 +1057,7 @@ mod tests {
         );
         assert_eq!(
             db.scalar("SELECT avatar FROM accounts", &[]).unwrap(),
-            "https://images.chesscomfiles.com/uploads/v1/user/451030352.15afde49.200x200o.535747109fd0.jpg"
+            "https://images.chesscomfiles.com/uploads/v1/user/100000001.fixture.200x200o.jpg"
         );
         assert_eq!(
             db.scalar("SELECT COUNT(*) FROM sync_pending", &[]).unwrap(),
@@ -1503,7 +1503,7 @@ mod tests {
 
         db.execute("DELETE FROM accounts", &[]).unwrap();
         db.execute(
-            "INSERT INTO accounts(username,added_at,analyze_history) VALUES('klemen_r',0,0)",
+            "INSERT INTO accounts(username,added_at,analyze_history) VALUES('fixture_player',0,0)",
             &[],
         )
         .unwrap();
@@ -1587,7 +1587,7 @@ mod tests {
         let (server, blocked, release) = FixtureServer::paused("/2026/10");
         let db = Arc::new(Database::open(":memory:").unwrap());
         db.execute(
-            "INSERT INTO accounts(username,added_at,analyze_history) VALUES('klemen_r',?,0)",
+            "INSERT INTO accounts(username,added_at,analyze_history) VALUES('fixture_player',?,0)",
             &[json!(ADDED_AFTER_FIXTURE_GAMES)],
         )
         .unwrap();
@@ -1638,7 +1638,7 @@ mod tests {
         let server = FixtureServer::start();
         let db = Arc::new(Database::open(":memory:").unwrap());
         let service = fixture_service(&db, &server);
-        let request = json!({"username": "klemen_r", "analyze_history": false});
+        let request = json!({"username": "fixture_player", "analyze_history": false});
         let (status, added) = service
             .handle("POST", "/api/accounts", &Query::new(), &request)
             .unwrap()
@@ -1682,8 +1682,8 @@ mod tests {
 
     #[test]
     fn delayed_profile_and_archive_cannot_modify_recreated_accounts() {
-        for endpoint in ["/player/klemen_r", "/stats", "/2026/11"] {
-            for replacement_name in ["klemen_r", "replacement_player"] {
+        for endpoint in ["/player/fixture_player", "/stats", "/2026/11"] {
+            for replacement_name in ["fixture_player", "replacement_player"] {
                 let (server, blocked, release) = FixtureServer::paused(endpoint);
                 let db = Arc::new(Database::open(":memory:").unwrap());
                 // Stats cases pause after the profile's early identity check,
@@ -1691,7 +1691,7 @@ mod tests {
                 // refresh. No background workers are started.
                 let fetched = if endpoint == "/2026/11" { now() } else { 0 };
                 db.execute(
-                    "INSERT INTO accounts(username,added_at,profile_fetched_at) VALUES('klemen_r',0,?)",
+                    "INSERT INTO accounts(username,added_at,profile_fetched_at) VALUES('fixture_player',0,?)",
                     &[json!(fetched)],
                 )
                 .unwrap();
@@ -1827,7 +1827,7 @@ mod tests {
                 serial: Mutex::new(None),
                 retry_wait: Arc::new(wait_cancel),
             };
-            let mut body = json!({"username": "klemen_r"});
+            let mut body = json!({"username": "fixture_player"});
             if let Some(value) = override_value {
                 body["auto_analyze"] = json!(value);
             }
@@ -1845,7 +1845,7 @@ mod tests {
         let server = FixtureServer::start();
         let db = Arc::new(Database::open(":memory:").unwrap());
         db.execute(
-            "INSERT INTO accounts(username,added_at,analyze_history) VALUES('klemen_r',?,0)",
+            "INSERT INTO accounts(username,added_at,analyze_history) VALUES('fixture_player',?,0)",
             &[json!(ADDED_AFTER_FIXTURE_GAMES)],
         )
         .unwrap();
@@ -1905,7 +1905,7 @@ mod tests {
         let server = FixtureServer::start();
         let db = Arc::new(Database::open(":memory:").unwrap());
         db.execute(
-            "INSERT INTO accounts(username,added_at,analyze_history,auto_analyze) VALUES('klemen_r',?,0,1)",
+            "INSERT INTO accounts(username,added_at,analyze_history,auto_analyze) VALUES('fixture_player',?,0,1)",
             &[json!(ADDED_AFTER_FIXTURE_GAMES)],
         )
         .unwrap();
@@ -1991,7 +1991,7 @@ mod tests {
         let server = FixtureServer::start();
         let db = Arc::new(Database::open(":memory:").unwrap());
         db.execute(
-            "INSERT INTO accounts(username,added_at,analyze_history,auto_analyze) VALUES('klemen_r',?,0,1)",
+            "INSERT INTO accounts(username,added_at,analyze_history,auto_analyze) VALUES('fixture_player',?,0,1)",
             &[json!(ADDED_AFTER_FIXTURE_GAMES)],
         )
         .unwrap();
@@ -2088,7 +2088,7 @@ mod tests {
         let server = FixtureServer::start();
         let db = Arc::new(Database::open(":memory:").unwrap());
         db.execute(
-            "INSERT INTO accounts(username,added_at,analyze_history,auto_analyze) VALUES('klemen_r',?,1,1)",
+            "INSERT INTO accounts(username,added_at,analyze_history,auto_analyze) VALUES('fixture_player',?,1,1)",
             &[json!(ADDED_AFTER_FIXTURE_GAMES)],
         )
         .unwrap();
@@ -2112,7 +2112,7 @@ mod tests {
             .unwrap()
             .unwrap();
         // The user's own game, played after the account was added, imported with analysis off.
-        let pgn = "[White \"klemen_r\"]\n[Black \"someone\"]\n[UTCDate \"2027.01.02\"]\n[UTCTime \"10:00:00\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Nf3 1-0";
+        let pgn = "[White \"fixture_player\"]\n[Black \"someone\"]\n[UTCDate \"2027.01.02\"]\n[UTCTime \"10:00:00\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Nf3 1-0";
         let (_, imported) = service
             .handle(
                 "POST",

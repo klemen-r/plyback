@@ -16,7 +16,7 @@ export default defineConfig({
   use: { baseURL: 'http://127.0.0.1:8790', trace: 'retain-on-failure', viewport: { width: 1440, height: 900 } },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } } }],
   webServer: [
-    { command: `node "${path.join(scripts, 'fixture_server.mjs')}" --port 8799`, url: 'http://127.0.0.1:8799/pub/player/klemen_r', reuseExistingServer: false, timeout: 60_000 },
+    { command: `node "${path.join(scripts, 'fixture_server.mjs')}" --port 8799`, url: 'http://127.0.0.1:8799/pub/player/fixture_player', reuseExistingServer: false, timeout: 60_000 },
     { command: `node "${path.join(scripts, 'e2e_server.mjs')}"`, url: 'http://127.0.0.1:8790/api/health', reuseExistingServer: false, timeout: 90_000 },
   ],
 })

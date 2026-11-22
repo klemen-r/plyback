@@ -248,7 +248,7 @@ fn completed_reports_are_immutable_and_membership_is_fixed() {
     );
     let id = rep["id"].as_i64().unwrap();
     let original_games = compute(&db, 1, &json!({})).unwrap()["overview"]["games"].clone();
-    db.transaction(|tx|{tx.execute("INSERT INTO games(uuid,pgn,rules,source,white_username,black_username,white_result,black_result,imported_at,end_time) VALUES('after-report','1. e4 *','chess','pgn','klemen_r','new-opponent','win','resigned',0,1799000000)",[])?;let gid=tx.last_insert_rowid();tx.execute("INSERT INTO account_games(account_id,game_id,color) VALUES(1,?,'white')",[gid])?;Ok(())}).unwrap();
+    db.transaction(|tx|{tx.execute("INSERT INTO games(uuid,pgn,rules,source,white_username,black_username,white_result,black_result,imported_at,end_time) VALUES('after-report','1. e4 *','chess','pgn','fixture_player','new-opponent','win','resigned',0,1799000000)",[])?;let gid=tx.last_insert_rowid();tx.execute("INSERT INTO account_games(account_id,game_id,color) VALUES(1,?,'white')",[gid])?;Ok(())}).unwrap();
     call(
         &service,
         "POST",
@@ -319,7 +319,7 @@ fn empty_report_scope_stays_empty_and_deleted_ids_cannot_join_it() {
     let rep = call(&service, "POST", "/api/accounts/1/reports", json!({}));
     let rid = rep["id"].as_i64().unwrap();
     let original = rep["total_games"].as_u64().unwrap();
-    db.transaction(|tx|{tx.execute("DELETE FROM games WHERE id=1",[])?;tx.execute("INSERT INTO games(id,uuid,pgn,rules,source,white_username,black_username,imported_at,end_time) VALUES(1,'different-uuid','1. e4 *','chess','pgn','klemen_r','new',0,0)",[])?;tx.execute("INSERT INTO account_games VALUES(1,1,'white')",[])?;Ok(())}).unwrap();
+    db.transaction(|tx|{tx.execute("DELETE FROM games WHERE id=1",[])?;tx.execute("INSERT INTO games(id,uuid,pgn,rules,source,white_username,black_username,imported_at,end_time) VALUES(1,'different-uuid','1. e4 *','chess','pgn','fixture_player','new',0,0)",[])?;tx.execute("INSERT INTO account_games VALUES(1,1,'white')",[])?;Ok(())}).unwrap();
     call(
         &service,
         "POST",

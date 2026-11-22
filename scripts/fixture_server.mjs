@@ -48,7 +48,7 @@ const server = http.createServer(async (req, res) => {
   }
   const match = /^\/pub\/player\/([A-Za-z0-9_-]+)(?:\/(.*))?$/.exec(new URL(req.url, 'http://localhost').pathname)
   res.setHeader('Content-Type', 'application/json')
-  if (!match || match[1] !== 'klemen_r') { res.writeHead(404).end('{"message":"not found"}'); return }
+  if (!match || match[1] !== 'fixture_player') { res.writeHead(404).end('{"message":"not found"}'); return }
   const suffix = match[2] ?? ''
   let file = suffix === '' ? 'profile.json' : suffix === 'stats' ? 'stats.json' : suffix === 'games/archives' ? 'archives.json' : null
   const month = /^games\/(\d{4})\/(\d{2})$/.exec(suffix)

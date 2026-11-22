@@ -2,7 +2,7 @@ import { expect, test, type Page, type Route } from '@playwright/test'
 import { playMove, waitForAnalysis } from './support'
 
 const LEGAL = `[Event "E2E"]
-[White "klemen_r"]
+[White "fixture_player"]
 [Black "Friend"]
 [Result "1-0"]
 
@@ -33,7 +33,7 @@ test.describe.serial('Plyback end to end', () => {
     await page.getByLabel('Chess.com username').fill('no_such_player')
     await page.getByRole('button', { name: 'Connect' }).click()
     await expect(page.getByText(/No Chess.com player named/)).toBeVisible()
-    await page.getByLabel('Chess.com username').fill('klemen_r')
+    await page.getByLabel('Chess.com username').fill('fixture_player')
     const connecting = page.waitForRequest(request => request.method() === 'POST' && new URL(request.url()).pathname === '/api/accounts')
     await page.getByRole('button', { name: 'Connect' }).click()
     expect((await connecting).postDataJSON()).not.toHaveProperty('auto_analyze')
@@ -47,7 +47,7 @@ test.describe.serial('Plyback end to end', () => {
     await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible()
     await waitForAnalysis(page, 11)
     await page.goto('/games')
-    await expect(page.getByText('11 games played by klemen_r')).toBeVisible()
+    await expect(page.getByText('11 games played by fixture_player')).toBeVisible()
     await page.getByLabel('Result').selectOption('loss')
     await expect(page).toHaveURL(/outcome=loss/)
     // How each game ended is listed, and can be filtered.
