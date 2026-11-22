@@ -72,7 +72,8 @@ export default function GameTable({ games, compact, selected, onSelect }:
                 </div>
               </td>
               <td className={clsx('whitespace-nowrap py-2.5 pr-3 text-fg-2', compact ? 'hidden xl:table-cell' : 'hidden sm:table-cell')}>{endingOf(g)?.text ?? '—'}</td>
-              <td className={clsx('max-w-[260px] truncate py-2.5 pr-3 text-fg-2', compact ? 'hidden lg:table-cell' : 'hidden md:table-cell')}>{g.opening.name ?? '—'}</td>
+              {/* In the compact table the opening takes whatever width is left and truncates, so the date stays visible. */}
+              <td className={clsx('truncate py-2.5 pr-3 text-fg-2', compact ? 'hidden w-full max-w-0 lg:table-cell' : 'hidden max-w-[260px] md:table-cell')}>{g.opening.name ?? '—'}</td>
               {!compact && <td className="hidden whitespace-nowrap py-2.5 pr-3 text-fg-2 sm:table-cell">{fmtTimeControl(g.time_control)}</td>}
               {!compact && <td className="hidden py-2.5 pr-3 lg:table-cell"><ErrorCounts g={g} /></td>}
               <td className="py-2.5 pr-3 text-right"><AccuracyCell g={g} /></td>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dueIn, fmtClock, fmtDuration, fmtTimeControl, formatEval, mateIn, moveLabel, moveNumber, winWhite } from '../format'
+import { dueIn, fmtClock, fmtDuration, fmtTimeControl, formatEval, mateIn, moveLabel, moveNumber, shortEval, winWhite } from '../format'
 import { restoreFilters, toInsightFilters, type FilterState } from '../filters'
 
 describe('format helpers', () => {
@@ -10,6 +10,13 @@ describe('format helpers', () => {
     expect(formatEval(-(100_000 - 2))).toBe('-M2')
     expect(formatEval(100_000)).toBe('1-0')
     expect(mateIn(500)).toBeNull()
+  })
+  it('shortens evaluations for the evaluation bar', () => {
+    expect(shortEval(-343)).toBe('3.4')
+    expect(shortEval(1260)).toBe('13')
+    expect(shortEval(-(100_000 - 2))).toBe('M2')
+    expect(shortEval(100_000)).toBe('1-0')
+    expect(shortEval(null)).toBe('')
   })
   it('win% is symmetric and saturates', () => {
     expect(winWhite(0)).toBeCloseTo(50)

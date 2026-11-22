@@ -19,6 +19,15 @@ export function formatEval(cp: number | undefined | null): string {
   return `${v > 0 ? '+' : ''}${v.toFixed(Math.abs(v) >= 10 ? 1 : 2)}`
 }
 
+/** Evaluation for the narrow bar beside the board: no sign (the bar shows who is ahead), one decimal. */
+export function shortEval(cp: number | undefined | null): string {
+  if (cp === undefined || cp === null) return ''
+  const m = mateIn(cp)
+  if (m !== null) return m === 0 ? (cp > 0 ? '1-0' : '0-1') : `M${Math.abs(m)}`
+  const v = Math.abs(cp) / 100
+  return v >= 10 ? String(Math.round(v)) : v.toFixed(1)
+}
+
 export function winWhite(cp: number): number {
   if (Math.abs(cp) >= MATE_THRESHOLD) return cp > 0 ? 100 : 0
   const c = Math.max(-1000, Math.min(1000, cp))

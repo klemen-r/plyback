@@ -513,7 +513,7 @@ function KPIs({ data }: { data: Insights }) {
     <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
       <Figure label="Games" value={o.games} detail={`${o.wins}W · ${o.draws}D · ${o.losses}L`} />
       <Figure label="Score" value={pct(o.score)} detail={`White ${pct(o.white.score)} · Black ${pct(o.black.score)}`} />
-      <Figure label="Accuracy" value={pct(o.accuracy, 1)} detail={`opponents ${pct(o.opp_accuracy, 1)}`} tone={o.accuracy && o.opp_accuracy ? (o.accuracy >= o.opp_accuracy ? 'good' : 'bad') : undefined}
+      <Figure label="Accuracy" value={pct(o.accuracy, 1)} detail={`opponents ${pct(o.opp_accuracy, 1)}`} tone={o.accuracy && o.opp_accuracy ? (o.accuracy >= o.opp_accuracy + 2 ? 'good' : o.accuracy <= o.opp_accuracy - 2 ? 'bad' : undefined) : undefined}
         hint="Our Stockfish-based accuracy (Lichess formula). Not the same number as Chess.com's CAPS." />
       <Figure label="Blunders / game" value={num(blunders, 2)} detail={`opponents ${num(oppBlunders, 2)}`} tone={blunders && oppBlunders ? (blunders > oppBlunders * 1.1 ? 'bad' : blunders < oppBlunders * 0.9 ? 'good' : undefined) : undefined} />
       <Figure label="Performance" value={o.performance_rating ?? '—'} detail={`avg. opponent ${o.avg_opponent_rating ?? '—'}`} hint="Linear performance rating: average opponent + 400 × (W − L) / N" />
