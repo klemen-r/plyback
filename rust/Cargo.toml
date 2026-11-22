@@ -1,10 +1,10 @@
 [package]
 name = "plyback"
-version = "3.0.0"
+version = "3.1.0"
 edition = "2024"
 rust-version = "1.89"
 license = "GPL-3.0-or-later"
-description = "Self-hosted Chess.com and Lichess game review and account insights"
+description = "Self-hosted game review for Chess.com and Lichess, powered by Stockfish"
 
 [dependencies]
 anyhow = "1"

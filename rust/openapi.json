@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Plyback",
-    "version": "3.0.0",
+    "version": "3.1.0",
     "description": "Plyback native server. Password sessions and X-Requested-With: plyback protect API requests."
   },
   "paths": {

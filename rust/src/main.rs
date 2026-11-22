@@ -15,14 +15,19 @@ use std::{
 #[derive(Parser)]
 #[command(version, about)]
 struct Cli {
+    /// Directory for the database, logs and engine [default: data/ next to the program]
     #[arg(long, global = true)]
     data: Option<PathBuf>,
+    /// Address to listen on; anything but localhost needs a password [default: 127.0.0.1]
     #[arg(long, global = true)]
     host: Option<String>,
+    /// HTTP port [default: 8000]
     #[arg(long, global = true)]
     port: Option<u16>,
+    /// Built web interface [default: frontend/dist next to the program]
     #[arg(long, global = true)]
     frontend: Option<PathBuf>,
+    /// Serve only: no game sync and no background reviews
     #[arg(long, global = true)]
     no_background: bool,
     #[command(subcommand)]
